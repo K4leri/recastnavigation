@@ -1,0 +1,9 @@
+// Integration test suite - imports all integration tests
+
+comptime {
+    // Import all integration test files
+    _ = @import("recast_pipeline_test.zig");
+    _ = @import("detour_pipeline_test.zig");
+    _ = @import("crowd_simulation_test.zig");
+    _ = @import("tilecache_pipeline_test.zig");
+}

@@ -221,6 +221,9 @@ pub const CompactHeightfield = struct {
         const dist = try allocator.alloc(u16, span_ucount);
         @memset(dist, 0);
 
+        // KNOWN ISSUE: This allocation causes a memory leak when buildCompactHeightfield
+        // reallocates the areas array. Freeing before reallocation causes hang.
+        // See KNOWN_ISSUES.md for details.
         const areas = try allocator.alloc(u8, span_ucount);
         @memset(areas, 0);
 

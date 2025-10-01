@@ -92,8 +92,8 @@ fn vequal(a: []const i32, b: []const i32) bool {
 
 /// Check if diagonal (i,j) doesn't intersect polygon edges
 fn diagonalie(i: usize, j: usize, n: usize, verts: []const i32, indices: []const i32) bool {
-    const d0 = verts[(indices[i] & 0x0fffffff) * 4 ..];
-    const d1 = verts[(indices[j] & 0x0fffffff) * 4 ..];
+    const d0 = verts[@as(usize, @intCast(indices[i] & 0x0fffffff)) * 4 ..];
+    const d1 = verts[@as(usize, @intCast(indices[j] & 0x0fffffff)) * 4 ..];
 
     var k: usize = 0;
     while (k < n) : (k += 1) {
@@ -104,8 +104,8 @@ fn diagonalie(i: usize, j: usize, n: usize, verts: []const i32, indices: []const
             continue;
         }
 
-        const p0 = verts[(indices[k] & 0x0fffffff) * 4 ..];
-        const p1 = verts[(indices[k1] & 0x0fffffff) * 4 ..];
+        const p0 = verts[@as(usize, @intCast(indices[k] & 0x0fffffff)) * 4 ..];
+        const p1 = verts[@as(usize, @intCast(indices[k1] & 0x0fffffff)) * 4 ..];
 
         if (vequal(d0, p0) or vequal(d1, p0) or vequal(d0, p1) or vequal(d1, p1)) {
             continue;
@@ -121,10 +121,10 @@ fn diagonalie(i: usize, j: usize, n: usize, verts: []const i32, indices: []const
 
 /// Check if diagonal (i,j) is internal to polygon in neighborhood of i
 fn inCone(i: usize, j: usize, n: usize, verts: []const i32, indices: []const i32) bool {
-    const pi = verts[(indices[i] & 0x0fffffff) * 4 ..];
-    const pj = verts[(indices[j] & 0x0fffffff) * 4 ..];
-    const pi1 = verts[(indices[next(i, n)] & 0x0fffffff) * 4 ..];
-    const pin1 = verts[(indices[prev(i, n)] & 0x0fffffff) * 4 ..];
+    const pi = verts[@as(usize, @intCast(indices[i] & 0x0fffffff)) * 4 ..];
+    const pj = verts[@as(usize, @intCast(indices[j] & 0x0fffffff)) * 4 ..];
+    const pi1 = verts[@as(usize, @intCast(indices[next(i, n)] & 0x0fffffff)) * 4 ..];
+    const pin1 = verts[@as(usize, @intCast(indices[prev(i, n)] & 0x0fffffff)) * 4 ..];
 
     // If P[i] is a convex vertex [i+1 left or on (i-1,i)]
     if (leftOn(pin1, pi, pi1)) {
@@ -142,8 +142,8 @@ fn diagonal(i: usize, j: usize, n: usize, verts: []const i32, indices: []const i
 
 /// Looser version of diagonalie for recovering from overlapping segments
 fn diagonalieLoose(i: usize, j: usize, n: usize, verts: []const i32, indices: []const i32) bool {
-    const d0 = verts[(indices[i] & 0x0fffffff) * 4 ..];
-    const d1 = verts[(indices[j] & 0x0fffffff) * 4 ..];
+    const d0 = verts[@as(usize, @intCast(indices[i] & 0x0fffffff)) * 4 ..];
+    const d1 = verts[@as(usize, @intCast(indices[j] & 0x0fffffff)) * 4 ..];
 
     var k: usize = 0;
     while (k < n) : (k += 1) {
@@ -153,8 +153,8 @@ fn diagonalieLoose(i: usize, j: usize, n: usize, verts: []const i32, indices: []
             continue;
         }
 
-        const p0 = verts[(indices[k] & 0x0fffffff) * 4 ..];
-        const p1 = verts[(indices[k1] & 0x0fffffff) * 4 ..];
+        const p0 = verts[@as(usize, @intCast(indices[k] & 0x0fffffff)) * 4 ..];
+        const p1 = verts[@as(usize, @intCast(indices[k1] & 0x0fffffff)) * 4 ..];
 
         if (vequal(d0, p0) or vequal(d1, p0) or vequal(d0, p1) or vequal(d1, p1)) {
             continue;
@@ -170,10 +170,10 @@ fn diagonalieLoose(i: usize, j: usize, n: usize, verts: []const i32, indices: []
 
 /// Looser version of inCone
 fn inConeLoose(i: usize, j: usize, n: usize, verts: []const i32, indices: []const i32) bool {
-    const pi = verts[(indices[i] & 0x0fffffff) * 4 ..];
-    const pj = verts[(indices[j] & 0x0fffffff) * 4 ..];
-    const pi1 = verts[(indices[next(i, n)] & 0x0fffffff) * 4 ..];
-    const pin1 = verts[(indices[prev(i, n)] & 0x0fffffff) * 4 ..];
+    const pi = verts[@as(usize, @intCast(indices[i] & 0x0fffffff)) * 4 ..];
+    const pj = verts[@as(usize, @intCast(indices[j] & 0x0fffffff)) * 4 ..];
+    const pi1 = verts[@as(usize, @intCast(indices[next(i, n)] & 0x0fffffff)) * 4 ..];
+    const pin1 = verts[@as(usize, @intCast(indices[prev(i, n)] & 0x0fffffff)) * 4 ..];
 
     if (leftOn(pin1, pi, pi1)) {
         return leftOn(pi, pj, pin1) and leftOn(pj, pi, pi1);
@@ -200,7 +200,7 @@ fn triangulate(n_in: usize, verts: []const i32, indices: []i32, tris: []i32) i32
         const idx1 = next(i, n);
         const idx2 = next(idx1, n);
         if (diagonal(i, idx2, n, verts, indices)) {
-            indices[idx1] |= 0x80000000;
+            indices[idx1] |= @as(i32, @bitCast(@as(u32, 0x80000000)));
         }
     }
 
@@ -212,9 +212,9 @@ fn triangulate(n_in: usize, verts: []const i32, indices: []i32, tris: []i32) i32
         i = 0;
         while (i < n) : (i += 1) {
             const idx1 = next(i, n);
-            if ((indices[idx1] & 0x80000000) != 0) {
-                const p0 = verts[(indices[i] & 0x0fffffff) * 4 ..];
-                const p2 = verts[(indices[next(idx1, n)] & 0x0fffffff) * 4 ..];
+            if ((indices[idx1] & @as(i32, @bitCast(@as(u32, 0x80000000)))) != 0) {
+                const p0 = verts[@as(usize, @intCast(indices[i] & 0x0fffffff)) * 4 ..];
+                const p2 = verts[@as(usize, @intCast(indices[next(idx1, n)] & 0x0fffffff)) * 4 ..];
 
                 const dx = p2[0] - p0[0];
                 const dy = p2[2] - p0[2];
@@ -235,8 +235,8 @@ fn triangulate(n_in: usize, verts: []const i32, indices: []i32, tris: []i32) i32
                 const idx1 = next(i, n);
                 const idx2 = next(idx1, n);
                 if (diagonalLoose(i, idx2, n, verts, indices)) {
-                    const p0 = verts[(indices[i] & 0x0fffffff) * 4 ..];
-                    const p2 = verts[(indices[next(idx2, n)] & 0x0fffffff) * 4 ..];
+                    const p0 = verts[@as(usize, @intCast(indices[i] & 0x0fffffff)) * 4 ..];
+                    const p2 = verts[@as(usize, @intCast(indices[next(idx2, n)] & 0x0fffffff)) * 4 ..];
                     const dx = p2[0] - p0[0];
                     const dy = p2[2] - p0[2];
                     const len = dx * dx + dy * dy;
@@ -279,13 +279,13 @@ fn triangulate(n_in: usize, verts: []const i32, indices: []i32, tris: []i32) i32
 
         // Update diagonal flags
         if (diagonal(prev(i_new, n), idx1_new, n, verts, indices)) {
-            indices[i_new] |= 0x80000000;
+            indices[i_new] |= @as(i32, @bitCast(@as(u32, 0x80000000)));
         } else {
             indices[i_new] &= 0x0fffffff;
         }
 
         if (diagonal(i_new, next(idx1_new, n), n, verts, indices)) {
-            indices[idx1_new] |= 0x80000000;
+            indices[idx1_new] |= @as(i32, @bitCast(@as(u32, 0x80000000)));
         } else {
             indices[idx1_new] &= 0x0fffffff;
         }
@@ -633,7 +633,7 @@ fn canRemoveVertex(
                 // Add new edge
                 if (!exists) {
                     if (nedges >= max_edges) {
-                        ctx.log(.warn, "canRemoveVertex: Too many edges", .{});
+                        ctx.log(.warning, "canRemoveVertex: Too many edges", .{});
                         return false;
                     }
                     edges[nedges * 3 + 0] = a;
@@ -857,7 +857,7 @@ fn removeVertex(
     var ntris = triangulate(@intCast(nhole), tverts, thole, tris);
     if (ntris < 0) {
         ntris = -ntris;
-        ctx.log(.warn, "removeVertex: triangulate() returned bad results", .{});
+        ctx.log(.warning, "removeVertex: triangulate() returned bad results", .{});
     }
 
     const ntris_usize: usize = @intCast(ntris);
@@ -888,7 +888,7 @@ fn removeVertex(
 
             // Mark if polygon covers multiple regions
             if (hreg[t0] != hreg[t1] or hreg[t1] != hreg[t2]) {
-                pregs[npolys] = config.RC_MULTIPLE_REGS;
+                pregs[npolys] = config.MULTIPLE_REGS;
             } else {
                 pregs[npolys] = @intCast(hreg[t0]);
             }
@@ -936,7 +936,7 @@ fn removeVertex(
                 mergePolyVerts(@constCast(pa), pb, @intCast(best_ea), @intCast(best_eb), tmp_poly, nvp);
 
                 if (pregs[best_pa] != pregs[best_pb]) {
-                    pregs[best_pa] = config.RC_MULTIPLE_REGS;
+                    pregs[best_pa] = config.MULTIPLE_REGS;
                 }
 
                 const last = polys[(npolys - 1) * nvp .. (npolys - 1) * nvp + nvp];
@@ -995,9 +995,9 @@ pub fn buildPolyMesh(
 
     for (cset.conts) |cont| {
         if (cont.nverts < 3) continue;
-        max_vertices += cont.nverts;
-        max_tris += cont.nverts - 2;
-        max_verts_per_cont = @max(max_verts_per_cont, cont.nverts);
+        max_vertices += @intCast(cont.nverts);
+        max_tris += @intCast(cont.nverts - 2);
+        max_verts_per_cont = @max(max_verts_per_cont, @as(usize, @intCast(cont.nverts)));
     }
 
     if (max_vertices >= 0xfffe) {
@@ -1005,7 +1005,7 @@ pub fn buildPolyMesh(
         return error.TooManyVertices;
     }
 
-    ctx.log(.debug, "buildPolyMesh: max_vertices={d}, max_tris={d}", .{ max_vertices, max_tris });
+    ctx.log(.progress, "buildPolyMesh: max_vertices={d}, max_tris={d}", .{ max_vertices, max_tris });
 
     // Allocate mesh data
     mesh.verts = try allocator.alloc(u16, max_vertices * 3);
@@ -1055,18 +1055,18 @@ pub fn buildPolyMesh(
         if (cont.nverts < 3) continue;
 
         // Triangulate contour
-        for (0..cont.nverts) |j| {
+        for (0..@intCast(cont.nverts)) |j| {
             indices[j] = @intCast(j);
         }
 
-        const ntris = triangulate(cont.nverts, cont.verts, indices, tris);
+        const ntris = triangulate(@intCast(cont.nverts), cont.verts, indices, tris);
         if (ntris <= 0) {
-            ctx.log(.warn, "buildPolyMesh: Bad triangulation for contour", .{});
+            ctx.log(.warning, "buildPolyMesh: Bad triangulation for contour", .{});
             continue;
         }
 
         // Add and merge vertices
-        for (0..cont.nverts) |j| {
+        for (0..@intCast(cont.nverts)) |j| {
             const v = cont.verts[j * 4 ..];
             indices[j] = @intCast(addVertex(
                 @intCast(v[0]),
@@ -1194,7 +1194,7 @@ pub fn buildPolyMesh(
         allocator,
     );
 
-    ctx.log(.info, "buildPolyMesh: Created mesh with {d} vertices and {d} polygons", .{ mesh.nverts, mesh.npolys });
+    ctx.log(.progress, "buildPolyMesh: Created mesh with {d} vertices and {d} polygons", .{ mesh.nverts, mesh.npolys });
 }
 
 /// Merges multiple polygon meshes into one

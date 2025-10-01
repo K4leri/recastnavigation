@@ -20,7 +20,7 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(lib);
 
-    // Tests
+    // Unit Tests
     const tests = b.addTest(.{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
@@ -29,6 +29,21 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&run_tests.step);
+
+    // Integration Tests
+    const integration_tests = b.addTest(.{
+        .root_source_file = b.path("test/integration/all.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    integration_tests.root_module.addImport("zig-recast", recast_nav);
+
+    const run_integration_tests = b.addRunArtifact(integration_tests);
+    const integration_test_step = b.step("test-integration", "Run integration tests");
+    integration_test_step.dependOn(&run_integration_tests.step);
+
+    // Add integration tests to main test step
+    test_step.dependOn(&run_integration_tests.step);
 
     // Examples
     const example_simple = b.addExecutable(.{

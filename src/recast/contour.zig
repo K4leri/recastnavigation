@@ -31,7 +31,7 @@ fn getCornerHeight(
 ) i32 {
     const s = chf.spans[i];
     var ch: i32 = @intCast(s.y);
-    const dirp: u2 = @intCast((dir + 1) & 0x3);
+    const dirp: u2 = dir +% 1;
 
     var regs: [4]u32 = .{ 0, 0, 0, 0 };
 
@@ -168,7 +168,7 @@ fn walkContour(
             try points.append(r);
 
             flags[i] &= ~(@as(u8, 1) << dir); // Remove visited edges
-            dir = @intCast((dir + 1) & 0x3); // Rotate CW
+            dir = dir +% 1; // Rotate CW (wraps around for u2)
         } else {
             var ni: i32 = -1;
             const nx = x + heightfield_mod.getDirOffsetX(dir);
@@ -188,7 +188,7 @@ fn walkContour(
             x = nx;
             y = ny;
             i = @intCast(ni);
-            dir = @intCast((dir + 3) & 0x3); // Rotate CCW
+            dir = dir +% 3; // Rotate CCW (wraps around for u2)
         }
 
         if (i == start_i and dir == start_dir) {
@@ -648,7 +648,7 @@ pub fn buildContours(
     defer allocator.free(flags);
     @memset(flags, 0);
 
-    ctx.log(.debug, "buildContours: Finding boundaries...", .{});
+    ctx.log(.progress, "buildContours: Finding boundaries...", .{});
 
     // Mark boundaries (edges not connected to same region)
     var y: i32 = 0;
@@ -691,7 +691,7 @@ pub fn buildContours(
         }
     }
 
-    ctx.log(.debug, "buildContours: Walking contours...", .{});
+    ctx.log(.progress, "buildContours: Walking contours...", .{});
 
     var verts = std.ArrayList(i32).init(allocator);
     defer verts.deinit();
@@ -772,11 +772,12 @@ pub fn buildContours(
 
                     try contours.append(.{
                         .verts = verts_copy,
-                        .nverts = nverts,
+                        .nverts = @intCast(nverts),
                         .rverts = rverts_copy,
-                        .nrverts = nrverts,
+                        .nrverts = @intCast(nrverts),
                         .reg = reg,
                         .area = area,
+                        .allocator = allocator,
                     });
                 }
             }
@@ -785,7 +786,7 @@ pub fn buildContours(
 
     // Merge holes if needed
     if (contours.items.len > 0) {
-        ctx.log(.debug, "buildContours: Checking for holes...", .{});
+        ctx.log(.progress, "buildContours: Checking for holes...", .{});
 
         // Calculate winding of all contours
         const winding = try allocator.alloc(i8, contours.items.len);
@@ -794,14 +795,14 @@ pub fn buildContours(
         var nholes: usize = 0;
         for (contours.items, 0..) |*cont, i| {
             // Если контур закручен назад, это hole
-            winding[i] = if (calcAreaOfPolygon2D(cont.verts, cont.nverts) < 0) @as(i8, -1) else @as(i8, 1);
+            winding[i] = if (calcAreaOfPolygon2D(cont.verts, @intCast(cont.nverts)) < 0) @as(i8, -1) else @as(i8, 1);
             if (winding[i] < 0) {
                 nholes += 1;
             }
         }
 
         if (nholes > 0) {
-            ctx.log(.debug, "buildContours: Found {d} holes, merging...", .{nholes});
+            ctx.log(.progress, "buildContours: Found {d} holes, merging...", .{nholes});
 
             // Собираем outline и holes по регионам
             const nregions: usize = @intCast(chf.max_regions + 1);
@@ -865,7 +866,7 @@ pub fn buildContours(
                 }
             }
 
-            ctx.log(.info, "buildContours: Merged {d} holes", .{nholes});
+            ctx.log(.progress, "buildContours: Merged {d} holes", .{nholes});
         }
     }
 
@@ -873,7 +874,7 @@ pub fn buildContours(
     cset.conts = try contours.toOwnedSlice();
     cset.nconts = @intCast(cset.conts.len);
 
-    ctx.log(.info, "buildContours: Created {d} contours", .{cset.nconts});
+    ctx.log(.progress, "buildContours: Created {d} contours", .{cset.nconts});
 }
 
 // ============================================================================
@@ -907,7 +908,7 @@ fn findLeftMostVertex(contour: *const Contour) struct { minx: i32, minz: i32, le
     var minz = contour.verts[2];
     var leftmost: usize = 0;
 
-    for (1..contour.nverts) |i| {
+    for (1..@intCast(contour.nverts)) |i| {
         const x = contour.verts[i * 4 + 0];
         const z = contour.verts[i * 4 + 2];
         if (x < minx or (x == minx and z < minz)) {
@@ -942,20 +943,20 @@ fn mergeContours(
     allocator: std.mem.Allocator,
 ) !bool {
     const max_verts = ca.nverts + cb.nverts + 2;
-    const verts = try allocator.alloc(i32, max_verts * 4);
+    const verts = try allocator.alloc(i32, @as(usize, @intCast(max_verts)) * 4);
 
     var nv: usize = 0;
 
     // Копируем контур A, начиная с ia
-    for (0..ca.nverts + 1) |i| {
-        const src_idx = (ia + i) % ca.nverts;
+    for (0..@as(usize, @intCast(ca.nverts)) + 1) |i| {
+        const src_idx = (ia + i) % @as(usize, @intCast(ca.nverts));
         @memcpy(verts[nv * 4 .. nv * 4 + 4], ca.verts[src_idx * 4 .. src_idx * 4 + 4]);
         nv += 1;
     }
 
     // Копируем контур B, начиная с ib
-    for (0..cb.nverts + 1) |i| {
-        const src_idx = (ib + i) % cb.nverts;
+    for (0..@as(usize, @intCast(cb.nverts)) + 1) |i| {
+        const src_idx = (ib + i) % @as(usize, @intCast(cb.nverts));
         @memcpy(verts[nv * 4 .. nv * 4 + 4], cb.verts[src_idx * 4 .. src_idx * 4 + 4]);
         nv += 1;
     }
@@ -963,7 +964,7 @@ fn mergeContours(
     // Освобождаем старый массив и заменяем новым
     allocator.free(ca.verts);
     ca.verts = verts;
-    ca.nverts = nv;
+    ca.nverts = @intCast(nv);
 
     return true;
 }
@@ -978,9 +979,9 @@ fn mergeRegionHoles(
     std.mem.sort(ContourHole, region.holes[0..region.nholes], {}, compareHoles);
 
     // Подсчитываем максимальное количество вершин
-    var max_verts: usize = if (region.outline) |outline| outline.nverts else 0;
+    var max_verts: usize = if (region.outline) |outline| @intCast(outline.nverts) else 0;
     for (0..region.nholes) |i| {
-        max_verts += region.holes[i].contour.nverts;
+        max_verts += @intCast(region.holes[i].contour.nverts);
     }
 
     const diags = try allocator.alloc(PotentialDiagonal, max_verts);
@@ -996,12 +997,12 @@ fn mergeRegionHoles(
         var best_vertex = region.holes[i].leftmost;
 
         // Пытаемся найти лучшую точку соединения
-        for (0..hole.nverts) |_| {
+        for (0..@intCast(hole.nverts)) |_| {
             // Находим потенциальные диагонали
             var ndiags: usize = 0;
             const corner = hole.verts[best_vertex * 4 .. best_vertex * 4 + 4];
 
-            for (0..outline.nverts) |j| {
+            for (0..@intCast(outline.nverts)) |j| {
                 const j_i32: i32 = @intCast(j);
                 const n_i32: i32 = @intCast(outline.nverts);
                 if (inCone(j_i32, n_i32, outline.verts, corner)) {
@@ -1044,21 +1045,21 @@ fn mergeRegionHoles(
                 break;
 
             // Все диагонали пересекаются, пробуем следующую вершину
-            best_vertex = (best_vertex + 1) % hole.nverts;
+            best_vertex = (best_vertex + 1) % @as(usize, @intCast(hole.nverts));
         }
 
         if (index == -1) {
-            ctx.log(.warn, "mergeRegionHoles: Failed to find merge points for outline and hole", .{});
+            ctx.log(.warning, "mergeRegionHoles: Failed to find merge points for outline and hole", .{});
             continue;
         }
 
         const merge_ok = mergeContours(outline, hole, @intCast(index), best_vertex, allocator) catch |err| {
-            ctx.log(.warn, "mergeRegionHoles: Failed to merge contours: {any}", .{err});
+            ctx.log(.warning, "mergeRegionHoles: Failed to merge contours: {any}", .{err});
             continue;
         };
 
         if (!merge_ok) {
-            ctx.log(.warn, "mergeRegionHoles: mergeContours returned false", .{});
+            ctx.log(.warning, "mergeRegionHoles: mergeContours returned false", .{});
         }
     }
 }

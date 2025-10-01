@@ -313,7 +313,7 @@ fn floodRegion(
     var count: usize = 0;
 
     while (stack.items.len > 0) {
-        const back = stack.pop();
+        const back = stack.pop().?; // Safe to unwrap since we checked len > 0
         const cx = back.x;
         const cy = back.y;
         const ci: usize = @intCast(back.index);
@@ -663,7 +663,7 @@ pub fn buildRegions(
         chf.spans[i].reg = src_reg[i];
     }
 
-    ctx.log(.info, "buildRegions: Created {d} regions", .{region_id - 1});
+    ctx.log(.progress, "buildRegions: Created {d} regions", .{region_id - 1});
 }
 
 /// Sweep span for monotone partitioning

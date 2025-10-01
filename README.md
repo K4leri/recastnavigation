@@ -63,8 +63,16 @@ zig build
 
 ### Run Tests
 ```bash
+# Run all tests
 zig build test
+
+# Run integration tests only
+zig build test-integration
 ```
+
+**Current Test Status:**
+- ✅ 5/5 integration tests passing
+- ⚠️ 2 known memory leaks (non-critical, see KNOWN_ISSUES.md)
 
 ### Run Examples
 ```bash
@@ -196,6 +204,14 @@ const unsigned char RC_WALKABLE_AREA = 63;
 - Zero allocations in hot paths (pathfinding)
 - Leverage Zig's comptime for code specialization
 - Optional SIMD for vector operations
+
+## Known Issues
+
+**Memory Leaks in CompactHeightfield** (Non-Critical)
+- Small memory leak when `buildCompactHeightfield()` reallocates arrays
+- Tests pass successfully despite leak
+- Attempted fix causes test hang - under investigation
+- See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) for full details
 
 ## Contributing
 

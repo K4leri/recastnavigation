@@ -1,18 +1,19 @@
 // Detail mesh generation for Recast
 const std = @import("std");
 const config = @import("config.zig");
+const context_mod = @import("../context.zig");
 const heightfield = @import("heightfield.zig");
 const polymesh = @import("polymesh.zig");
 
-const Context = config.Context;
+const Context = context_mod.Context;
 const CompactHeightfield = heightfield.CompactHeightfield;
 const CompactSpan = heightfield.CompactSpan;
 const CompactCell = heightfield.CompactCell;
 const PolyMesh = polymesh.PolyMesh;
 const PolyMeshDetail = polymesh.PolyMeshDetail;
 
-const RC_UNSET_HEIGHT = config.RC_UNSET_HEIGHT;
-const RC_MULTIPLE_REGS = config.RC_MULTIPLE_REGS;
+const RC_UNSET_HEIGHT = config.SPAN_MAX_HEIGHT;
+const RC_MULTIPLE_REGS = config.MULTIPLE_REGS;
 const RC_MESH_NULL_IDX = config.MESH_NULL_IDX;
 const NOT_CONNECTED = config.NOT_CONNECTED;
 
@@ -167,9 +168,9 @@ fn distToTriMesh(
     var dmin = std.math.floatMax(f32);
     var i: i32 = 0;
     while (i < ntris) : (i += 1) {
-        const va = verts + @as(usize, @intCast(tris[i * 4 + 0])) * 3;
-        const vb = verts + @as(usize, @intCast(tris[i * 4 + 1])) * 3;
-        const vc = verts + @as(usize, @intCast(tris[i * 4 + 2])) * 3;
+        const va = verts + @as(usize, @intCast(tris[@as(usize, @intCast(i * 4 + 0))])) * 3;
+        const vb = verts + @as(usize, @intCast(tris[@as(usize, @intCast(i * 4 + 1))])) * 3;
+        const vc = verts + @as(usize, @intCast(tris[@as(usize, @intCast(i * 4 + 2))])) * 3;
         const d = distPtTri(p, va, vb, vc);
         if (d < dmin) dmin = d;
     }
@@ -290,8 +291,8 @@ fn getHeight(
             if (nx >= 0 and nx < hp.width and nz >= 0 and nz < hp.height) {
                 const nh = hp.data[@as(usize, @intCast(nx + nz * hp.width))];
                 if (nh != RC_UNSET_HEIGHT) {
-                    const d = @abs(nx * cs + hp.xmin * cs - fx) +
-                        @abs(nz * cs + hp.ymin * cs - fz);
+                    const d = @abs(@as(f32, @floatFromInt(nx)) * cs + @as(f32, @floatFromInt(hp.xmin)) * cs - fx) +
+                        @abs(@as(f32, @floatFromInt(nz)) * cs + @as(f32, @floatFromInt(hp.ymin)) * cs - fz);
                     if (d < dmin) {
                         h = nh;
                         dmin = d;
@@ -556,7 +557,7 @@ fn delaunayHull(
         const t_idx = @as(usize, @intCast(i * 4));
         const t = tris.items[t_idx .. t_idx + 4];
         if (t[0] == -1 or t[1] == -1 or t[2] == -1) {
-            ctx.log(.warn, "delaunayHull: Removing dangling face {d} [{d},{d},{d}].", .{ i, t[0], t[1], t[2] });
+            ctx.log(.warning, "delaunayHull: Removing dangling face {d} [{d},{d},{d}].", .{ i, t[0], t[1], t[2] });
             const last_idx = tris.items.len - 4;
             t[0] = tris.items[last_idx + 0];
             t[1] = tris.items[last_idx + 1];
@@ -614,7 +615,7 @@ fn triangulateHull(
     var right: i32 = nhull - 1;
 
     while (left < right) {
-        const nleft = (left + 1) % nhull;
+        const nleft = @mod(left + 1, nhull);
         const nright = if (right - 1 < 0) nhull - 1 else right - 1;
 
         const cvleft_idx = @as(usize, @intCast(hull[@as(usize, @intCast(left))] * 3));
@@ -667,7 +668,7 @@ fn seedArrayWithPolyCenter(
     var start_cell_x: i32 = 0;
     var start_cell_y: i32 = 0;
     var start_span_index: i32 = -1;
-    var dmin: i32 = RC_UNSET_HEIGHT;
+    var dmin: i32 = @intCast(RC_UNSET_HEIGHT);
 
     var j: usize = 0;
     while (j < npoly and dmin > 0) : (j += 1) {
@@ -692,7 +693,7 @@ fn seedArrayWithPolyCenter(
                     start_cell_x = ax;
                     start_cell_y = az;
                     start_span_index = @as(i32, @intCast(i));
-                    dmin = d;
+                    dmin = @intCast(d);
                 }
             }
         }
@@ -984,10 +985,10 @@ fn buildPolyDetail(
 
                 if (maxi != -1 and maxd > (sample_max_error * sample_max_error)) {
                     var m2: usize = nidx;
-                    while (m2 > k) : (m2 -= 1) {
+                    while (m2 > @as(usize, @intCast(k))) : (m2 -= 1) {
                         idx[m2] = idx[m2 - 1];
                     }
-                    idx[k + 1] = maxi;
+                    idx[@as(usize, @intCast(k + 1))] = maxi;
                     nidx += 1;
                 } else {
                     k += 1;
@@ -1030,7 +1031,7 @@ fn buildPolyDetail(
     try triangulateHull(nverts.*, verts[0..].ptr, nhull, hull[0..@intCast(nhull)], nin, tris);
 
     if (tris.items.len == 0) {
-        ctx.log(.warn, "buildPolyDetail: Could not triangulate polygon ({d} verts).", .{nverts.*});
+        ctx.log(.warning, "buildPolyDetail: Could not triangulate polygon ({d} verts).", .{nverts.*});
         return true;
     }
 
@@ -1062,7 +1063,7 @@ fn buildPolyDetail(
                     (bmax[1] + bmin[1]) * 0.5,
                     @as(f32, @floatFromInt(z)) * sample_dist,
                 };
-                if (distToPoly(nin, in, &pt) > -sample_dist / 2) continue;
+                if (distToPoly(nin, in.ptr, &pt) > -sample_dist / 2) continue;
 
                 try samples.append(x);
                 try samples.append(@intCast(getHeight(pt[0], pt[1], pt[2], cs, ics, chf.ch, height_search_radius, hp)));
@@ -1158,23 +1159,26 @@ pub fn buildPolyMeshDetail(
     var maxhw: i32 = 0;
     var maxhh: i32 = 0;
 
-    const bounds = try allocator.alloc(i32, mesh.npolys * 4);
+    const bounds = try allocator.alloc(i32, @as(usize, @intCast(mesh.npolys)) * 4);
     defer allocator.free(bounds);
 
-    const poly = try allocator.alloc(f32, nvp * 3);
+    const poly = try allocator.alloc(f32, @as(usize, @intCast(nvp)) * 3);
     defer allocator.free(poly);
 
     // Find max size for polygon area
-    for (0..mesh.npolys) |i| {
-        const p = mesh.polys[i * nvp * 2 ..];
+    for (0..@intCast(mesh.npolys)) |i| {
+        const p_offset = i * @as(usize, @intCast(nvp)) * 2;
+        const p = mesh.polys[p_offset .. p_offset + @as(usize, @intCast(nvp))];
         var xmin: i32 = chf.width;
         var xmax: i32 = 0;
         var ymin: i32 = chf.height;
         var ymax: i32 = 0;
 
-        for (0..nvp) |j| {
+        for (0..@intCast(nvp)) |j| {
             if (p[j] == RC_MESH_NULL_IDX) break;
-            const v = mesh.verts[p[j] * 3 ..];
+            // Bounds check to prevent invalid access
+            if (p[j] >= mesh.nverts) break;
+            const v = mesh.verts[@as(usize, p[j]) * 3 ..];
             xmin = @min(xmin, @as(i32, @intCast(v[0])));
             xmax = @max(xmax, @as(i32, @intCast(v[0])));
             ymin = @min(ymin, @as(i32, @intCast(v[2])));
@@ -1212,7 +1216,7 @@ pub fn buildPolyMeshDetail(
     dmesh.nverts = 0;
     dmesh.ntris = 0;
 
-    dmesh.meshes = try allocator.alloc(u32, dmesh.nmeshes * 4);
+    dmesh.meshes = try allocator.alloc(u32, @as(usize, @intCast(dmesh.nmeshes)) * 4);
     @memset(dmesh.meshes, 0);
 
     var vcap = n_poly_verts + n_poly_verts / 2;
@@ -1221,13 +1225,16 @@ pub fn buildPolyMeshDetail(
     dmesh.verts = try allocator.alloc(f32, vcap * 3);
     dmesh.tris = try allocator.alloc(u8, tcap * 4);
 
-    for (0..mesh.npolys) |i| {
-        const p = mesh.polys[i * nvp * 2 ..];
+    for (0..@intCast(mesh.npolys)) |i| {
+        const p_offset = i * @as(usize, @intCast(nvp)) * 2;
+        const p = mesh.polys[p_offset .. p_offset + @as(usize, @intCast(nvp))];
 
         var npoly: usize = 0;
-        for (0..nvp) |j| {
+        for (0..@intCast(nvp)) |j| {
             if (p[j] == RC_MESH_NULL_IDX) break;
-            const v = mesh.verts[p[j] * 3 ..];
+            // Bounds check to prevent invalid access
+            if (p[j] >= mesh.nverts) break;
+            const v = mesh.verts[@as(usize, p[j]) * 3 ..];
             poly[j * 3 + 0] = @as(f32, @floatFromInt(v[0])) * cs;
             poly[j * 3 + 1] = @as(f32, @floatFromInt(v[1])) * ch;
             poly[j * 3 + 2] = @as(f32, @floatFromInt(v[2])) * cs;
@@ -1242,7 +1249,7 @@ pub fn buildPolyMeshDetail(
         try getHeightData(
             ctx,
             chf,
-            p[0..nvp],
+            p[0..@intCast(nvp)],
             @intCast(npoly),
             mesh.verts,
             border_size,
@@ -1272,9 +1279,9 @@ pub fn buildPolyMeshDetail(
 
         // Move detail verts to world space
         for (0..@intCast(nverts)) |j| {
-            verts[j * 3 + 0] += orig[0];
-            verts[j * 3 + 1] += orig[1] + chf.ch;
-            verts[j * 3 + 2] += orig[2];
+            verts[j * 3 + 0] += orig.x;
+            verts[j * 3 + 1] += orig.y + chf.ch;
+            verts[j * 3 + 2] += orig.z;
         }
 
         // Store detail submesh
@@ -1292,27 +1299,27 @@ pub fn buildPolyMeshDetail(
             }
             const new_verts = try allocator.alloc(f32, vcap * 3);
             if (dmesh.nverts > 0) {
-                @memcpy(new_verts[0 .. dmesh.nverts * 3], dmesh.verts[0 .. dmesh.nverts * 3]);
+                @memcpy(new_verts[0 .. @as(usize, @intCast(dmesh.nverts)) * 3], dmesh.verts[0 .. @as(usize, @intCast(dmesh.nverts)) * 3]);
             }
             allocator.free(dmesh.verts);
             dmesh.verts = new_verts;
         }
 
         for (0..@intCast(nverts)) |j| {
-            dmesh.verts[dmesh.nverts * 3 + 0] = verts[j * 3 + 0];
-            dmesh.verts[dmesh.nverts * 3 + 1] = verts[j * 3 + 1];
-            dmesh.verts[dmesh.nverts * 3 + 2] = verts[j * 3 + 2];
+            dmesh.verts[@as(usize, @intCast(dmesh.nverts * 3 + 0))] = verts[j * 3 + 0];
+            dmesh.verts[@as(usize, @intCast(dmesh.nverts * 3 + 1))] = verts[j * 3 + 1];
+            dmesh.verts[@as(usize, @intCast(dmesh.nverts * 3 + 2))] = verts[j * 3 + 2];
             dmesh.nverts += 1;
         }
 
         // Store triangles, allocate more if necessary
-        if (dmesh.ntris + ntris > tcap) {
-            while (dmesh.ntris + ntris > tcap) {
+        if (@as(usize, @intCast(dmesh.ntris)) + ntris > tcap) {
+            while (@as(usize, @intCast(dmesh.ntris)) + ntris > tcap) {
                 tcap += 256;
             }
             const new_tris = try allocator.alloc(u8, tcap * 4);
             if (dmesh.ntris > 0) {
-                @memcpy(new_tris[0 .. dmesh.ntris * 4], dmesh.tris[0 .. dmesh.ntris * 4]);
+                @memcpy(new_tris[0 .. @as(usize, @intCast(dmesh.ntris)) * 4], dmesh.tris[0 .. @as(usize, @intCast(dmesh.ntris)) * 4]);
             }
             allocator.free(dmesh.tris);
             dmesh.tris = new_tris;
@@ -1320,10 +1327,10 @@ pub fn buildPolyMeshDetail(
 
         for (0..ntris) |j| {
             const t = tris.items[j * 4 ..];
-            dmesh.tris[dmesh.ntris * 4 + 0] = @intCast(t[0]);
-            dmesh.tris[dmesh.ntris * 4 + 1] = @intCast(t[1]);
-            dmesh.tris[dmesh.ntris * 4 + 2] = @intCast(t[2]);
-            dmesh.tris[dmesh.ntris * 4 + 3] = @intCast(t[3]);
+            dmesh.tris[@as(usize, @intCast(dmesh.ntris * 4 + 0))] = @intCast(t[0]);
+            dmesh.tris[@as(usize, @intCast(dmesh.ntris * 4 + 1))] = @intCast(t[1]);
+            dmesh.tris[@as(usize, @intCast(dmesh.ntris * 4 + 2))] = @intCast(t[2]);
+            dmesh.tris[@as(usize, @intCast(dmesh.ntris * 4 + 3))] = @intCast(t[3]);
             dmesh.ntris += 1;
         }
     }

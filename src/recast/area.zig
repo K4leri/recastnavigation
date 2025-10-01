@@ -111,15 +111,15 @@ pub fn erodeWalkableArea(
 
                 // Check that there is a non-null adjacent span in each of the 4 cardinal directions
                 var neighbor_count: u32 = 0;
-                var dir: u2 = 0;
+                var dir: u8 = 0;
                 while (dir < 4) : (dir += 1) {
-                    const neighbor_con = span.getCon(dir);
+                    const neighbor_con = span.getCon(@intCast(dir));
                     if (neighbor_con == NOT_CONNECTED) {
                         break;
                     }
 
-                    const neighbor_x = x + heightfield_mod.getDirOffsetX(dir);
-                    const neighbor_z = z + heightfield_mod.getDirOffsetY(dir);
+                    const neighbor_x = x + heightfield_mod.getDirOffsetX(@intCast(dir));
+                    const neighbor_z = z + heightfield_mod.getDirOffsetY(@intCast(dir));
                     const neighbor_cell_idx = @as(usize, @intCast(neighbor_x + neighbor_z * z_stride));
                     const neighbor_span_idx = chf.cells[neighbor_cell_idx].index + neighbor_con;
 

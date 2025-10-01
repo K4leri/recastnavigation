@@ -99,6 +99,10 @@ pub const CONTOUR_REG_MASK: u32 = 0xffff;
 pub const MESH_NULL_IDX: u16 = 0xffff;
 pub const NOT_CONNECTED: u8 = 0x3f;
 
+/// Build contours flag constants
+pub const CONTOUR_TESS_WALL_EDGES: i32 = 0x01;
+pub const CONTOUR_TESS_AREA_EDGES: i32 = 0x02;
+
 /// Build contours flags
 pub const BuildContoursFlags = packed struct {
     tess_wall_edges: bool = false,
