@@ -469,7 +469,9 @@ pub const PathCorridor = struct {
 };
 
 /// Merges corridor after start position moved
-fn mergeCorridorStartMoved(path: []PolyRef, npath: usize, max_path: usize, visited: []const PolyRef) usize {
+/// Merge corridor when start has moved
+/// Public version for testing
+pub fn mergeCorridorStartMoved(path: []PolyRef, npath: usize, max_path: usize, visited: []const PolyRef) usize {
     var furthest_path: isize = -1;
     var furthest_visited: isize = -1;
 
@@ -479,7 +481,9 @@ fn mergeCorridorStartMoved(path: []PolyRef, npath: usize, max_path: usize, visit
         var found = false;
         var j: isize = @as(isize, @intCast(visited.len)) - 1;
         while (j >= 0) : (j -= 1) {
-            if (path[@intCast(i)] == visited[@intCast(j)]) {
+            const ui = @as(usize, @intCast(i));
+            const uj = @as(usize, @intCast(j));
+            if (path[ui] == visited[uj]) {
                 furthest_path = i;
                 furthest_visited = j;
                 found = true;
@@ -494,14 +498,17 @@ fn mergeCorridorStartMoved(path: []PolyRef, npath: usize, max_path: usize, visit
     }
 
     // Concatenate paths
-    const fp: usize = @intCast(furthest_path);
     const fv: usize = @intCast(furthest_visited);
-    const req = visited.len - fv;
+    const fp: usize = @intCast(furthest_path);
+    const nvisited = visited.len;
+
+    // Adjust beginning of the buffer to include the visited
+    const req = nvisited - fv;
     const orig = @min(fp + 1, npath);
     var size = if (npath > orig) npath - orig else 0;
 
     if (req + size > max_path) {
-        size = max_path - req;
+        size = if (max_path > req) max_path - req else 0;
     }
 
     if (size > 0) {
@@ -509,15 +516,14 @@ fn mergeCorridorStartMoved(path: []PolyRef, npath: usize, max_path: usize, visit
     }
 
     // Store visited in reverse order
-    const copy_count = @min(req, max_path);
-    for (0..copy_count) |k| {
-        path[k] = visited[visited.len - 1 - k];
+    const n = @min(req, max_path);
+    for (0..n) |k| {
+        path[k] = visited[(nvisited - 1) - k];
     }
 
-    return req + size;
+    return @min(req + size, max_path);
 }
 
-/// Merges corridor after end position moved
 fn mergeCorridorEndMoved(path: []PolyRef, npath: usize, max_path: usize, visited: []const PolyRef) usize {
     var furthest_path: isize = -1;
     var furthest_visited: isize = -1;
@@ -619,4 +625,82 @@ test "PathCorridor basic" {
     try std.testing.expectEqual(@as(usize, 1), corridor.getPathCount());
     try std.testing.expectEqual(@as(PolyRef, 1), corridor.getFirstPoly());
     try std.testing.expectEqual(@as(PolyRef, 1), corridor.getLastPoly());
+}
+
+test "mergeCorridorStartMoved - empty input" {
+    var path: [0]PolyRef = undefined;
+    const visited: [0]PolyRef = undefined;
+    const result = mergeCorridorStartMoved(&path, 0, 0, &visited);
+    try std.testing.expectEqual(@as(usize, 0), result);
+}
+
+test "mergeCorridorStartMoved - empty visited" {
+    var path = [_]PolyRef{1};
+    const visited: [0]PolyRef = undefined;
+    const result = mergeCorridorStartMoved(&path, 1, 1, &visited);
+    try std.testing.expectEqual(@as(usize, 1), result);
+    try std.testing.expectEqual(@as(PolyRef, 1), path[0]);
+}
+
+test "mergeCorridorStartMoved - empty path" {
+    var path: [0]PolyRef = undefined;
+    const visited = [_]PolyRef{1};
+    const result = mergeCorridorStartMoved(&path, 0, 0, &visited);
+    try std.testing.expectEqual(@as(usize, 0), result);
+}
+
+test "mergeCorridorStartMoved - strip visited points except last" {
+    var path = [_]PolyRef{ 1, 2 };
+    const visited = [_]PolyRef{ 1, 2 };
+    const result = mergeCorridorStartMoved(&path, 2, 2, &visited);
+    try std.testing.expectEqual(@as(usize, 1), result);
+    try std.testing.expectEqual(@as(PolyRef, 2), path[0]);
+}
+
+test "mergeCorridorStartMoved - add visited points in reverse order" {
+    var path = [_]PolyRef{ 1, 2, 0 };
+    const visited = [_]PolyRef{ 1, 2, 3, 4 };
+    const result = mergeCorridorStartMoved(&path, 2, 3, &visited);
+    try std.testing.expectEqual(@as(usize, 3), result);
+    try std.testing.expectEqual(@as(PolyRef, 4), path[0]);
+    try std.testing.expectEqual(@as(PolyRef, 3), path[1]);
+    try std.testing.expectEqual(@as(PolyRef, 2), path[2]);
+}
+
+test "mergeCorridorStartMoved - respect path capacity" {
+    var path = [_]PolyRef{ 1, 2, 0 };
+    const visited = [_]PolyRef{ 1, 2, 3, 4, 5 };
+    const result = mergeCorridorStartMoved(&path, 2, 3, &visited);
+    try std.testing.expectEqual(@as(usize, 3), result);
+    try std.testing.expectEqual(@as(PolyRef, 5), path[0]);
+    try std.testing.expectEqual(@as(PolyRef, 4), path[1]);
+    try std.testing.expectEqual(@as(PolyRef, 3), path[2]);
+}
+
+test "mergeCorridorStartMoved - no intersection case" {
+    var path = [_]PolyRef{ 1, 2 };
+    const visited = [_]PolyRef{ 3, 4 };
+    const result = mergeCorridorStartMoved(&path, 2, 2, &visited);
+    try std.testing.expectEqual(@as(usize, 2), result);
+    try std.testing.expectEqual(@as(PolyRef, 1), path[0]);
+    try std.testing.expectEqual(@as(PolyRef, 2), path[1]);
+}
+
+test "mergeCorridorStartMoved - save unvisited path points" {
+    var path = [_]PolyRef{ 1, 2, 0 };
+    const visited = [_]PolyRef{ 1, 3 };
+    const result = mergeCorridorStartMoved(&path, 2, 3, &visited);
+    try std.testing.expectEqual(@as(usize, 3), result);
+    try std.testing.expectEqual(@as(PolyRef, 3), path[0]);
+    try std.testing.expectEqual(@as(PolyRef, 1), path[1]);
+    try std.testing.expectEqual(@as(PolyRef, 2), path[2]);
+}
+
+test "mergeCorridorStartMoved - save unvisited up to capacity" {
+    var path = [_]PolyRef{ 1, 2 };
+    const visited = [_]PolyRef{ 1, 3 };
+    const result = mergeCorridorStartMoved(&path, 2, 2, &visited);
+    try std.testing.expectEqual(@as(usize, 2), result);
+    try std.testing.expectEqual(@as(PolyRef, 3), path[0]);
+    try std.testing.expectEqual(@as(PolyRef, 1), path[1]);
 }

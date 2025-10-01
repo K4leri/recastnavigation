@@ -108,3 +108,101 @@ pub const FINDPATH_ANY_ANGLE: u32 = 0x02; // Use raycasts during pathfinding to 
 
 /// Ray cast limit for any-angle pathfinding
 pub const RAY_CAST_LIMIT_PROPORTIONS: f32 = 50.0;
+
+/// Calculate 2D triangle area (in XZ plane)
+fn triArea2D(a: *const [3]f32, b: *const [3]f32, c: *const [3]f32) f32 {
+    const abx = b[0] - a[0];
+    const abz = b[2] - a[2];
+    const acx = c[0] - a[0];
+    const acz = c[2] - a[2];
+    return acx * abz - abx * acz;
+}
+
+/// Generate a random point in a convex polygon
+/// @param pts Array of vertex coordinates (x,y,z triplets)
+/// @param npts Number of vertices in polygon
+/// @param areas Work buffer for triangle areas (must be at least npts floats)
+/// @param s Random value [0..1] for selecting triangle
+/// @param t Random value [0..1] for point within triangle
+/// @param out Output point [3]f32
+pub fn randomPointInConvexPoly(pts: []const f32, npts: i32, areas: []f32, s: f32, t: f32, out: *[3]f32) void {
+    // Calculate triangle areas
+    var areasum: f32 = 0.0;
+    var i: i32 = 2;
+    while (i < npts) : (i += 1) {
+        const idx = @as(usize, @intCast(i));
+        const idx_prev = @as(usize, @intCast(i - 1));
+        const p0 = pts[0..3];
+        const p1 = pts[idx_prev * 3 .. idx_prev * 3 + 3];
+        const p2 = pts[idx * 3 .. idx * 3 + 3];
+        areas[idx] = triArea2D(p0[0..3], p1[0..3], p2[0..3]);
+        areasum += @max(0.001, areas[idx]);
+    }
+
+    // Find sub triangle weighted by area
+    const thr = s * areasum;
+    var acc: f32 = 0.0;
+    var u: f32 = 1.0;
+    var tri: i32 = npts - 1;
+
+    i = 2;
+    while (i < npts) : (i += 1) {
+        const idx = @as(usize, @intCast(i));
+        const dacc = areas[idx];
+        if (thr >= acc and thr < (acc + dacc)) {
+            u = (thr - acc) / dacc;
+            tri = i;
+            break;
+        }
+        acc += dacc;
+    }
+
+    const v = @sqrt(t);
+
+    const a = 1.0 - v;
+    const b = (1.0 - u) * v;
+    const c = u * v;
+
+    const tri_usize = @as(usize, @intCast(tri));
+    const tri_prev_usize = @as(usize, @intCast(tri - 1));
+    const pa = pts[0..3];
+    const pb = pts[tri_prev_usize * 3 .. tri_prev_usize * 3 + 3];
+    const pc = pts[tri_usize * 3 .. tri_usize * 3 + 3];
+
+    out[0] = a * pa[0] + b * pb[0] + c * pc[0];
+    out[1] = a * pa[1] + b * pb[1] + c * pc[1];
+    out[2] = a * pa[2] + b * pb[2] + c * pc[2];
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+test "randomPointInConvexPoly - properly works when s is 1.0" {
+    const pts = [_]f32{
+        0.0, 0.0, 0.0,
+        0.0, 0.0, 1.0,
+        1.0, 0.0, 0.0,
+    };
+    const npts: i32 = 3;
+    var areas: [6]f32 = undefined;
+    var out: [3]f32 = undefined;
+
+    // s=0.0, t=1.0 -> point at (0, 0, 1)
+    randomPointInConvexPoly(&pts, npts, &areas, 0.0, 1.0, &out);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), out[0], 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), out[1], 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), out[2], 0.001);
+
+    // s=0.5, t=1.0 -> point at (0.5, 0, 0.5)
+    randomPointInConvexPoly(&pts, npts, &areas, 0.5, 1.0, &out);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.5), out[0], 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), out[1], 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.5), out[2], 0.001);
+
+    // s=1.0, t=1.0 -> point at (1, 0, 0)
+    randomPointInConvexPoly(&pts, npts, &areas, 1.0, 1.0, &out);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), out[0], 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), out[1], 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), out[2], 0.001);
+}

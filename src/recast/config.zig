@@ -104,3 +104,27 @@ pub const BuildContoursFlags = packed struct {
     tess_wall_edges: bool = false,
     tess_area_edges: bool = false,
 };
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+test "calcGridSize - computes grid dimensions" {
+    const verts = [_]Vec3{
+        Vec3.init(1.0, 2.0, 3.0),
+        Vec3.init(0.0, 2.0, 6.0),
+    };
+
+    var bmin: Vec3 = undefined;
+    var bmax: Vec3 = undefined;
+    Config.calcBounds(&verts, &bmin, &bmax);
+
+    const cell_size: f32 = 1.5;
+    var width: i32 = undefined;
+    var height: i32 = undefined;
+
+    Config.calcGridSize(bmin, bmax, cell_size, &width, &height);
+
+    try std.testing.expectEqual(@as(i32, 1), width);
+    try std.testing.expectEqual(@as(i32, 2), height);
+}

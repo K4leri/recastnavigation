@@ -275,19 +275,48 @@ pub fn getDirForOffset(offset_x: i32, offset_z: i32) u2 {
 test "Heightfield creation" {
     const allocator = std.testing.allocator;
 
+    // Setup test data matching C++ test
+    const verts = [_]Vec3{
+        Vec3.init(1.0, 2.0, 3.0),
+        Vec3.init(0.0, 2.0, 6.0),
+    };
+
+    var bmin: Vec3 = undefined;
+    var bmax: Vec3 = undefined;
+    config.Config.calcBounds(&verts, &bmin, &bmax);
+
+    const cell_size: f32 = 1.5;
+    const cell_height: f32 = 2.0;
+
+    var width: i32 = undefined;
+    var height: i32 = undefined;
+    config.Config.calcGridSize(bmin, bmax, cell_size, &width, &height);
+
     var hf = try Heightfield.init(
         allocator,
-        100,
-        100,
-        Vec3.init(0, 0, 0),
-        Vec3.init(100, 10, 100),
-        0.3,
-        0.2,
+        width,
+        height,
+        bmin,
+        bmax,
+        cell_size,
+        cell_height,
     );
     defer hf.deinit();
 
-    try std.testing.expectEqual(@as(i32, 100), hf.width);
-    try std.testing.expectEqual(@as(i32, 100), hf.height);
+    // Verify all properties
+    try std.testing.expectEqual(width, hf.width);
+    try std.testing.expectEqual(height, hf.height);
+
+    try std.testing.expectApproxEqAbs(bmin.x, hf.bmin.x, 0.0001);
+    try std.testing.expectApproxEqAbs(bmin.y, hf.bmin.y, 0.0001);
+    try std.testing.expectApproxEqAbs(bmin.z, hf.bmin.z, 0.0001);
+
+    try std.testing.expectApproxEqAbs(bmax.x, hf.bmax.x, 0.0001);
+    try std.testing.expectApproxEqAbs(bmax.y, hf.bmax.y, 0.0001);
+    try std.testing.expectApproxEqAbs(bmax.z, hf.bmax.z, 0.0001);
+
+    try std.testing.expectApproxEqAbs(cell_size, hf.cs, 0.0001);
+    try std.testing.expectApproxEqAbs(cell_height, hf.ch, 0.0001);
 }
 
 test "CompactHeightfield creation" {

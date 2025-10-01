@@ -5,6 +5,7 @@ const config = @import("config.zig");
 const Context = @import("../context.zig").Context;
 const Vec3 = math.Vec3;
 const Heightfield = heightfield_mod.Heightfield;
+const Span = heightfield_mod.Span;
 const SPAN_MAX_HEIGHT = config.SPAN_MAX_HEIGHT;
 
 /// Axis for polygon division
@@ -534,4 +535,127 @@ test "rasterizeTriangle basic" {
     // Should have created some spans
     const span_count = hf.getSpanCount();
     try std.testing.expect(span_count > 0);
+}
+
+test "rasterizeTriangle - overlapping bb but non-overlapping triangle" {
+    // Minimal repro case for issue #476
+    // Triangle outside heightfield should not create any spans
+    const allocator = std.testing.allocator;
+
+    const cell_size: f32 = 1.0;
+    const cell_height: f32 = 1.0;
+    const width: i32 = 10;
+    const height: i32 = 10;
+    const bmin = Vec3.init(0, 0, 0);
+    const bmax = Vec3.init(10, 10, 10);
+
+    var hf = try Heightfield.init(
+        allocator,
+        width,
+        height,
+        bmin,
+        bmax,
+        cell_size,
+        cell_height,
+    );
+    defer hf.deinit();
+
+    const ctx = Context.init(allocator);
+
+    // Triangle outside of the heightfield
+    const v0 = Vec3.init(-10.0, 5.5, -10.0);
+    const v1 = Vec3.init(-10.0, 5.5, 3.0);
+    const v2 = Vec3.init(3.0, 5.5, -10.0);
+
+    const area: u8 = 42;
+    const flag_merge_thr: i32 = 1;
+
+    try rasterizeTriangle(&ctx, v0, v1, v2, area, &hf, flag_merge_thr);
+
+    // Ensure that no spans were created
+    for (0..@intCast(width)) |x| {
+        for (0..@intCast(height)) |z| {
+            const idx = x + z * @as(usize, @intCast(width));
+            const span = hf.spans[idx];
+            try std.testing.expectEqual(@as(?*Span, null), span);
+        }
+    }
+}
+
+test "rasterizeTriangle - skinny triangle along x axis" {
+    // Triangle smaller than half voxel should not crash
+    const allocator = std.testing.allocator;
+    const config_mod = @import("config.zig");
+
+    const verts = [_]Vec3{
+        Vec3.init(5.0, 0.0, 0.005),
+        Vec3.init(5.0, 0.0, -0.005),
+        Vec3.init(-5.0, 0.0, 0.005),
+    };
+
+    var bmin: Vec3 = undefined;
+    var bmax: Vec3 = undefined;
+    config_mod.Config.calcBounds(&verts, &bmin, &bmax);
+
+    const cell_size: f32 = 1.0;
+    const cell_height: f32 = 1.0;
+
+    var width: i32 = undefined;
+    var height: i32 = undefined;
+    config_mod.Config.calcGridSize(bmin, bmax, cell_size, &width, &height);
+
+    var hf = try Heightfield.init(
+        allocator,
+        width,
+        height,
+        bmin,
+        bmax,
+        cell_size,
+        cell_height,
+    );
+    defer hf.deinit();
+
+    const ctx = Context.init(allocator);
+
+    // Should not crash
+    try rasterizeTriangle(&ctx, verts[0], verts[1], verts[2], 42, &hf, 1);
+}
+
+test "rasterizeTriangle - skinny triangle along z axis" {
+    // Triangle smaller than half voxel should not crash
+    const allocator = std.testing.allocator;
+    const config_mod = @import("config.zig");
+
+    const verts = [_]Vec3{
+        Vec3.init(0.005, 0.0, 5.0),
+        Vec3.init(-0.005, 0.0, 5.0),
+        Vec3.init(0.005, 0.0, -5.0),
+    };
+
+    var bmin: Vec3 = undefined;
+    var bmax: Vec3 = undefined;
+    config_mod.Config.calcBounds(&verts, &bmin, &bmax);
+
+    const cell_size: f32 = 1.0;
+    const cell_height: f32 = 1.0;
+
+    var width: i32 = undefined;
+    var height: i32 = undefined;
+    config_mod.Config.calcGridSize(bmin, bmax, cell_size, &width, &height);
+
+    var hf = try Heightfield.init(
+        allocator,
+        width,
+        height,
+        bmin,
+        bmax,
+        cell_size,
+        cell_height,
+    );
+    defer hf.deinit();
+
+    const ctx = Context.init(allocator);
+
+    // Should not crash
+    try rasterizeTriangle(&ctx, verts[0], verts[1], verts[2], 42, &hf, 1);
 }

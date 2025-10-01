@@ -499,6 +499,36 @@ pub inline fn vcopy(dest: *[3]f32, src: *const [3]f32) void {
     dest[2] = src[2];
 }
 
+/// Selects the minimum value of each element from the specified vectors
+/// Updates mn in place with component-wise minimum
+pub inline fn vmin(mn: *[3]f32, v: *const [3]f32) void {
+    mn[0] = @min(mn[0], v[0]);
+    mn[1] = @min(mn[1], v[1]);
+    mn[2] = @min(mn[2], v[2]);
+}
+
+/// Selects the maximum value of each element from the specified vectors
+/// Updates mx in place with component-wise maximum
+pub inline fn vmax(mx: *[3]f32, v: *const [3]f32) void {
+    mx[0] = @max(mx[0], v[0]);
+    mx[1] = @max(mx[1], v[1]);
+    mx[2] = @max(mx[2], v[2]);
+}
+
+/// Computes the cross product of two vectors
+pub inline fn vcross(dest: *[3]f32, v1: *const [3]f32, v2: *const [3]f32) void {
+    dest[0] = v1[1] * v2[2] - v1[2] * v2[1];
+    dest[1] = v1[2] * v2[0] - v1[0] * v2[2];
+    dest[2] = v1[0] * v2[1] - v1[1] * v2[0];
+}
+
+/// Swap two values
+pub inline fn swap(comptime T: type, a: *T, b: *T) void {
+    const temp = a.*;
+    a.* = b.*;
+    b.* = temp;
+}
+
 /// Check if two vectors are approximately equal
 pub inline fn vequal(a: *const [3]f32, b: *const [3]f32) bool {
     const threshold = sqr(f32, 1.0 / 16384.0);
@@ -662,6 +692,241 @@ test "AABB overlap" {
         Vec3.init(15.0, 15.0, 15.0),
     );
     try std.testing.expect(aabb1.overlaps(aabb2));
+}
+
+// ============================================================================
+// Scalar Mathematical Functions Tests
+// ============================================================================
+
+test "min - returns lowest value" {
+    try std.testing.expectEqual(@as(i32, 1), min(i32, 1, 2));
+    try std.testing.expectEqual(@as(i32, 1), min(i32, 2, 1));
+}
+
+test "min - equal args" {
+    try std.testing.expectEqual(@as(i32, 1), min(i32, 1, 1));
+}
+
+test "max - returns greatest value" {
+    try std.testing.expectEqual(@as(i32, 2), max(i32, 1, 2));
+    try std.testing.expectEqual(@as(i32, 2), max(i32, 2, 1));
+}
+
+test "max - equal args" {
+    try std.testing.expectEqual(@as(i32, 1), max(i32, 1, 1));
+}
+
+test "abs - returns absolute value" {
+    try std.testing.expectEqual(@as(i32, 1), abs(i32, -1));
+    try std.testing.expectEqual(@as(i32, 1), abs(i32, 1));
+    try std.testing.expectEqual(@as(i32, 0), abs(i32, 0));
+}
+
+test "sqr - squares a number" {
+    try std.testing.expectEqual(@as(i32, 4), sqr(i32, 2));
+    try std.testing.expectEqual(@as(i32, 16), sqr(i32, -4));
+    try std.testing.expectEqual(@as(i32, 0), sqr(i32, 0));
+}
+
+test "clamp - higher than range" {
+    try std.testing.expectEqual(@as(i32, 1), clamp(i32, 2, 0, 1));
+}
+
+test "clamp - within range" {
+    try std.testing.expectEqual(@as(i32, 1), clamp(i32, 1, 0, 2));
+}
+
+test "clamp - lower than range" {
+    try std.testing.expectEqual(@as(i32, 1), clamp(i32, 0, 1, 2));
+}
+
+test "sqrt - gets square root" {
+    try std.testing.expectApproxEqAbs(@as(f32, 2.0), @sqrt(@as(f32, 4.0)), 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 9.0), @sqrt(@as(f32, 81.0)), 0.0001);
+}
+
+test "swap - swaps two values" {
+    var one: i32 = 1;
+    var two: i32 = 2;
+    swap(i32, &one, &two);
+    try std.testing.expectEqual(@as(i32, 2), one);
+    try std.testing.expectEqual(@as(i32, 1), two);
+}
+
+// ============================================================================
+// Vector Operations (array-based) Tests
+// ============================================================================
+
+test "vdot - normalized vector with itself" {
+    const v1 = [_]f32{ 1.0, 0.0, 0.0 };
+    const result = vdot(&v1, &v1);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), result, 0.0001);
+}
+
+test "vdot - zero vector with anything is zero" {
+    const v1 = [_]f32{ 1.0, 2.0, 3.0 };
+    const v2 = [_]f32{ 0.0, 0.0, 0.0 };
+    const result = vdot(&v1, &v2);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), result, 0.0001);
+}
+
+test "vmad - scaled add two vectors" {
+    const v1 = [_]f32{ 1.0, 2.0, 3.0 };
+    const v2 = [_]f32{ 0.0, 2.0, 4.0 };
+    var result: [3]f32 = undefined;
+    vmad(&result, &v1, &v2, 2.0);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), result[0], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 6.0), result[1], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 11.0), result[2], 0.0001);
+}
+
+test "vmad - second vector is scaled, first is not" {
+    const v1 = [_]f32{ 1.0, 2.0, 3.0 };
+    const v2 = [_]f32{ 5.0, 6.0, 7.0 };
+    var result: [3]f32 = undefined;
+    vmad(&result, &v1, &v2, 0.0);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), result[0], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 2.0), result[1], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 3.0), result[2], 0.0001);
+}
+
+test "vadd - add two vectors" {
+    const v1 = [_]f32{ 1.0, 2.0, 3.0 };
+    const v2 = [_]f32{ 5.0, 6.0, 7.0 };
+    var result: [3]f32 = undefined;
+    vadd(&result, &v1, &v2);
+    try std.testing.expectApproxEqAbs(@as(f32, 6.0), result[0], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 8.0), result[1], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 10.0), result[2], 0.0001);
+}
+
+test "vsub - subtract two vectors" {
+    const v1 = [_]f32{ 5.0, 4.0, 3.0 };
+    const v2 = [_]f32{ 1.0, 2.0, 3.0 };
+    var result: [3]f32 = undefined;
+    vsub(&result, &v1, &v2);
+    try std.testing.expectApproxEqAbs(@as(f32, 4.0), result[0], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 2.0), result[1], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), result[2], 0.0001);
+}
+
+test "vmin - selects min component from vectors" {
+    var v1 = [_]f32{ 5.0, 4.0, 0.0 };
+    const v2 = [_]f32{ 1.0, 2.0, 9.0 };
+    vmin(&v1, &v2);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), v1[0], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 2.0), v1[1], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), v1[2], 0.0001);
+}
+
+test "vmin - v1 is min" {
+    var v1 = [_]f32{ 1.0, 2.0, 3.0 };
+    const v2 = [_]f32{ 4.0, 5.0, 6.0 };
+    vmin(&v1, &v2);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), v1[0], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 2.0), v1[1], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 3.0), v1[2], 0.0001);
+}
+
+test "vmin - v2 is min" {
+    var v1 = [_]f32{ 4.0, 5.0, 6.0 };
+    const v2 = [_]f32{ 1.0, 2.0, 3.0 };
+    vmin(&v1, &v2);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), v1[0], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 2.0), v1[1], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 3.0), v1[2], 0.0001);
+}
+
+test "vmax - selects max component from vectors" {
+    var v1 = [_]f32{ 5.0, 4.0, 0.0 };
+    const v2 = [_]f32{ 1.0, 2.0, 9.0 };
+    vmax(&v1, &v2);
+    try std.testing.expectApproxEqAbs(@as(f32, 5.0), v1[0], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 4.0), v1[1], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 9.0), v1[2], 0.0001);
+}
+
+test "vmax - v2 is max" {
+    var v1 = [_]f32{ 1.0, 2.0, 3.0 };
+    const v2 = [_]f32{ 4.0, 5.0, 6.0 };
+    vmax(&v1, &v2);
+    try std.testing.expectApproxEqAbs(@as(f32, 4.0), v1[0], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 5.0), v1[1], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 6.0), v1[2], 0.0001);
+}
+
+test "vmax - v1 is max" {
+    var v1 = [_]f32{ 4.0, 5.0, 6.0 };
+    const v2 = [_]f32{ 1.0, 2.0, 3.0 };
+    vmax(&v1, &v2);
+    try std.testing.expectApproxEqAbs(@as(f32, 4.0), v1[0], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 5.0), v1[1], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 6.0), v1[2], 0.0001);
+}
+
+test "vcopy - copies a vector into another vector" {
+    const v1 = [_]f32{ 5.0, 4.0, 0.0 };
+    var result = [_]f32{ 1.0, 2.0, 9.0 };
+    vcopy(&result, &v1);
+    try std.testing.expectApproxEqAbs(@as(f32, 5.0), result[0], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 4.0), result[1], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), result[2], 0.0001);
+    // Check that v1 is unchanged
+    try std.testing.expectApproxEqAbs(@as(f32, 5.0), v1[0], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 4.0), v1[1], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), v1[2], 0.0001);
+}
+
+// ============================================================================
+// Distance and Normalization Tests
+// ============================================================================
+
+test "vdist - distance between two vectors" {
+    const v1 = [_]f32{ 3.0, 1.0, 3.0 };
+    const v2 = [_]f32{ 1.0, 3.0, 1.0 };
+    const result = vdist(&v1, &v2);
+    try std.testing.expectApproxEqAbs(@as(f32, 3.4641), result, 0.001);
+}
+
+test "vdist - distance from zero is magnitude" {
+    const v1 = [_]f32{ 3.0, 1.0, 3.0 };
+    const v2 = [_]f32{ 0.0, 0.0, 0.0 };
+    const distance = vdist(&v1, &v2);
+    const magnitude = @sqrt(sqr(f32, v1[0]) + sqr(f32, v1[1]) + sqr(f32, v1[2]));
+    try std.testing.expectApproxEqAbs(magnitude, distance, 0.0001);
+}
+
+test "vdistSqr - squared distance between two vectors" {
+    const v1 = [_]f32{ 3.0, 1.0, 3.0 };
+    const v2 = [_]f32{ 1.0, 3.0, 1.0 };
+    const result = vdistSqr(&v1, &v2);
+    try std.testing.expectApproxEqAbs(@as(f32, 12.0), result, 0.0001);
+}
+
+test "vnormalize - normalizes a vector" {
+    var v = [_]f32{ 3.0, 4.0, 0.0 };
+    vnormalize(&v);
+    const len = @sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), len, 0.0001);
+}
+
+test "vcross - computes cross product" {
+    const v1 = [_]f32{ 3.0, -3.0, 1.0 };
+    const v2 = [_]f32{ 4.0, 9.0, 2.0 };
+    var result: [3]f32 = undefined;
+    vcross(&result, &v1, &v2);
+    try std.testing.expectApproxEqAbs(@as(f32, -15.0), result[0], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, -2.0), result[1], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 39.0), result[2], 0.0001);
+}
+
+test "vcross - cross product with itself is zero" {
+    const v1 = [_]f32{ 3.0, -3.0, 1.0 };
+    var result: [3]f32 = undefined;
+    vcross(&result, &v1, &v1);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), result[0], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), result[1], 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), result[2], 0.0001);
 }
 
 /// Project polygon onto an axis, returning min and max projection values
