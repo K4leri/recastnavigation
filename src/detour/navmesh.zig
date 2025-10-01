@@ -248,6 +248,24 @@ pub const NavMeshParams = struct {
     }
 };
 
+/// Tile state for serialization (non-structural data)
+const TileState = struct {
+    magic: i32,
+    version: i32,
+    ref: TileRef,
+};
+
+/// Polygon state for serialization (flags and area)
+const PolyState = struct {
+    flags: u16,
+    area: u8,
+};
+
+/// Align value to 4-byte boundary
+inline fn align4(x: usize) usize {
+    return (x + 3) & ~@as(usize, 3);
+}
+
 /// Navigation mesh
 pub const NavMesh = struct {
     params: NavMeshParams,
@@ -1506,6 +1524,100 @@ pub const NavMesh = struct {
         end_pos[0] = tile.verts[v1 + 0];
         end_pos[1] = tile.verts[v1 + 1];
         end_pos[2] = tile.verts[v1 + 2];
+    }
+
+    /// Gets the size of the buffer required to store the specified tile's state
+    ///  @param[in]  tile    The tile
+    /// @return The size of the buffer required to store the state
+    pub fn getTileStateSize(self: *const Self, tile: *const MeshTile) usize {
+        _ = self;
+        if (tile.header == null) return 0;
+        const header_size = align4(@sizeOf(TileState));
+        const poly_state_size = align4(@sizeOf(PolyState) * @as(usize, @intCast(tile.header.?.poly_count)));
+        return header_size + poly_state_size;
+    }
+
+    /// Stores the non-structural state of the tile in the specified buffer (flags, area ids, etc.)
+    ///  @param[in]   tile           The tile
+    ///  @param[out]  data           The buffer to store the tile's state in
+    ///  @param[in]   max_data_size  The size of the data buffer
+    /// @return Status flags for the operation
+    pub fn storeTileState(self: *const Self, tile: *const MeshTile, data: []u8) !void {
+        // Make sure there is enough space to store the state
+        const size_req = self.getTileStateSize(tile);
+        if (data.len < size_req) {
+            return error.BufferTooSmall;
+        }
+
+        var offset: usize = 0;
+
+        // Store tile state header
+        const tile_state = TileState{
+            .magic = common.NAVMESH_STATE_MAGIC,
+            .version = common.NAVMESH_STATE_VERSION,
+            .ref = self.getTileRef(tile),
+        };
+        const tile_state_bytes = std.mem.asBytes(&tile_state);
+        @memcpy(data[offset..][0..tile_state_bytes.len], tile_state_bytes);
+        offset += align4(@sizeOf(TileState));
+
+        // Store per-polygon state
+        if (tile.header) |header| {
+            for (0..@intCast(header.poly_count)) |i| {
+                const poly = &tile.polys[i];
+                const poly_state = PolyState{
+                    .flags = poly.flags,
+                    .area = poly.getArea(),
+                };
+                const poly_state_bytes = std.mem.asBytes(&poly_state);
+                @memcpy(data[offset..][0..poly_state_bytes.len], poly_state_bytes);
+                offset += @sizeOf(PolyState);
+            }
+        }
+    }
+
+    /// Restores the state of the tile
+    ///  @param[in]  tile           The tile
+    ///  @param[in]  data           The new state (obtained from storeTileState)
+    ///  @param[in]  max_data_size  The size of the state within the data buffer
+    /// @return Status flags for the operation
+    pub fn restoreTileState(self: *const Self, tile: *MeshTile, data: []const u8) !void {
+        // Make sure there is enough space to restore the state
+        const size_req = self.getTileStateSize(tile);
+        if (data.len < size_req) {
+            return error.InvalidParam;
+        }
+
+        var offset: usize = 0;
+
+        // Read tile state header
+        const tile_state_size = @sizeOf(TileState);
+        const tile_state_bytes = data[offset..][0..tile_state_size];
+        const tile_state: *const TileState = @ptrCast(@alignCast(tile_state_bytes.ptr));
+        offset += align4(tile_state_size);
+
+        // Check that the restore is possible
+        if (tile_state.magic != common.NAVMESH_STATE_MAGIC) {
+            return error.WrongMagic;
+        }
+        if (tile_state.version != common.NAVMESH_STATE_VERSION) {
+            return error.WrongVersion;
+        }
+        if (tile_state.ref != self.getTileRef(tile)) {
+            return error.InvalidParam;
+        }
+
+        // Restore per-polygon state
+        if (tile.header) |header| {
+            for (0..@intCast(header.poly_count)) |i| {
+                const poly_state_bytes = data[offset..][0..@sizeOf(PolyState)];
+                const poly_state: *const PolyState = @ptrCast(@alignCast(poly_state_bytes.ptr));
+                offset += @sizeOf(PolyState);
+
+                tile.polys[i].flags = poly_state.flags;
+                tile.polys[i].setArea(poly_state.area);
+            }
+        }
     }
 };
 

@@ -502,6 +502,115 @@ fn calcAreaOfPolygon2D(verts: []const i32, nverts: usize) i32 {
     return @divTrunc(area + 1, 2);
 }
 
+// ============================================================================
+// Геометрические вспомогательные функции для hole merging
+// ============================================================================
+
+/// Получить предыдущий индекс (циклический)
+inline fn prev(i: i32, n: i32) i32 {
+    return if (i - 1 >= 0) i - 1 else n - 1;
+}
+
+/// Получить следующий индекс (циклический)
+inline fn next(i: i32, n: i32) i32 {
+    return if (i + 1 < n) i + 1 else 0;
+}
+
+/// Вычисляет удвоенную площадь треугольника (signed area)
+inline fn area2(a: []const i32, b: []const i32, c: []const i32) i32 {
+    return (b[0] - a[0]) * (c[2] - a[2]) - (c[0] - a[0]) * (b[2] - a[2]);
+}
+
+/// Возвращает true если c строго слева от направленной линии a->b
+inline fn left(a: []const i32, b: []const i32, c: []const i32) bool {
+    return area2(a, b, c) < 0;
+}
+
+/// Возвращает true если c слева или на линии a->b
+inline fn leftOn(a: []const i32, b: []const i32, c: []const i32) bool {
+    return area2(a, b, c) <= 0;
+}
+
+/// Возвращает true если точки коллинеарны
+inline fn collinear(a: []const i32, b: []const i32, c: []const i32) bool {
+    return area2(a, b, c) == 0;
+}
+
+/// Возвращает true если ab и cd пересекаются (proper intersection)
+fn intersectProp(a: []const i32, b: []const i32, c: []const i32, d: []const i32) bool {
+    // Исключаем improper cases
+    if (collinear(a, b, c) or collinear(a, b, d) or
+        collinear(c, d, a) or collinear(c, d, b))
+        return false;
+
+    return (left(a, b, c) != left(a, b, d)) and (left(c, d, a) != left(c, d, b));
+}
+
+/// Возвращает true если точки коллинеарны и c лежит на отрезке ab
+fn between(a: []const i32, b: []const i32, c: []const i32) bool {
+    if (!collinear(a, b, c))
+        return false;
+
+    // Если ab не вертикален, проверяем по x; иначе по z
+    if (a[0] != b[0])
+        return ((a[0] <= c[0]) and (c[0] <= b[0])) or ((a[0] >= c[0]) and (c[0] >= b[0]))
+    else
+        return ((a[2] <= c[2]) and (c[2] <= b[2])) or ((a[2] >= c[2]) and (c[2] >= b[2]));
+}
+
+/// Возвращает true если отрезки ab и cd пересекаются
+fn intersect(a: []const i32, b: []const i32, c: []const i32, d: []const i32) bool {
+    if (intersectProp(a, b, c, d))
+        return true
+    else if (between(a, b, c) or between(a, b, d) or
+        between(c, d, a) or between(c, d, b))
+        return true
+    else
+        return false;
+}
+
+/// Проверяет пересекает ли отрезок d0-d1 контур
+fn intersectSegContour(d0: []const i32, d1: []const i32, i: i32, n: i32, verts: []const i32) bool {
+    // Для каждого ребра (k, k+1) контура P
+    var k: i32 = 0;
+    while (k < n) : (k += 1) {
+        const k1 = next(k, n);
+        // Пропускаем рёбра, инцидентные i
+        if (i == k or i == k1)
+            continue;
+
+        const k_usize: usize = @intCast(k);
+        const k1_usize: usize = @intCast(k1);
+        const p0 = verts[k_usize * 4 .. k_usize * 4 + 4];
+        const p1 = verts[k1_usize * 4 .. k1_usize * 4 + 4];
+
+        if (vequal(d0, p0) or vequal(d1, p0) or vequal(d0, p1) or vequal(d1, p1))
+            continue;
+
+        if (intersect(d0, d1, p0, p1))
+            return true;
+    }
+    return false;
+}
+
+/// Проверяет лежит ли точка pj в конусе вершины i
+fn inCone(i: i32, n: i32, verts: []const i32, pj: []const i32) bool {
+    const i_usize: usize = @intCast(i);
+    const i1_usize: usize = @intCast(next(i, n));
+    const in1_usize: usize = @intCast(prev(i, n));
+
+    const pi = verts[i_usize * 4 .. i_usize * 4 + 4];
+    const pi1 = verts[i1_usize * 4 .. i1_usize * 4 + 4];
+    const pin1 = verts[in1_usize * 4 .. in1_usize * 4 + 4];
+
+    // Если P[i] выпуклая вершина [i+1 left or on (i-1,i)]
+    if (leftOn(pin1, pi, pi1))
+        return left(pi, pj, pin1) and left(pj, pi, pi1);
+
+    // Иначе P[i] вогнутая
+    return !(leftOn(pi, pj, pi1) and leftOn(pj, pi, pin1));
+}
+
 /// Builds contours from a compact heightfield
 pub fn buildContours(
     ctx: *const Context,
@@ -674,11 +783,284 @@ pub fn buildContours(
         }
     }
 
+    // Merge holes if needed
+    if (contours.items.len > 0) {
+        ctx.log(.debug, "buildContours: Checking for holes...", .{});
+
+        // Calculate winding of all contours
+        const winding = try allocator.alloc(i8, contours.items.len);
+        defer allocator.free(winding);
+
+        var nholes: usize = 0;
+        for (contours.items, 0..) |*cont, i| {
+            // Если контур закручен назад, это hole
+            winding[i] = if (calcAreaOfPolygon2D(cont.verts, cont.nverts) < 0) @as(i8, -1) else @as(i8, 1);
+            if (winding[i] < 0) {
+                nholes += 1;
+            }
+        }
+
+        if (nholes > 0) {
+            ctx.log(.debug, "buildContours: Found {d} holes, merging...", .{nholes});
+
+            // Собираем outline и holes по регионам
+            const nregions: usize = @intCast(chf.max_regions + 1);
+            const regions = try allocator.alloc(ContourRegion, nregions);
+            defer allocator.free(regions);
+            @memset(regions, .{ .outline = null, .holes = &[_]ContourHole{}, .nholes = 0 });
+
+            const holes_storage = try allocator.alloc(ContourHole, contours.items.len);
+            defer allocator.free(holes_storage);
+            @memset(holes_storage, .{ .contour = undefined, .minx = 0, .minz = 0, .leftmost = 0 });
+
+            // Первый проход: устанавливаем outline и считаем holes
+            for (contours.items, 0..) |*cont, i| {
+                const reg_idx: usize = @intCast(cont.reg);
+                if (winding[i] > 0) {
+                    // Положительный winding - это outline
+                    if (regions[reg_idx].outline != null) {
+                        ctx.log(.err, "buildContours: Multiple outlines for region {d}", .{cont.reg});
+                    }
+                    regions[reg_idx].outline = cont;
+                } else {
+                    // Отрицательный winding - это hole
+                    regions[reg_idx].nholes += 1;
+                }
+            }
+
+            // Выделяем места для holes в каждом регионе
+            var index: usize = 0;
+            for (0..nregions) |i| {
+                if (regions[i].nholes > 0) {
+                    regions[i].holes = holes_storage[index .. index + regions[i].nholes];
+                    index += regions[i].nholes;
+                    regions[i].nholes = 0; // Сбросим для повторного использования
+                }
+            }
+
+            // Второй проход: заполняем holes и вычисляем leftmost
+            for (contours.items, 0..) |*cont, i| {
+                const reg_idx: usize = @intCast(cont.reg);
+                if (winding[i] < 0) {
+                    const leftmost_info = findLeftMostVertex(cont);
+                    const hole_idx = regions[reg_idx].nholes;
+                    regions[reg_idx].holes[hole_idx] = .{
+                        .contour = cont,
+                        .minx = leftmost_info.minx,
+                        .minz = leftmost_info.minz,
+                        .leftmost = leftmost_info.leftmost,
+                    };
+                    regions[reg_idx].nholes += 1;
+                }
+            }
+
+            // Объединяем holes для каждого региона
+            for (0..nregions) |i| {
+                if (regions[i].nholes == 0) continue;
+
+                if (regions[i].outline != null) {
+                    try mergeRegionHoles(ctx, &regions[i], allocator);
+                } else {
+                    ctx.log(.err, "buildContours: Bad outline for region {d}, contour simplification is likely too aggressive", .{i});
+                }
+            }
+
+            ctx.log(.info, "buildContours: Merged {d} holes", .{nholes});
+        }
+    }
+
     // Transfer ownership to contour set
     cset.conts = try contours.toOwnedSlice();
     cset.nconts = @intCast(cset.conts.len);
 
     ctx.log(.info, "buildContours: Created {d} contours", .{cset.nconts});
+}
+
+// ============================================================================
+// Hole merging - структуры и функции
+// ============================================================================
+
+/// Информация об отверстии (hole) в контуре
+const ContourHole = struct {
+    contour: *Contour,
+    minx: i32,
+    minz: i32,
+    leftmost: usize,
+};
+
+/// Регион с outline и holes
+const ContourRegion = struct {
+    outline: ?*Contour,
+    holes: []ContourHole,
+    nholes: usize,
+};
+
+/// Потенциальная диагональ для соединения outline с hole
+const PotentialDiagonal = struct {
+    vert: i32,
+    dist: i32,
+};
+
+/// Находит leftmost вершину контура
+fn findLeftMostVertex(contour: *const Contour) struct { minx: i32, minz: i32, leftmost: usize } {
+    var minx = contour.verts[0];
+    var minz = contour.verts[2];
+    var leftmost: usize = 0;
+
+    for (1..contour.nverts) |i| {
+        const x = contour.verts[i * 4 + 0];
+        const z = contour.verts[i * 4 + 2];
+        if (x < minx or (x == minx and z < minz)) {
+            minx = x;
+            minz = z;
+            leftmost = i;
+        }
+    }
+
+    return .{ .minx = minx, .minz = minz, .leftmost = leftmost };
+}
+
+/// Функция сравнения для сортировки holes (для std.sort)
+fn compareHoles(_: void, a: ContourHole, b: ContourHole) bool {
+    if (a.minx == b.minx) {
+        return a.minz < b.minz;
+    }
+    return a.minx < b.minx;
+}
+
+/// Функция сравнения для сортировки потенциальных диагоналей
+fn compareDiagonals(_: void, a: PotentialDiagonal, b: PotentialDiagonal) bool {
+    return a.dist < b.dist;
+}
+
+/// Объединяет два контура через вершины ia и ib
+fn mergeContours(
+    ca: *Contour,
+    cb: *const Contour,
+    ia: usize,
+    ib: usize,
+    allocator: std.mem.Allocator,
+) !bool {
+    const max_verts = ca.nverts + cb.nverts + 2;
+    const verts = try allocator.alloc(i32, max_verts * 4);
+
+    var nv: usize = 0;
+
+    // Копируем контур A, начиная с ia
+    for (0..ca.nverts + 1) |i| {
+        const src_idx = (ia + i) % ca.nverts;
+        @memcpy(verts[nv * 4 .. nv * 4 + 4], ca.verts[src_idx * 4 .. src_idx * 4 + 4]);
+        nv += 1;
+    }
+
+    // Копируем контур B, начиная с ib
+    for (0..cb.nverts + 1) |i| {
+        const src_idx = (ib + i) % cb.nverts;
+        @memcpy(verts[nv * 4 .. nv * 4 + 4], cb.verts[src_idx * 4 .. src_idx * 4 + 4]);
+        nv += 1;
+    }
+
+    // Освобождаем старый массив и заменяем новым
+    allocator.free(ca.verts);
+    ca.verts = verts;
+    ca.nverts = nv;
+
+    return true;
+}
+
+/// Объединяет все holes региона с его outline
+fn mergeRegionHoles(
+    ctx: *const Context,
+    region: *ContourRegion,
+    allocator: std.mem.Allocator,
+) !void {
+    // Сортируем holes слева направо
+    std.mem.sort(ContourHole, region.holes[0..region.nholes], {}, compareHoles);
+
+    // Подсчитываем максимальное количество вершин
+    var max_verts: usize = if (region.outline) |outline| outline.nverts else 0;
+    for (0..region.nholes) |i| {
+        max_verts += region.holes[i].contour.nverts;
+    }
+
+    const diags = try allocator.alloc(PotentialDiagonal, max_verts);
+    defer allocator.free(diags);
+
+    var outline = region.outline orelse return;
+
+    // Объединяем holes в outline по одному
+    for (0..region.nholes) |i| {
+        const hole = region.holes[i].contour;
+
+        var index: i32 = -1;
+        var best_vertex = region.holes[i].leftmost;
+
+        // Пытаемся найти лучшую точку соединения
+        for (0..hole.nverts) |_| {
+            // Находим потенциальные диагонали
+            var ndiags: usize = 0;
+            const corner = hole.verts[best_vertex * 4 .. best_vertex * 4 + 4];
+
+            for (0..outline.nverts) |j| {
+                const j_i32: i32 = @intCast(j);
+                const n_i32: i32 = @intCast(outline.nverts);
+                if (inCone(j_i32, n_i32, outline.verts, corner)) {
+                    const dx = outline.verts[j * 4 + 0] - corner[0];
+                    const dz = outline.verts[j * 4 + 2] - corner[2];
+                    diags[ndiags] = .{
+                        .vert = j_i32,
+                        .dist = dx * dx + dz * dz,
+                    };
+                    ndiags += 1;
+                }
+            }
+
+            // Сортируем диагонали по расстоянию
+            std.mem.sort(PotentialDiagonal, diags[0..ndiags], {}, compareDiagonals);
+
+            // Находим диагональ, которая не пересекает контур
+            index = -1;
+            for (0..ndiags) |j| {
+                const pt = outline.verts[@as(usize, @intCast(diags[j].vert)) * 4 ..@as(usize, @intCast(diags[j].vert)) * 4 + 4];
+                const vert_i32: i32 = @intCast(diags[j].vert);
+                const n_outline: i32 = @intCast(outline.nverts);
+                var intersects = intersectSegContour(pt, corner, vert_i32, n_outline, outline.verts);
+
+                // Проверяем пересечение с остальными holes
+                var k: usize = i;
+                while (k < region.nholes and !intersects) : (k += 1) {
+                    const n_hole: i32 = @intCast(region.holes[k].contour.nverts);
+                    intersects = intersects or intersectSegContour(pt, corner, -1, n_hole, region.holes[k].contour.verts);
+                }
+
+                if (!intersects) {
+                    index = diags[j].vert;
+                    break;
+                }
+            }
+
+            // Если нашли непересекающуюся диагональ, прекращаем поиск
+            if (index != -1)
+                break;
+
+            // Все диагонали пересекаются, пробуем следующую вершину
+            best_vertex = (best_vertex + 1) % hole.nverts;
+        }
+
+        if (index == -1) {
+            ctx.log(.warn, "mergeRegionHoles: Failed to find merge points for outline and hole", .{});
+            continue;
+        }
+
+        const merge_ok = mergeContours(outline, hole, @intCast(index), best_vertex, allocator) catch |err| {
+            ctx.log(.warn, "mergeRegionHoles: Failed to merge contours: {any}", .{err});
+            continue;
+        };
+
+        if (!merge_ok) {
+            ctx.log(.warn, "mergeRegionHoles: mergeContours returned false", .{});
+        }
+    }
 }
 
 // Tests

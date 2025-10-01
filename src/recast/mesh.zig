@@ -438,6 +438,542 @@ fn countPolyVerts(p: []const u16, nvp: usize) usize {
     return nvp;
 }
 
+/// Left test for u16 coordinates (used for polygon merging convexity check)
+inline fn uleft(a: []const u16, b: []const u16, c: []const u16) bool {
+    return (@as(i32, @intCast(b[0])) - @as(i32, @intCast(a[0]))) *
+           (@as(i32, @intCast(c[2])) - @as(i32, @intCast(a[2]))) -
+           (@as(i32, @intCast(c[0])) - @as(i32, @intCast(a[0]))) *
+           (@as(i32, @intCast(b[2])) - @as(i32, @intCast(a[2]))) < 0;
+}
+
+/// Returns merge value for two polygons if they can be merged (shared edge + convexity check)
+/// Returns -1 if polygons cannot be merged
+/// ea and eb are output parameters for edge indices
+fn getPolyMergeValue(
+    pa: []u16,
+    pb: []u16,
+    verts: []const u16,
+    ea: *i32,
+    eb: *i32,
+    nvp: usize,
+) i32 {
+    const na = countPolyVerts(pa, nvp);
+    const nb = countPolyVerts(pb, nvp);
+
+    // If the merged polygon would be too big, do not merge
+    if (na + nb - 2 > nvp) {
+        return -1;
+    }
+
+    // Check if the polygons share an edge
+    ea.* = -1;
+    eb.* = -1;
+
+    for (0..na) |i| {
+        var va0 = pa[i];
+        var va1 = pa[(i + 1) % na];
+        if (va0 > va1) {
+            const tmp = va0;
+            va0 = va1;
+            va1 = tmp;
+        }
+        for (0..nb) |j| {
+            var vb0 = pb[j];
+            var vb1 = pb[(j + 1) % nb];
+            if (vb0 > vb1) {
+                const tmp = vb0;
+                vb0 = vb1;
+                vb1 = tmp;
+            }
+            if (va0 == vb0 and va1 == vb1) {
+                ea.* = @intCast(i);
+                eb.* = @intCast(j);
+                break;
+            }
+        }
+    }
+
+    // No common edge, cannot merge
+    if (ea.* == -1 or eb.* == -1) {
+        return -1;
+    }
+
+    // Check to see if the merged polygon would be convex
+    const ea_usize: usize = @intCast(ea.*);
+    const eb_usize: usize = @intCast(eb.*);
+
+    var va = pa[(ea_usize + na - 1) % na];
+    var vb = pa[ea_usize];
+    var vc = pb[(eb_usize + 2) % nb];
+    if (!uleft(verts[@as(usize, va) * 3 ..], verts[@as(usize, vb) * 3 ..], verts[@as(usize, vc) * 3 ..])) {
+        return -1;
+    }
+
+    va = pb[(eb_usize + nb - 1) % nb];
+    vb = pb[eb_usize];
+    vc = pa[(ea_usize + 2) % na];
+    if (!uleft(verts[@as(usize, va) * 3 ..], verts[@as(usize, vb) * 3 ..], verts[@as(usize, vc) * 3 ..])) {
+        return -1;
+    }
+
+    va = pa[ea_usize];
+    vb = pa[(ea_usize + 1) % na];
+
+    const dx = @as(i32, @intCast(verts[@as(usize, va) * 3 + 0])) - @as(i32, @intCast(verts[@as(usize, vb) * 3 + 0]));
+    const dy = @as(i32, @intCast(verts[@as(usize, va) * 3 + 2])) - @as(i32, @intCast(verts[@as(usize, vb) * 3 + 2]));
+
+    return dx * dx + dy * dy;
+}
+
+/// Merges two polygons pa and pb by shared edge (ea, eb) into pa
+/// tmp is temporary storage for nvp vertices
+fn mergePolyVerts(
+    pa: []u16,
+    pb: []const u16,
+    ea: usize,
+    eb: usize,
+    tmp: []u16,
+    nvp: usize,
+) void {
+    const na = countPolyVerts(pa, nvp);
+    const nb = countPolyVerts(pb, nvp);
+
+    // Merge polygons
+    @memset(tmp[0..nvp], 0xff);
+    var n: usize = 0;
+
+    // Add pa
+    for (0..na - 1) |i| {
+        tmp[n] = pa[(ea + 1 + i) % na];
+        n += 1;
+    }
+
+    // Add pb
+    for (0..nb - 1) |i| {
+        tmp[n] = pb[(eb + 1 + i) % nb];
+        n += 1;
+    }
+
+    @memcpy(pa[0..nvp], tmp[0..nvp]);
+}
+
+/// Checks if a vertex can be removed from the mesh
+fn canRemoveVertex(
+    ctx: *const Context,
+    mesh: *const PolyMesh,
+    rem: u16,
+    allocator: std.mem.Allocator,
+) !bool {
+    const nvp: usize = @intCast(mesh.nvp);
+
+    // Count number of polygons to remove
+    var num_touched_verts: i32 = 0;
+    var num_remaining_edges: i32 = 0;
+    for (0..@intCast(mesh.npolys)) |i| {
+        const p = mesh.polys[i * nvp * 2 .. i * nvp * 2 + nvp];
+        const nv = countPolyVerts(p, nvp);
+        var num_removed: i32 = 0;
+        var num_verts: i32 = 0;
+        for (0..nv) |j| {
+            if (p[j] == rem) {
+                num_touched_verts += 1;
+                num_removed += 1;
+            }
+            num_verts += 1;
+        }
+        if (num_removed > 0) {
+            num_remaining_edges += num_verts - (num_removed + 1);
+        }
+    }
+
+    // There would be too few edges remaining to create a polygon
+    if (num_remaining_edges <= 2) {
+        return false;
+    }
+
+    // Find edges which share the removed vertex
+    const max_edges: usize = @intCast(num_touched_verts * 2);
+    const edges = try allocator.alloc(i32, max_edges * 3);
+    defer allocator.free(edges);
+    var nedges: usize = 0;
+
+    for (0..@intCast(mesh.npolys)) |i| {
+        const p = mesh.polys[i * nvp * 2 .. i * nvp * 2 + nvp];
+        const nv = countPolyVerts(p, nvp);
+
+        // Collect edges which touch the removed vertex
+        var j: usize = 0;
+        var k: usize = nv - 1;
+        while (j < nv) : ({
+            k = j;
+            j += 1;
+        }) {
+            if (p[j] == rem or p[k] == rem) {
+                // Arrange edge so that a=rem
+                var a: i32 = @intCast(p[j]);
+                var b: i32 = @intCast(p[k]);
+                if (b == rem) {
+                    const tmp = a;
+                    a = b;
+                    b = tmp;
+                }
+
+                // Check if the edge exists
+                var exists = false;
+                for (0..nedges) |m| {
+                    const e = edges[m * 3 .. m * 3 + 3];
+                    if (e[1] == b) {
+                        // Exists, increment vertex share count
+                        e[2] += 1;
+                        exists = true;
+                        break;
+                    }
+                }
+
+                // Add new edge
+                if (!exists) {
+                    if (nedges >= max_edges) {
+                        ctx.log(.warn, "canRemoveVertex: Too many edges", .{});
+                        return false;
+                    }
+                    edges[nedges * 3 + 0] = a;
+                    edges[nedges * 3 + 1] = b;
+                    edges[nedges * 3 + 2] = 1;
+                    nedges += 1;
+                }
+            }
+        }
+    }
+
+    // There should be no more than 2 open edges
+    var num_open_edges: i32 = 0;
+    for (0..nedges) |i| {
+        if (edges[i * 3 + 2] < 2) {
+            num_open_edges += 1;
+        }
+    }
+    if (num_open_edges > 2) {
+        return false;
+    }
+
+    return true;
+}
+
+/// Helper to add element to front of array
+inline fn pushFront(v: i32, arr: []i32, an: *usize) void {
+    var i: usize = an.*;
+    while (i > 0) : (i -= 1) {
+        arr[i] = arr[i - 1];
+    }
+    arr[0] = v;
+    an.* += 1;
+}
+
+/// Helper to add element to back of array
+inline fn pushBack(v: i32, arr: []i32, an: *usize) void {
+    arr[an.*] = v;
+    an.* += 1;
+}
+
+/// Removes a vertex from the mesh and retriangulates the resulting hole
+fn removeVertex(
+    ctx: *const Context,
+    mesh: *PolyMesh,
+    rem: u16,
+    max_tris: usize,
+    allocator: std.mem.Allocator,
+) !void {
+    const nvp: usize = @intCast(mesh.nvp);
+
+    // Count number of polygons to remove
+    var num_removed_verts: usize = 0;
+    for (0..@intCast(mesh.npolys)) |i| {
+        const p = mesh.polys[i * nvp * 2 .. i * nvp * 2 + nvp];
+        const nv = countPolyVerts(p, nvp);
+        for (0..nv) |j| {
+            if (p[j] == rem) {
+                num_removed_verts += 1;
+            }
+        }
+    }
+
+    const edges = try allocator.alloc(i32, num_removed_verts * nvp * 4);
+    defer allocator.free(edges);
+    var nedges: usize = 0;
+
+    const hole = try allocator.alloc(i32, num_removed_verts * nvp);
+    defer allocator.free(hole);
+    var nhole: usize = 0;
+
+    const hreg = try allocator.alloc(i32, num_removed_verts * nvp);
+    defer allocator.free(hreg);
+
+    const harea = try allocator.alloc(i32, num_removed_verts * nvp);
+    defer allocator.free(harea);
+
+    var i: usize = 0;
+    while (i < @as(usize, @intCast(mesh.npolys))) {
+        const p = mesh.polys[i * nvp * 2 .. i * nvp * 2 + nvp];
+        const nv = countPolyVerts(p, nvp);
+        var has_rem = false;
+        for (0..nv) |j| {
+            if (p[j] == rem) {
+                has_rem = true;
+                break;
+            }
+        }
+
+        if (has_rem) {
+            // Collect edges which do not touch the removed vertex
+            var j: usize = 0;
+            var k: usize = nv - 1;
+            while (j < nv) : ({
+                k = j;
+                j += 1;
+            }) {
+                if (p[j] != rem and p[k] != rem) {
+                    edges[nedges * 4 + 0] = @intCast(p[k]);
+                    edges[nedges * 4 + 1] = @intCast(p[j]);
+                    edges[nedges * 4 + 2] = @intCast(mesh.regs[i]);
+                    edges[nedges * 4 + 3] = @intCast(mesh.areas[i]);
+                    nedges += 1;
+                }
+            }
+
+            // Remove the polygon
+            const p2 = mesh.polys[(@as(usize, @intCast(mesh.npolys)) - 1) * nvp * 2 .. (@as(usize, @intCast(mesh.npolys)) - 1) * nvp * 2 + nvp];
+            if (p.ptr != p2.ptr) {
+                @memcpy(@constCast(p), p2);
+            }
+            @memset(@constCast(p[nvp..nvp * 2]), 0xff);
+            mesh.regs[i] = mesh.regs[@intCast(mesh.npolys - 1)];
+            mesh.areas[i] = mesh.areas[@intCast(mesh.npolys - 1)];
+            mesh.npolys -= 1;
+        } else {
+            i += 1;
+        }
+    }
+
+    // Remove vertex
+    const rem_usize: usize = @intCast(rem);
+    var vi: usize = rem_usize;
+    while (vi < @as(usize, @intCast(mesh.nverts)) - 1) : (vi += 1) {
+        mesh.verts[vi * 3 + 0] = mesh.verts[(vi + 1) * 3 + 0];
+        mesh.verts[vi * 3 + 1] = mesh.verts[(vi + 1) * 3 + 1];
+        mesh.verts[vi * 3 + 2] = mesh.verts[(vi + 1) * 3 + 2];
+    }
+    mesh.nverts -= 1;
+
+    // Adjust indices to match the removed vertex layout
+    for (0..@intCast(mesh.npolys)) |pi| {
+        const p = mesh.polys[pi * nvp * 2 .. pi * nvp * 2 + nvp];
+        const nv = countPolyVerts(p, nvp);
+        for (0..nv) |j| {
+            if (p[j] > rem) {
+                p[j] -= 1;
+            }
+        }
+    }
+
+    for (0..nedges) |ei| {
+        if (edges[ei * 4 + 0] > rem) {
+            edges[ei * 4 + 0] -= 1;
+        }
+        if (edges[ei * 4 + 1] > rem) {
+            edges[ei * 4 + 1] -= 1;
+        }
+    }
+
+    if (nedges == 0) {
+        return;
+    }
+
+    // Start with one vertex, keep appending connected segments
+    pushBack(edges[0], hole, &nhole);
+    pushBack(edges[2], hreg, &nhole);
+    pushBack(edges[3], harea, &nhole);
+
+    while (nedges > 0) {
+        var match = false;
+
+        var ei: usize = 0;
+        while (ei < nedges) {
+            const ea = edges[ei * 4 + 0];
+            const eb = edges[ei * 4 + 1];
+            const r = edges[ei * 4 + 2];
+            const a = edges[ei * 4 + 3];
+            var add = false;
+
+            if (hole[0] == eb) {
+                pushFront(ea, hole, &nhole);
+                pushFront(r, hreg, &nhole);
+                pushFront(a, harea, &nhole);
+                add = true;
+            } else if (hole[nhole - 1] == ea) {
+                pushBack(eb, hole, &nhole);
+                pushBack(r, hreg, &nhole);
+                pushBack(a, harea, &nhole);
+                add = true;
+            }
+
+            if (add) {
+                // Remove the edge
+                edges[ei * 4 + 0] = edges[(nedges - 1) * 4 + 0];
+                edges[ei * 4 + 1] = edges[(nedges - 1) * 4 + 1];
+                edges[ei * 4 + 2] = edges[(nedges - 1) * 4 + 2];
+                edges[ei * 4 + 3] = edges[(nedges - 1) * 4 + 3];
+                nedges -= 1;
+                match = true;
+            } else {
+                ei += 1;
+            }
+        }
+
+        if (!match) {
+            break;
+        }
+    }
+
+    const tris = try allocator.alloc(i32, nhole * 3);
+    defer allocator.free(tris);
+
+    const tverts = try allocator.alloc(i32, nhole * 4);
+    defer allocator.free(tverts);
+
+    const thole = try allocator.alloc(i32, nhole);
+    defer allocator.free(thole);
+
+    // Generate temp vertex array for triangulation
+    for (0..nhole) |hi| {
+        const pi: usize = @intCast(hole[hi]);
+        tverts[hi * 4 + 0] = @intCast(mesh.verts[pi * 3 + 0]);
+        tverts[hi * 4 + 1] = @intCast(mesh.verts[pi * 3 + 1]);
+        tverts[hi * 4 + 2] = @intCast(mesh.verts[pi * 3 + 2]);
+        tverts[hi * 4 + 3] = 0;
+        thole[hi] = @intCast(hi);
+    }
+
+    // Triangulate the hole
+    var ntris = triangulate(@intCast(nhole), tverts, thole, tris);
+    if (ntris < 0) {
+        ntris = -ntris;
+        ctx.log(.warn, "removeVertex: triangulate() returned bad results", .{});
+    }
+
+    const ntris_usize: usize = @intCast(ntris);
+    const polys = try allocator.alloc(u16, (ntris_usize + 1) * nvp);
+    defer allocator.free(polys);
+
+    const pregs = try allocator.alloc(u16, ntris_usize);
+    defer allocator.free(pregs);
+
+    const pareas = try allocator.alloc(u8, ntris_usize);
+    defer allocator.free(pareas);
+
+    const tmp_poly = polys[ntris_usize * nvp ..];
+
+    // Build initial polygons
+    var npolys: usize = 0;
+    @memset(polys[0 .. ntris_usize * nvp], 0xff);
+    for (0..ntris_usize) |j| {
+        const t = tris[j * 3 .. j * 3 + 3];
+        if (t[0] != t[1] and t[0] != t[2] and t[1] != t[2]) {
+            polys[npolys * nvp + 0] = @intCast(hole[@intCast(t[0])]);
+            polys[npolys * nvp + 1] = @intCast(hole[@intCast(t[1])]);
+            polys[npolys * nvp + 2] = @intCast(hole[@intCast(t[2])]);
+
+            const t0: usize = @intCast(t[0]);
+            const t1: usize = @intCast(t[1]);
+            const t2: usize = @intCast(t[2]);
+
+            // Mark if polygon covers multiple regions
+            if (hreg[t0] != hreg[t1] or hreg[t1] != hreg[t2]) {
+                pregs[npolys] = config.RC_MULTIPLE_REGS;
+            } else {
+                pregs[npolys] = @intCast(hreg[t0]);
+            }
+
+            pareas[npolys] = @intCast(harea[t0]);
+            npolys += 1;
+        }
+    }
+
+    if (npolys == 0) {
+        return;
+    }
+
+    // Merge polygons
+    if (nvp > 3) {
+        while (true) {
+            var best_merge_val: i32 = 0;
+            var best_pa: usize = 0;
+            var best_pb: usize = 0;
+            var best_ea: i32 = 0;
+            var best_eb: i32 = 0;
+
+            var j: usize = 0;
+            while (j < npolys - 1) : (j += 1) {
+                const pj = polys[j * nvp .. j * nvp + nvp];
+                var k = j + 1;
+                while (k < npolys) : (k += 1) {
+                    const pk = polys[k * nvp .. k * nvp + nvp];
+                    var ea: i32 = 0;
+                    var eb: i32 = 0;
+                    const v = getPolyMergeValue(@constCast(pj), @constCast(pk), mesh.verts, &ea, &eb, nvp);
+                    if (v > best_merge_val) {
+                        best_merge_val = v;
+                        best_pa = j;
+                        best_pb = k;
+                        best_ea = ea;
+                        best_eb = eb;
+                    }
+                }
+            }
+
+            if (best_merge_val > 0) {
+                const pa = polys[best_pa * nvp .. best_pa * nvp + nvp];
+                const pb = polys[best_pb * nvp .. best_pb * nvp + nvp];
+                mergePolyVerts(@constCast(pa), pb, @intCast(best_ea), @intCast(best_eb), tmp_poly, nvp);
+
+                if (pregs[best_pa] != pregs[best_pb]) {
+                    pregs[best_pa] = config.RC_MULTIPLE_REGS;
+                }
+
+                const last = polys[(npolys - 1) * nvp .. (npolys - 1) * nvp + nvp];
+                if (pb.ptr != last.ptr) {
+                    @memcpy(@constCast(pb), last);
+                }
+                pregs[best_pb] = pregs[npolys - 1];
+                pareas[best_pb] = pareas[npolys - 1];
+                npolys -= 1;
+            } else {
+                break;
+            }
+        }
+    }
+
+    // Store polygons
+    for (0..npolys) |pi| {
+        if (mesh.npolys >= @as(i32, @intCast(max_tris))) {
+            break;
+        }
+
+        const p = mesh.polys[@as(usize, @intCast(mesh.npolys)) * nvp * 2 .. @as(usize, @intCast(mesh.npolys)) * nvp * 2 + nvp * 2];
+        @memset(p, 0xff);
+        for (0..nvp) |j| {
+            p[j] = polys[pi * nvp + j];
+        }
+        mesh.regs[@intCast(mesh.npolys)] = pregs[pi];
+        mesh.areas[@intCast(mesh.npolys)] = pareas[pi];
+        mesh.npolys += 1;
+
+        if (mesh.npolys > @as(i32, @intCast(max_tris))) {
+            ctx.log(.err, "removeVertex: Too many polygons {d} (max:{d})", .{ mesh.npolys, max_tris });
+            return error.TooManyPolygons;
+        }
+    }
+}
+
 /// Builds polygon mesh from contour set
 pub fn buildPolyMesh(
     ctx: *const Context,
@@ -511,6 +1047,9 @@ pub fn buildPolyMesh(
     const polys = try allocator.alloc(u16, max_verts_per_cont * nvp);
     defer allocator.free(polys);
 
+    const tmp_poly = try allocator.alloc(u16, nvp);
+    defer allocator.free(tmp_poly);
+
     // Process each contour
     for (cset.conts) |cont| {
         if (cont.nverts < 3) continue;
@@ -561,7 +1100,52 @@ pub fn buildPolyMesh(
 
         if (npolys == 0) continue;
 
-        // TODO: Merge polygons if nvp > 3
+        // Merge polygons if nvp > 3
+        if (nvp > 3) {
+            while (true) {
+                // Find best polygons to merge
+                var best_merge_val: i32 = 0;
+                var best_pa: usize = 0;
+                var best_pb: usize = 0;
+                var best_ea: i32 = 0;
+                var best_eb: i32 = 0;
+
+                var j: usize = 0;
+                while (j < npolys - 1) : (j += 1) {
+                    const pj = polys[j * nvp ..];
+                    var k = j + 1;
+                    while (k < npolys) : (k += 1) {
+                        const pk = polys[k * nvp ..];
+                        var ea: i32 = 0;
+                        var eb: i32 = 0;
+                        const v = getPolyMergeValue(@constCast(pj[0..nvp]), @constCast(pk[0..nvp]), mesh.verts, &ea, &eb, nvp);
+                        if (v > best_merge_val) {
+                            best_merge_val = v;
+                            best_pa = j;
+                            best_pb = k;
+                            best_ea = ea;
+                            best_eb = eb;
+                        }
+                    }
+                }
+
+                if (best_merge_val > 0) {
+                    // Found best, merge
+                    const pa = polys[best_pa * nvp .. best_pa * nvp + nvp];
+                    const pb = polys[best_pb * nvp .. best_pb * nvp + nvp];
+                    mergePolyVerts(@constCast(pa), pb, @intCast(best_ea), @intCast(best_eb), tmp_poly, nvp);
+
+                    const last_poly = polys[(npolys - 1) * nvp .. (npolys - 1) * nvp + nvp];
+                    if (pb.ptr != last_poly.ptr) {
+                        @memcpy(@constCast(pb), last_poly);
+                    }
+                    npolys -= 1;
+                } else {
+                    // Could not merge any polygons, stop
+                    break;
+                }
+            }
+        }
 
         // Store polygons
         for (0..npolys) |j| {
@@ -581,8 +1165,25 @@ pub fn buildPolyMesh(
         }
     }
 
-    // TODO: Remove edge vertices
-    // TODO: Build adjacency
+    // Remove edge vertices
+    var i: usize = 0;
+    while (i < @as(usize, @intCast(mesh.nverts))) {
+        if (vflags[i] != 0) {
+            if (!(try canRemoveVertex(ctx, mesh, @intCast(i), allocator))) {
+                i += 1;
+                continue;
+            }
+            try removeVertex(ctx, mesh, @intCast(i), max_tris, allocator);
+            // Note: mesh.nverts is already decremented inside removeVertex()!
+            // Fixup vertex flags
+            var j: usize = i;
+            while (j < @as(usize, @intCast(mesh.nverts))) : (j += 1) {
+                vflags[j] = vflags[j + 1];
+            }
+        } else {
+            i += 1;
+        }
+    }
 
     // Build mesh adjacency
     try buildMeshAdjacency(
