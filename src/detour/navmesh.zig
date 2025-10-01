@@ -1198,7 +1198,8 @@ pub const NavMesh = struct {
         tile.flags = .{};
 
         // Update salt
-        tile.salt = (tile.salt + 1) & ((1 << @intCast(self.salt_bits)) - 1);
+        const mask = (@as(u32, 1) << @intCast(self.salt_bits)) - 1;
+        tile.salt = (tile.salt + 1) & mask;
         if (tile.salt == 0) tile.salt = 1;
 
         // Return to freelist

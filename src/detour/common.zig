@@ -103,5 +103,8 @@ pub const FindPathOptions = packed struct {
 /// Raycast options
 pub const RAYCAST_USE_COSTS: u32 = 0x01; // Calculate movement cost along the ray
 
+// Pathfinding options
+pub const FINDPATH_ANY_ANGLE: u32 = 0x02; // Use raycasts during pathfinding to "shortcut" paths
+
 /// Ray cast limit for any-angle pathfinding
 pub const RAY_CAST_LIMIT_PROPORTIONS: f32 = 50.0;

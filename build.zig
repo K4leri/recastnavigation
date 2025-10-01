@@ -55,12 +55,22 @@ pub fn build(b: *std.Build) void {
     });
     example_crowd.root_module.addImport("recast-nav", recast_nav);
 
+    const example_dynamic_obstacles = b.addExecutable(.{
+        .name = "dynamic_obstacles",
+        .root_source_file = b.path("examples/dynamic_obstacles.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    example_dynamic_obstacles.root_module.addImport("recast-nav", recast_nav);
+
     const install_example_simple = b.addInstallArtifact(example_simple, .{});
     const install_example_pathfinding = b.addInstallArtifact(example_pathfinding, .{});
     const install_example_crowd = b.addInstallArtifact(example_crowd, .{});
+    const install_example_dynamic_obstacles = b.addInstallArtifact(example_dynamic_obstacles, .{});
 
     const example_step = b.step("examples", "Build examples");
     example_step.dependOn(&install_example_simple.step);
     example_step.dependOn(&install_example_pathfinding.step);
     example_step.dependOn(&install_example_crowd.step);
+    example_step.dependOn(&install_example_dynamic_obstacles.step);
 }

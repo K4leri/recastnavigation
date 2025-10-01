@@ -423,6 +423,22 @@ pub fn vlen(v: *const [3]f32) f32 {
     return @sqrt(vlenSqr(v));
 }
 
+/// 3D distance
+pub fn vdist(v1: *const [3]f32, v2: *const [3]f32) f32 {
+    const dx = v2[0] - v1[0];
+    const dy = v2[1] - v1[1];
+    const dz = v2[2] - v1[2];
+    return @sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+/// 3D distance squared
+pub fn vdistSqr(v1: *const [3]f32, v2: *const [3]f32) f32 {
+    const dx = v2[0] - v1[0];
+    const dy = v2[1] - v1[1];
+    const dz = v2[2] - v1[2];
+    return dx * dx + dy * dy + dz * dz;
+}
+
 /// 2D distance
 pub fn vdist2D(v1: *const [3]f32, v2: *const [3]f32) f32 {
     const dx = v2[0] - v1[0];

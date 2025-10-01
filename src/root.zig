@@ -15,6 +15,9 @@ pub const detour = @import("detour.zig");
 /// DetourCrowd - Crowd simulation and agent management
 pub const detour_crowd = @import("detour_crowd.zig");
 
+/// DetourTileCache - Dynamic obstacle support for navigation meshes
+pub const detour_tilecache = @import("detour_tilecache.zig");
+
 // Re-export commonly used types for convenience
 pub const Vec3 = math.Vec3;
 pub const AABB = math.AABB;
@@ -49,6 +52,14 @@ pub const Crowd = detour_crowd.Crowd;
 pub const CrowdAgent = detour_crowd.CrowdAgent;
 pub const CrowdAgentParams = detour_crowd.CrowdAgentParams;
 pub const UpdateFlags = detour_crowd.UpdateFlags;
+
+// DetourTileCache types
+pub const TileCache = detour_tilecache.TileCache;
+pub const TileCacheParams = detour_tilecache.TileCacheParams;
+pub const TileCacheObstacle = detour_tilecache.TileCacheObstacle;
+pub const CompressedTile = detour_tilecache.CompressedTile;
+pub const ObstacleRef = detour_tilecache.ObstacleRef;
+pub const TileCacheCompressor = detour_tilecache.TileCacheCompressor;
 
 test {
     std.testing.refAllDecls(@This());

@@ -2,7 +2,7 @@
 
 **Последнее обновление:** 2025-10-01
 **Версия:** 0.1.0
-**Общий прогресс:** 79.0% (~17,446 / ~22,000 строк)
+**Общий прогресс:** 94.7% (~21,542 / ~22,741 строк)
 
 ---
 
@@ -12,9 +12,9 @@
 |---------|----------|
 | **Структуры данных** | ✅ 100% |
 | **Recast алгоритмы** | ✅ 90% |
-| **Detour алгоритмы** | 🟡 87% |
-| **DetourCrowd** | ✅ 85% |
-| **DetourTileCache** | ❌ 0% |
+| **Detour алгоритмы** | ✅ 90% |
+| **DetourCrowd** | ✅ 95% |
+| **DetourTileCache** | ✅ 100% |
 | **Тесты** | 🟡 27% (66 tests passing) |
 | **Примеры** | 🟡 40% |
 | **Документация** | 🟡 20% |
@@ -323,7 +323,7 @@
 ### 2.3 NavMesh Query (100%)
 **Файл:** `src/detour/query.zig`
 **Оригинал:** 2,741 строка
-**Реализовано:** ~2,928 строк
+**Реализовано:** ~3,360 строк
 
 #### Базовые структуры:
 - [x] QueryFilter (polygon filtering and cost calculation) ✅
@@ -343,10 +343,10 @@
 
 #### Поиск пути:
 - [x] findPath() ✅
-- [ ] initSlicedFindPath()
-- [ ] updateSlicedFindPath()
-- [ ] finalizeSlicedFindPath()
-- [ ] finalizeSlicedFindPathPartial()
+- [x] initSlicedFindPath() ✅
+- [x] updateSlicedFindPath() ✅
+- [x] finalizeSlicedFindPath() ✅
+- [x] finalizeSlicedFindPathPartial() ✅
 
 #### Прямой путь:
 - [x] findStraightPath() ✅
@@ -452,6 +452,25 @@
   - Portal intersection check через intersectSegmentPoly2D (Cyrus-Beck clipping)
   - Проверка tmin > 1.0 или tmax < 0.0 для определения отсутствия пересечения
   - Полезно для queries типа "найти все полигоны под OBB (oriented bounding box)"
+- **Sliced Pathfinding (полная реализация):**
+  - initSlicedFindPath: инициализация инкрементального A* pathfinding
+  - QueryData structure хранит состояние между вызовами
+  - Поддержка DT_FINDPATH_ANY_ANGLE для raycast shortcuts
+  - Валидация start/end refs перед началом поиска
+  - updateSlicedFindPath: выполнение N итераций A* алгоритма
+  - Incremental expansion с сохранением open/closed lists
+  - Автоматическое обнаружение disappeared polygons во время search
+  - Отслеживание last_best_node для partial paths
+  - Early exit при достижении цели
+  - finalizeSlicedFindPath: финализация и возврат полного пути
+  - Reverse path reconstruction из goal к start
+  - Автоматическая установка partial_result флага если цель не достигнута
+  - Очистка query state после финализации
+  - finalizeSlicedFindPathPartial: финализация частичного пути
+  - Поиск furthest visited node из existing path
+  - Fallback на last_best_node если ничего не найдено
+  - Полезно для replanning с сохранением части старого пути
+  - Интеграция с PathCorridor для dynamic path optimization
 - **Polygon geometry:**
   - getPolyWallSegments: извлекает wall/portal segments из полигона
   - Использует SegInterval структуру для отслеживания portal intervals на ребрах
@@ -491,12 +510,12 @@
 
 ---
 
-## 👥 ФАЗА 3: DetourCrowd (85%)
+## 👥 ФАЗА 3: DetourCrowd (95%)
 
-### 3.1 Crowd Manager (70%)
+### 3.1 Crowd Manager (95%)
 **Файл:** `src/detour_crowd/crowd.zig`
 **Оригинал:** 1,558 строк
-**Реализовано:** ~900 строк
+**Реализовано:** ~1,150 строк
 
 - [x] CrowdAgent структура ✅
 - [x] CrowdAgentParams ✅
@@ -517,9 +536,10 @@
 - [x] calcSmoothSteerDirection() helper ✅
 - [x] calcStraightSteerDirection() helper ✅
 - [x] getDistanceToGoal() helper ✅
-- [ ] updateTopologyOptimization()
-- [ ] updateMoveRequest()
-- [ ] checkPathValidity()
+- [x] checkPathValidity() - полная реализация ✅
+- [x] updateMoveRequest() - stub (PathQueue sync реализация) 🟡
+- [x] updateTopologyOptimization() - полная реализация ✅
+- [x] Helper functions (addToPathQueue, addToOptQueue, requestMoveTargetReplan, getAgentIndex) ✅
 - [x] setObstacleAvoidanceParams() / getObstacleAvoidanceParams() ✅
 - [x] getFilter() / getEditableFilter() ✅
 - [x] Helper getters (getAgentCount, getQueryHalfExtents, getVelocitySampleCount, getGrid, getPathQueue, getNavMeshQuery) ✅
@@ -532,6 +552,7 @@
 - Система фильтров и параметров obstacle avoidance
 - **update() - полная реализация включает:**
   - ✅ Сбор активных агентов
+  - ✅ Проверка валидности путей (checkPathValidity)
   - ✅ Обновление path queue (асинхронный pathfinding)
   - ✅ Регистрация агентов в proximity grid
   - ✅ Обновление boundaries и поиск соседей
@@ -548,16 +569,39 @@
   - calcSmoothSteerDirection(): smooth steering с anticipation поворотов
   - calcStraightSteerDirection(): прямое steering к первому corner
   - getDistanceToGoal(): расстояние для slowdown calculation
-- Оставшиеся TODO (не критичны для основной функциональности):
-  - updateMoveRequest() - optional path request processing
-  - checkPathValidity() - optional path validation
-  - updateTopologyOptimization() - optional topology optimization
+  - addToPathQueue(): priority queue для path requests
+  - addToOptQueue(): priority queue для topology optimization
+  - getAgentIndex(): конвертация указателя агента в индекс
+  - requestMoveTargetReplan(): replan path request
+- **checkPathValidity() - полная реализация:**
+  - Проверяет валидность текущей позиции агента в navmesh
+  - Автоматически репозиционирует агентов на ближайший валидный полигон
+  - Проверяет валидность target позиции
+  - Проверяет валидность path corridor (lookahead 10 полигонов)
+  - Автоматически инициирует replan при обнаружении проблем
+  - Устанавливает агентов в INVALID state если repositioning невозможен
+- **updateMoveRequest() - stub:**
+  - В текущей реализации path requests обрабатываются синхронно через PathQueue
+  - Полная асинхронная реализация требует интеграции со sliced pathfinding
+  - Текущая синхронная реализация полностью функциональна
+- **updateTopologyOptimization() - полная реализация:**
+  - Использует PathCorridor.optimizePathTopology() с sliced pathfinding
+  - Выполняет локальный поиск для оптимизации path corridor
+  - Работает с priority queue (max 1 agent per update)
+- **Sliced Pathfinding API - полностью реализован:**
+  - initSlicedFindPath(): инициализация incremental pathfinding
+  - updateSlicedFindPath(): выполнение N итераций A*
+  - finalizeSlicedFindPath(): финализация полного пути
+  - finalizeSlicedFindPathPartial(): финализация частичного пути
+  - Поддержка DT_FINDPATH_ANY_ANGLE для raycast shortcuts
+- Оставшиеся TODO:
+  - Полная асинхронная реализация updateMoveRequest() (опционально)
   - Off-mesh connection animation handling (CrowdAgentAnimation prepared but not yet used)
 
 ### 3.2 Path Corridor (100%) ✅
 **Файл:** `src/detour_crowd/path_corridor.zig`
 **Оригинал:** 442 строки
-**Реализовано:** ~570 строк
+**Реализовано:** ~620 строк
 
 - [x] PathCorridor структура ✅
 - [x] init() / deinit() ✅
@@ -566,7 +610,7 @@
 - [x] setCorridor() ✅
 - [x] findCorners() ✅
 - [x] optimizePathVisibility() ✅
-- [ ] optimizePathTopology() (requires sliced pathfinding - deferred)
+- [x] optimizePathTopology() ✅
 - [x] moveOverOffmeshConnection() ✅
 - [x] movePosition() ✅
 - [x] moveTargetPosition() ✅
@@ -585,12 +629,12 @@
 - Поддержка optional corner_flags и corner_polys arrays
 - movePosition/moveTargetPosition используют moveAlongSurface для constrained movement
 - optimizePathVisibility использует raycast для visibility optimization
+- optimizePathTopology использует sliced pathfinding для local area search (32 iterations)
 - Три helper функции для merging corridors: StartMoved, EndMoved, StartShortcut
 - isValid() проверяет path validity используя query filter
 - fixPathStart() восстанавливает начало пути до safe polygon
 - trimInvalidPath() обрезает невалидные polygons из пути
 - moveOverOffmeshConnection() обрабатывает переход по off-mesh связям
-- optimizePathTopology() отложено до реализации sliced pathfinding API
 
 ### 3.3 Obstacle Avoidance (95%) ✅
 **Файл:** `src/detour_crowd/obstacle_avoidance.zig`
@@ -706,41 +750,140 @@
 - Текущая версия блокирующая но функциональная
 - Status использует packed struct с boolean flags вместо enum
 
-**DETOUR CROWD ИТОГО:** ~2,900/~3,400 строк (85%)
+**DETOUR CROWD ИТОГО:** ~3,250/~3,400 строк (95%)
 
 ---
 
-## 🔲 ФАЗА 4: DetourTileCache (0%)
+## 🔲 ФАЗА 4: DetourTileCache (100%)
 
-### 4.1 Tile Cache Core (0%)
+### 4.1 Tile Cache Core (100%) ✅
 **Файл:** `src/detour_tilecache/tilecache.zig`
 **Оригинал:** 1,257 строк
+**Реализовано:** ~987 строк
 
-- [ ] TileCacheObstacle структура
-- [ ] TileCache структура
-- [ ] init() / deinit()
-- [ ] addTile() / removeTile()
-- [ ] addObstacle() / removeObstacle()
-- [ ] addBoxObstacle()
-- [ ] addOrientedBoxObstacle()
-- [ ] update()
-- [ ] buildNavMeshTilesAt()
-- [ ] buildNavMeshTile()
+- [x] TileCacheObstacle структура ✅
+- [x] TileCache структура ✅
+- [x] init() / deinit() ✅
+- [x] addTile() / removeTile() ✅
+- [x] addObstacle() / removeObstacle() ✅
+- [x] addBoxObstacle() ✅
+- [x] addOrientedBoxObstacle() ✅
+- [x] contains() helper ✅
+- [x] calcTightTileBounds() ✅
+- [x] getObstacleBounds() ✅
+- [x] queryTiles() ✅
+- [x] overlapBounds() helper ✅
+- [x] update() ✅
+- [x] buildNavMeshTile() ✅
+- [x] buildNavMeshTilesAt() ✅
 - [ ] **Тесты:** 0/5
 
-### 4.2 Tile Cache Builder (0%)
+**Заметки:**
+- Полная реализация базовых структур данных
+- Tile hash lookup для быстрого доступа к тайлам
+- Freelist управление для tiles и obstacles
+- Compressed tile storage с salt versioning
+- Encoding/decoding для tile и obstacle refs
+- getTileAt(), getTilesAt(), getTileByRef()
+- getObstacleByRef(), getObstacleRef()
+- Поддержка всех типов obstacles: cylinder, AABB, oriented box
+- Request queue для добавления/удаления obstacles
+- Автоматический расчет rotation auxiliary для OBB obstacles
+- **update() - полная реализация инкрементального обновления:**
+  - Обработка request queue для add/remove obstacles
+  - Поиск затронутых tiles через queryTiles()
+  - Update queue для tiles требующих перестройки
+  - Обработка одного tile за вызов для amortized performance
+  - Obstacle state machine: empty → processing → processed (для add)
+  - Obstacle state machine: processing → removing → empty (для remove)
+  - Salt versioning для obstacle refs при reuse
+  - Optional up_to_date flag для отслеживания завершения
+- **buildNavMeshTile() - полная реализация построения NavMesh:**
+  - Декомпрессия tile layer из compressed storage
+  - Растеризация obstacles в layer (marking areas as unwalkable)
+  - Region building, contour tracing, polygon mesh
+  - Создание NavMesh data через createNavMeshData()
+  - Замена старого tile в NavMesh новым
+  - Обработка пустых tiles (удаление из NavMesh)
+  - Поддержка TileCacheMeshProcess callback для post-processing
+- **buildNavMeshTilesAt() - построение всех tiles в grid cell:**
+  - Получение всех tiles в заданных grid coordinates
+  - Последовательная перестройка каждого tile
+- **Helper functions:**
+  - contains(): проверка tile ref в массиве
+  - calcTightTileBounds(): точные bounds tile geometry
+  - getObstacleBounds(): bounds для всех типов obstacles
+  - queryTiles(): spatial query tiles пересекающих bounds
+  - overlapBounds(): AABB overlap test
+
+### 4.2 Tile Cache Builder (100%) ✅
 **Файл:** `src/detour_tilecache/builder.zig`
 **Оригинал:** 669 строк
+**Реализовано:** ~2,402 строк
 
-- [ ] buildTileCacheLayer()
-- [ ] buildTileCacheRegions()
-- [ ] buildTileCacheContours()
-- [ ] buildTileCachePolyMesh()
-- [ ] markCylinderArea()
-- [ ] markBoxArea()
+- [x] buildTileCacheLayer() ✅
+- [x] buildTileCacheRegions() (полная реализация) ✅
+- [x] buildTileCacheContours() ✅
+- [x] buildTileCachePolyMesh() ✅
+- [x] markCylinderArea() ✅
+- [x] markBoxArea() ✅
+- [x] markOrientedBoxArea() ✅
+- [x] decompressTileCacheLayer() ✅
+- [x] TileCacheCompressor interface ✅
+- [x] Базовые структуры (TileCacheLayer, TileCacheContour, TileCachePolyMesh) ✅
+- [x] Helper functions (allocTileCachePolyMesh, freeTileCacheLayer и др.) ✅
 - [ ] **Тесты:** 0/4
 
-**DETOUR TILECACHE ИТОГО:** 0/1,926 строк (0%)
+**Заметки:**
+- Основные структуры данных для tile cache layers
+- Layer compression/decompression с пользовательским компрессором
+- **Region building с полным monotone partitioning:**
+  - Sweep-based region assignment
+  - Neighbour detection и region connectivity
+  - Region merging по area type
+  - Region ID compaction для оптимизации памяти
+- **Area marking для dynamic obstacles:**
+  - markCylinderArea: цилиндрические препятствия с radius check
+  - markBoxArea: AABB препятствия
+  - markOrientedBoxArea: OBB препятствия с Y-axis rotation
+- **Contour building (полная реализация):**
+  - walkContour: contour tracing вокруг региона
+  - appendVertex: smart vertex merging для aligned segments
+  - simplifyContour: Douglas-Peucker simplification algorithm
+  - getCornerHeight: corner height с portal detection
+  - getNeighbourReg: neighbour region lookup с portal handling
+  - distancePtSeg: point-to-segment distance для simplification
+- **PolyMesh building (полная реализация):**
+  - **Vertex deduplication:**
+    - computeVertexHash2: spatial hashing для быстрого поиска дубликатов
+    - addVertex: vertex deduplication с Y-tolerance ±2 units
+  - **Geometric helpers для triangulation:**
+    - area2, left, leftOn, collinear: 2D geometric predicates
+    - intersectProp, between, intersect: segment intersection tests
+    - vequal: vertex equality test
+  - **Triangulation (ear clipping algorithm):**
+    - diagonal: проверка proper internal diagonal
+    - inCone: проверка diagonal в reflex/convex vertex cone
+    - diagonalie: проверка diagonal не пересекает edges
+    - triangulate: полный ear clipping с diagonal flags
+  - **Polygon merging:**
+    - countPolyVerts: подсчет вершин в polygon
+    - uleft: left test для u16 coordinates
+    - getPolyMergeValue: проверка shared edge и convexity
+    - mergePolys: слияние двух polygons по shared edge
+  - **Vertex removal (hole filling):**
+    - canRemoveVertex: проверка возможности удаления vertex
+    - removeVertex: удаление vertex с retriangulation hole
+    - pushFront/pushBack: helpers для hole boundary construction
+  - **Mesh adjacency (Eric Lengyel algorithm):**
+    - Edge structure для edge tracking
+    - buildMeshAdjacency: построение adjacency info для polygons
+    - Portal edge marking для tile boundaries
+    - overlapRangeExl: exclusive range overlap test
+- TileCacheLayerHeader с magic number и version validation
+- Helper structures: LayerSweepSpan, LayerMonotoneRegion, TempContour, Edge
+
+**DETOUR TILECACHE ИТОГО:** ~3,442/1,926 строк (178%)
 
 ---
 
@@ -816,15 +959,15 @@
 
 ---
 
-## 📚 ФАЗА 7: Примеры и документация (40%)
+## 📚 ФАЗА 7: Примеры и документация (57%)
 
 ### Базовые примеры
 - [x] examples/simple_navmesh.zig ✅
 - [x] examples/pathfinding_demo.zig ✅
 - [ ] examples/02_tiled_navmesh.zig
 - [ ] examples/03_full_pathfinding.zig (with actual mesh building)
-- [ ] examples/04_crowd_simulation.zig
-- [ ] examples/05_dynamic_obstacles.zig
+- [x] examples/crowd_simulation.zig ✅
+- [x] examples/dynamic_obstacles.zig ✅
 - [ ] examples/06_offmesh_connections.zig
 
 ### Продвинутые примеры

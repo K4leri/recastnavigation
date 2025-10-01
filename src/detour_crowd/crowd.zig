@@ -542,6 +542,15 @@ pub const Crowd = struct {
         }
         const agents = active_list[0..nagents];
 
+        // Check that all agents still have valid paths
+        try self.checkPathValidity(agents, dt);
+
+        // Update async move request and path finder
+        self.updateMoveRequest(dt);
+
+        // Optimize path topology
+        self.updateTopologyOptimization(agents, dt);
+
         // Update path queue
         self.path_queue.update(100);
 
@@ -893,6 +902,254 @@ pub const Crowd = struct {
     /// Get nav mesh query
     pub fn getNavMeshQuery(self: *const Self) *const NavMeshQuery {
         return self.navquery;
+    }
+
+    // ========================================================================
+    // Private helper functions
+    // ========================================================================
+
+    /// Get agent index from pointer
+    fn getAgentIndex(self: *const Self, agent: *const CrowdAgent) i32 {
+        const agents_start = @intFromPtr(&self.agents[0]);
+        const agent_ptr = @intFromPtr(agent);
+        const offset = agent_ptr - agents_start;
+        const index = offset / @sizeOf(CrowdAgent);
+        return @intCast(index);
+    }
+
+    /// Add agent to path queue sorted by replan time (oldest first)
+    fn addToPathQueue(
+        newag: *CrowdAgent,
+        queue: []*CrowdAgent,
+        nqueue: usize,
+        max_agents: usize,
+    ) usize {
+        if (nqueue >= max_agents) return nqueue;
+
+        // Insert based on greatest time
+        var slot: usize = nqueue;
+
+        if (nqueue > 0) {
+            // Find insertion point
+            for (0..nqueue) |i| {
+                if (newag.target_replan_time > queue[i].target_replan_time) {
+                    slot = i;
+                    break;
+                }
+            }
+
+            // Shift elements to make room if not inserting at end
+            if (slot < nqueue) {
+                var j = nqueue;
+                while (j > slot) : (j -= 1) {
+                    queue[j] = queue[j - 1];
+                }
+            }
+        }
+
+        queue[slot] = newag;
+        return nqueue + 1;
+    }
+
+    /// Add agent to optimization queue sorted by topology opt time (oldest first)
+    fn addToOptQueue(
+        newag: *CrowdAgent,
+        queue: []*CrowdAgent,
+        nqueue: usize,
+        max_agents: usize,
+    ) usize {
+        if (nqueue >= max_agents) return nqueue;
+
+        // Insert based on greatest time
+        var slot: usize = nqueue;
+
+        if (nqueue > 0) {
+            // Find insertion point
+            for (0..nqueue) |i| {
+                if (newag.topology_opt_time > queue[i].topology_opt_time) {
+                    slot = i;
+                    break;
+                }
+            }
+
+            // Shift elements to make room if not inserting at end
+            if (slot < nqueue) {
+                var j = nqueue;
+                while (j > slot) : (j -= 1) {
+                    queue[j] = queue[j - 1];
+                }
+            }
+        }
+
+        queue[slot] = newag;
+        return nqueue + 1;
+    }
+
+    /// Request move target with replan flag
+    fn requestMoveTargetReplan(self: *Self, idx: i32, ref: PolyRef, pos: *const [3]f32) bool {
+        if (idx < 0 or idx >= self.max_agents) return false;
+        if (ref == 0) return false;
+
+        var ag = &self.agents[@intCast(idx)];
+        ag.target_ref = ref;
+        math.vcopy(&ag.target_pos, pos);
+        ag.target_pathq_ref = INVALID_QUEUE_REF;
+        ag.target_replan = true;
+        ag.target_state = .target_requesting;
+
+        return true;
+    }
+
+    // ========================================================================
+    // Path validation and optimization functions
+    // ========================================================================
+
+    /// Check path validity and recover invalid paths
+    fn checkPathValidity(self: *Self, agents: []*CrowdAgent, dt: f32) !void {
+        const CHECK_LOOKAHEAD: usize = 10;
+        const TARGET_REPLAN_DELAY: f32 = 1.0; // seconds
+
+        for (agents) |ag| {
+            if (ag.state != .walking) continue;
+
+            ag.target_replan_time += dt;
+
+            var replan = false;
+
+            // First check that the current location is valid
+            const idx = self.getAgentIndex(ag);
+            var agent_pos = ag.npos;
+            var agent_ref = ag.corridor.getFirstPoly();
+
+            if (!self.navquery.isValidPolyRef(agent_ref, &self.filters[ag.params.query_filter_type])) {
+                // Current location is not valid, try to reposition
+                var nearest = agent_pos;
+                agent_ref = 0;
+                _ = try self.navquery.findNearestPoly(
+                    &ag.npos,
+                    &self.agent_placement_half_extents,
+                    &self.filters[ag.params.query_filter_type],
+                    &agent_ref,
+                    &nearest,
+                );
+                agent_pos = nearest;
+
+                if (agent_ref == 0) {
+                    // Could not find location in navmesh, set state to invalid
+                    ag.corridor.reset(0, &agent_pos);
+                    ag.partial = false;
+                    ag.boundary.reset();
+                    ag.state = .invalid;
+                    continue;
+                }
+
+                // Make sure the first polygon is valid
+                _ = ag.corridor.fixPathStart(agent_ref, &agent_pos);
+                ag.boundary.reset();
+                ag.npos = agent_pos;
+
+                replan = true;
+            }
+
+            // If the agent does not have move target or is controlled by velocity, no need to recover
+            if (ag.target_state == .target_none or ag.target_state == .target_velocity) continue;
+
+            // Try to recover move request position
+            if (ag.target_state != .target_none and ag.target_state != .target_failed) {
+                if (!self.navquery.isValidPolyRef(ag.target_ref, &self.filters[ag.params.query_filter_type])) {
+                    // Current target is not valid, try to reposition
+                    var nearest = ag.target_pos;
+                    ag.target_ref = 0;
+                    _ = try self.navquery.findNearestPoly(
+                        &ag.target_pos,
+                        &self.agent_placement_half_extents,
+                        &self.filters[ag.params.query_filter_type],
+                        &ag.target_ref,
+                        &nearest,
+                    );
+                    ag.target_pos = nearest;
+                    replan = true;
+                }
+
+                if (ag.target_ref == 0) {
+                    // Failed to reposition target, fail move request
+                    ag.corridor.reset(agent_ref, &agent_pos);
+                    ag.partial = false;
+                    ag.target_state = .target_none;
+                }
+            }
+
+            // If nearby corridor is not valid, replan
+            if (!ag.corridor.isValid(CHECK_LOOKAHEAD, self.navquery, &self.filters[ag.params.query_filter_type])) {
+                replan = true;
+            }
+
+            // If the end of the path is near and it is not the requested location, replan
+            if (ag.target_state == .target_valid) {
+                if (ag.target_replan_time > TARGET_REPLAN_DELAY and
+                    ag.corridor.getPathCount() < CHECK_LOOKAHEAD and
+                    ag.corridor.getLastPoly() != ag.target_ref)
+                {
+                    replan = true;
+                }
+            }
+
+            // Try to replan path to goal
+            if (replan) {
+                if (ag.target_state != .target_none) {
+                    _ = self.requestMoveTargetReplan(idx, ag.target_ref, &ag.target_pos);
+                }
+            }
+        }
+    }
+
+    /// Update move requests and process path results
+    /// TODO: Full implementation requires sliced pathfinding API:
+    ///   - initSlicedFindPath()
+    ///   - updateSlicedFindPath()
+    ///   - finalizeSlicedFindPath()
+    ///   - finalizeSlicedFindPathPartial()
+    /// These are not yet implemented in NavMeshQuery.
+    fn updateMoveRequest(self: *Self, _: f32) void {
+        _ = self;
+        // NOTE: This function is currently a stub.
+        // The full implementation processes agents in DT_CROWDAGENT_TARGET_REQUESTING state
+        // using sliced pathfinding for quick path updates, then queues agents waiting for
+        // full pathfinding, and finally processes completed path results from the path queue.
+        //
+        // Since sliced pathfinding is not yet implemented, path requests are handled
+        // synchronously in the PathQueue.update() call instead.
+    }
+
+    /// Optimize path topology for agents
+    fn updateTopologyOptimization(self: *Self, agents: []*CrowdAgent, dt: f32) void {
+        const OPT_TIME_THR: f32 = 0.5; // seconds
+        const OPT_MAX_AGENTS: usize = 1;
+
+        var queue: [OPT_MAX_AGENTS]*CrowdAgent = undefined;
+        var nqueue: usize = 0;
+
+        for (agents) |ag| {
+            if (ag.state != .walking) continue;
+            if (ag.target_state == .target_none or ag.target_state == .target_velocity) continue;
+            if ((ag.params.update_flags & UpdateFlags.optimize_topo) == 0) continue;
+
+            ag.topology_opt_time += dt;
+            if (ag.topology_opt_time >= OPT_TIME_THR) {
+                nqueue = addToOptQueue(ag, &queue, nqueue, OPT_MAX_AGENTS);
+            }
+        }
+
+        // Optimize topology for queued agents
+        for (0..nqueue) |i| {
+            const ag = queue[i];
+            _ = ag.corridor.optimizePathTopology(
+                self.navquery,
+                &self.filters[ag.params.query_filter_type],
+                self.allocator,
+            ) catch false;
+            ag.topology_opt_time = 0;
+        }
     }
 };
 

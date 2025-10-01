@@ -323,6 +323,55 @@ pub const PathCorridor = struct {
         }
     }
 
+    /// Optimize the path using a local area search (partial replanning)
+    /// Uses sliced pathfinding to find a better path through the corridor
+    /// Returns: true if optimization was successful
+    pub fn optimizePathTopology(
+        self: *Self,
+        navquery: *NavMeshQuery,
+        filter: *const QueryFilter,
+        allocator: std.mem.Allocator,
+    ) !bool {
+        if (self.npath < 3) return false;
+
+        const MAX_ITER: u32 = 32;
+        const MAX_RES: usize = 32;
+
+        var res = try allocator.alloc(PolyRef, MAX_RES);
+        defer allocator.free(res);
+
+        // Init sliced pathfinding from start to end of corridor
+        var status = navquery.initSlicedFindPath(
+            self.path[0],
+            self.path[self.npath - 1],
+            &self.pos,
+            &self.target,
+            filter,
+            0, // options
+        );
+
+        if (status.failure) return false;
+
+        // Update pathfinding for MAX_ITER iterations
+        status = navquery.updateSlicedFindPath(MAX_ITER, null);
+        if (status.failure) return false;
+
+        // Finalize with partial path support
+        var nres: usize = 0;
+        status = navquery.finalizeSlicedFindPathPartial(
+            self.path[0..self.npath],
+            res,
+            &nres,
+        );
+
+        if (status.success and nres > 0) {
+            self.npath = mergeCorridorStartShortcut(self.path, self.npath, self.max_path, res[0..nres]);
+            return true;
+        }
+
+        return false;
+    }
+
     /// Fixes the path start to a safe polygon
     pub fn fixPathStart(self: *Self, safe_ref: PolyRef, safe_pos: *const [3]f32) bool {
         math.vcopy(&self.pos, safe_pos);

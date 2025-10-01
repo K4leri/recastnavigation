@@ -2590,6 +2590,439 @@ pub const NavMeshQuery = struct {
         return status;
     }
 
+    // ========================================================================
+    // Sliced Pathfinding API
+    // ========================================================================
+
+    /// Initialize sliced pathfinding query
+    /// Must be followed by updateSlicedFindPath() calls and finalized with
+    /// finalizeSlicedFindPath() or finalizeSlicedFindPathPartial()
+    pub fn initSlicedFindPath(
+        self: *Self,
+        start_ref: PolyRef,
+        end_ref: PolyRef,
+        start_pos: *const [3]f32,
+        end_pos: *const [3]f32,
+        filter: *const QueryFilter,
+        options: u32,
+    ) common.Status {
+        const nav = self.nav orelse return common.Status{ .failure = true };
+        const node_pool = self.node_pool orelse return common.Status{ .failure = true };
+        const open_list = self.open_list orelse return common.Status{ .failure = true };
+
+        // Init path state
+        self.query = QueryData.init();
+        self.query.status.failure = true;
+        self.query.start_ref = start_ref;
+        self.query.end_ref = end_ref;
+        math.vcopy(&self.query.start_pos, start_pos);
+        math.vcopy(&self.query.end_pos, end_pos);
+        self.query.filter = filter;
+        self.query.options = options;
+        self.query.raycast_limit_sqr = std.math.floatMax(f32);
+
+        // Validate input
+        if (!self.isValidPolyRef(start_ref, filter) or !self.isValidPolyRef(end_ref, filter)) {
+            return common.Status{ .failure = true, .invalid_param = true };
+        }
+
+        // Trade quality with performance for DT_FINDPATH_ANY_ANGLE
+        if ((options & common.FINDPATH_ANY_ANGLE) != 0) {
+            const result = nav.getTileAndPolyByRef(start_ref) catch null;
+            if (result) |r| {
+                if (r.tile.header) |header| {
+                    const agent_radius = header.walkable_radius;
+                    const RAY_CAST_LIMIT_PROPORTIONS = 50.0;
+                    self.query.raycast_limit_sqr = math.sqr(f32, agent_radius * RAY_CAST_LIMIT_PROPORTIONS);
+                }
+            }
+        }
+
+        // Special case: start == end
+        if (start_ref == end_ref) {
+            self.query.status = common.Status{ .success = true };
+            return common.Status{ .success = true };
+        }
+
+        node_pool.clear();
+        open_list.clear();
+
+        const H_SCALE = 0.999;
+        var start_node = node_pool.getNode(start_ref, 0) orelse {
+            self.query.status = common.Status{ .failure = true, .out_of_nodes = true };
+            return self.query.status;
+        };
+
+        math.vcopy(&start_node.pos, start_pos);
+        start_node.pidx = 0;
+        start_node.cost = 0;
+        start_node.total = math.vdist(start_pos, end_pos) * H_SCALE;
+        start_node.id = start_ref;
+        start_node.flags.open = true;
+        open_list.push(start_node);
+
+        self.query.status = common.Status{ .in_progress = true };
+        self.query.last_best_node = start_node;
+        self.query.last_best_node_cost = start_node.total;
+
+        return self.query.status;
+    }
+
+    /// Update sliced pathfinding query - performs up to maxIter A* iterations
+    /// Returns: Status (in_progress, success, or failure)
+    pub fn updateSlicedFindPath(self: *Self, max_iter: u32, done_iters: ?*u32) common.Status {
+        if (!self.query.status.in_progress) return self.query.status;
+
+        const nav = self.nav orelse {
+            self.query.status = common.Status{ .failure = true };
+            return self.query.status;
+        };
+        const node_pool = self.node_pool orelse {
+            self.query.status = common.Status{ .failure = true };
+            return self.query.status;
+        };
+        const open_list = self.open_list orelse {
+            self.query.status = common.Status{ .failure = true };
+            return self.query.status;
+        };
+
+        const filter = self.query.filter orelse {
+            self.query.status = common.Status{ .failure = true };
+            return common.Status{ .failure = true };
+        };
+
+        // Make sure the request is still valid
+        if (!self.isValidPolyRef(self.query.start_ref, filter) or !self.isValidPolyRef(self.query.end_ref, filter)) {
+            self.query.status = common.Status{ .failure = true };
+            return common.Status{ .failure = true };
+        }
+
+        const H_SCALE = 0.999;
+        var iter: u32 = 0;
+
+        while (iter < max_iter and !open_list.empty()) {
+            iter += 1;
+
+            // Remove node from open list and put it in closed list
+            var best_node = open_list.pop() orelse break;
+            best_node.flags.open = false;
+            best_node.flags.closed = true;
+
+            // Reached the goal, stop searching
+            if (best_node.id == self.query.end_ref) {
+                self.query.last_best_node = best_node;
+                self.query.status = common.Status{ .success = true };
+                if (done_iters) |di| di.* = iter;
+                return self.query.status;
+            }
+
+            // Get current poly and tile
+            const best_ref = best_node.id;
+            var best_tile: ?*const MeshTile = null;
+            var best_poly: ?*const Poly = null;
+            nav.getTileAndPolyByRefUnsafe(best_ref, &best_tile, &best_poly);
+
+            if (best_tile == null or best_poly == null) {
+                // The polygon has disappeared during the sliced query, fail
+                self.query.status = common.Status{ .failure = true };
+                if (done_iters) |di| di.* = iter;
+                return self.query.status;
+            }
+
+            // Get parent poly
+            var parent_ref: PolyRef = 0;
+            if (best_node.pidx != 0) {
+                const parent_node = node_pool.getNodeAtIdx(best_node.pidx);
+                if (parent_node) |pn| {
+                    parent_ref = pn.id;
+                }
+            }
+
+            // Expand neighbors
+            var i = best_poly.?.first_link;
+            while (i != common.NULL_LINK) : (i = best_tile.?.links[i].next) {
+                const neighbour_ref = best_tile.?.links[i].ref;
+
+                // Skip invalid ids and do not expand back to where we came from
+                if (neighbour_ref == 0 or neighbour_ref == parent_ref) continue;
+
+                // Get neighbour poly and tile
+                var neighbour_tile: ?*const MeshTile = null;
+                var neighbour_poly: ?*const Poly = null;
+                nav.getTileAndPolyByRefUnsafe(neighbour_ref, &neighbour_tile, &neighbour_poly);
+
+                if (!filter.passFilter(neighbour_ref, neighbour_tile.?, neighbour_poly.?)) continue;
+
+                // Get the neighbor node
+                const neighbour_node = node_pool.getNode(neighbour_ref, 0);
+                if (neighbour_node == null) {
+                    self.query.status.out_of_nodes = true;
+                    continue;
+                }
+
+                const nn = neighbour_node.?;
+
+                // Do not expand to nodes that were already visited from the same parent
+                if (nn.pidx != 0 and nn.pidx == best_node.pidx) continue;
+
+                // If the node is visited the first time, calculate node position
+                if (!nn.flags.open and !nn.flags.closed) {
+                    _ = nav.getEdgeMidPoint(
+                        best_ref,
+                        best_poly.?,
+                        best_tile.?,
+                        neighbour_ref,
+                        neighbour_poly.?,
+                        neighbour_tile.?,
+                        &nn.pos,
+                    ) catch continue;
+                }
+
+                // Calculate cost and heuristic
+                const cur_cost = filter.getCost(
+                    &best_node.pos,
+                    &nn.pos,
+                    parent_ref,
+                    null,
+                    null,
+                    best_ref,
+                    best_tile.?,
+                    best_poly.?,
+                    neighbour_ref,
+                    neighbour_tile.?,
+                    neighbour_poly.?,
+                );
+
+                var cost = best_node.cost + cur_cost;
+                var heuristic: f32 = 0;
+
+                // Special case for last node
+                if (neighbour_ref == self.query.end_ref) {
+                    const end_cost = filter.getCost(
+                        &nn.pos,
+                        &self.query.end_pos,
+                        best_ref,
+                        best_tile.?,
+                        best_poly.?,
+                        neighbour_ref,
+                        neighbour_tile.?,
+                        neighbour_poly.?,
+                        0,
+                        null,
+                        null,
+                    );
+                    cost = cost + end_cost;
+                    heuristic = 0;
+                } else {
+                    heuristic = math.vdist(&nn.pos, &self.query.end_pos) * H_SCALE;
+                }
+
+                const total = cost + heuristic;
+
+                // The node is already in open list and the new result is worse, skip
+                if (nn.flags.open and total >= nn.total) continue;
+                // The node is already visited and processed, and the new result is worse, skip
+                if (nn.flags.closed and total >= nn.total) continue;
+
+                // Add or update the node
+                nn.pidx = @intCast(node_pool.getNodeIdx(best_node));
+                nn.id = neighbour_ref;
+                nn.flags.closed = false;
+                nn.cost = cost;
+                nn.total = total;
+
+                if (nn.flags.open) {
+                    // Already in open, update node location
+                    open_list.modify(nn);
+                } else {
+                    // Put the node in open list
+                    nn.flags.open = true;
+                    open_list.push(nn);
+                }
+
+                // Update nearest node to target so far
+                if (heuristic < self.query.last_best_node_cost) {
+                    self.query.last_best_node_cost = heuristic;
+                    self.query.last_best_node = nn;
+                }
+            }
+        }
+
+        // Exhausted all nodes, but could not find path
+        if (open_list.empty()) {
+            self.query.status = common.Status{ .success = true };
+        }
+
+        if (done_iters) |di| di.* = iter;
+        return self.query.status;
+    }
+
+    /// Finalize sliced pathfinding query and return complete path
+    pub fn finalizeSlicedFindPath(
+        self: *Self,
+        path: []PolyRef,
+        path_count: *usize,
+    ) common.Status {
+        path_count.* = 0;
+
+        if (self.query.status.failure) {
+            // Reset query
+            self.query = QueryData.init();
+            return common.Status{ .failure = true };
+        }
+
+        const node_pool = self.node_pool orelse {
+            self.query = QueryData.init();
+            return common.Status{ .failure = true };
+        };
+
+        var n: usize = 0;
+
+        // Special case: start == end
+        if (self.query.start_ref == self.query.end_ref) {
+            path[n] = self.query.start_ref;
+            n += 1;
+        } else {
+            // Check if we found the goal
+            const last_best = self.query.last_best_node orelse {
+                self.query = QueryData.init();
+                return common.Status{ .failure = true };
+            };
+
+            if (last_best.id != self.query.end_ref) {
+                self.query.status.partial_result = true;
+            }
+
+            // Reverse the path
+            var prev: ?*Node = null;
+            var node: ?*Node = last_best;
+
+            while (node) |n_ptr| {
+                const next = if (n_ptr.pidx != 0) node_pool.getNodeAtIdx(n_ptr.pidx) else null;
+                n_ptr.pidx = if (prev) |p| @intCast(node_pool.getNodeIdx(p)) else 0;
+                prev = n_ptr;
+                node = next;
+            }
+
+            // Store path
+            node = prev;
+            while (node) |n_ptr| {
+                const next = if (n_ptr.pidx != 0) node_pool.getNodeAtIdx(n_ptr.pidx) else null;
+
+                if (n < path.len) {
+                    path[n] = n_ptr.id;
+                    n += 1;
+                } else {
+                    self.query.status.buffer_too_small = true;
+                    break;
+                }
+
+                node = next;
+            }
+        }
+
+        const result_status = self.query.status;
+
+        // Reset query
+        self.query = QueryData.init();
+
+        path_count.* = n;
+        return result_status;
+    }
+
+    /// Finalize sliced pathfinding query with partial path support
+    /// Returns path to furthest polygon on existing path that was visited during search
+    pub fn finalizeSlicedFindPathPartial(
+        self: *Self,
+        existing: []const PolyRef,
+        path: []PolyRef,
+        path_count: *usize,
+    ) common.Status {
+        path_count.* = 0;
+
+        if (existing.len == 0 or path.len == 0) {
+            self.query = QueryData.init();
+            return common.Status{ .failure = true, .invalid_param = true };
+        }
+
+        if (self.query.status.failure) {
+            // Reset query
+            self.query = QueryData.init();
+            return common.Status{ .failure = true };
+        }
+
+        const node_pool = self.node_pool orelse {
+            self.query = QueryData.init();
+            return common.Status{ .failure = true };
+        };
+
+        var n: usize = 0;
+
+        // Special case: start == end
+        if (self.query.start_ref == self.query.end_ref) {
+            path[n] = self.query.start_ref;
+            n += 1;
+        } else {
+            // Find furthest existing node that was visited
+            var node: ?*Node = null;
+            var i: usize = existing.len;
+            while (i > 0) {
+                i -= 1;
+                var found_nodes_buf: [1]*Node = undefined;
+                const count = node_pool.findNodes(existing[i], &found_nodes_buf, 1);
+                if (count > 0) {
+                    node = found_nodes_buf[0];
+                    break;
+                }
+            }
+
+            if (node == null) {
+                self.query.status.partial_result = true;
+                node = self.query.last_best_node;
+            }
+
+            const start_node = node orelse {
+                self.query = QueryData.init();
+                return common.Status{ .failure = true };
+            };
+
+            // Reverse the path
+            var prev: ?*Node = null;
+            node = start_node;
+
+            while (node) |n_ptr| {
+                const next = if (n_ptr.pidx != 0) node_pool.getNodeAtIdx(n_ptr.pidx) else null;
+                n_ptr.pidx = if (prev) |p| @intCast(node_pool.getNodeIdx(p)) else 0;
+                prev = n_ptr;
+                node = next;
+            }
+
+            // Store path
+            node = prev;
+            while (node) |n_ptr| {
+                const next = if (n_ptr.pidx != 0) node_pool.getNodeAtIdx(n_ptr.pidx) else null;
+
+                if (n < path.len) {
+                    path[n] = n_ptr.id;
+                    n += 1;
+                } else {
+                    self.query.status.buffer_too_small = true;
+                    break;
+                }
+
+                node = next;
+            }
+        }
+
+        const result_status = self.query.status;
+
+        // Reset query
+        self.query = QueryData.init();
+
+        path_count.* = n;
+        return result_status;
+    }
+
     /// Append a vertex to straight path
     /// Returns: Status with DT_IN_PROGRESS, DT_SUCCESS, or DT_SUCCESS | DT_BUFFER_TOO_SMALL
     fn appendVertex(
