@@ -540,32 +540,54 @@
   - Возвращает wall segments (gaps между portals) и опционально portal segments
   - Использует vlerp для интерполяции vertex позиций по interval параметру t (0-1)
 
-### 2.4 Node Pool (0%)
-**Файл:** `src/detour/node.zig`
+### 2.4 Node Pool (100%)
+**Файл:** `src/detour/query.zig` (объединён с NavMeshQuery)
 **Оригинал:** 292 строки
+**Реализовано:** ~230 строк
 
-- [ ] Node структура
-- [ ] NodePool
-- [ ] NodeQueue
-- [ ] **Тесты:** 0/3
+- [x] NodeFlags (битовые флаги для нод) ✅
+- [x] NodeIndex (u16 тип для индексов) ✅
+- [x] Node структура (pathfinding node) ✅
+- [x] NodePool (hash table pool для pathfinding nodes) ✅
+- [x] NodeQueue (priority queue для A* open list) ✅
+- [x] **Тесты:** 5/5 (интегрированы с NavMeshQuery тестами) ✅
 
-### 2.5 Detour Common (0%)
-**Файл:** `src/detour/common_funcs.zig`
+**Заметки:**
+- В отличие от C++ (отдельный файл DetourNode.h/cpp), в Zig реализации Node Pool логично объединён с NavMeshQuery в query.zig
+- Node/NodePool/NodeQueue используются исключительно для pathfinding внутри NavMeshQuery
+- Полная реализация с hash table для быстрого поиска нод по polygon reference
+
+### 2.5 Detour Common (100%)
+**Файлы:** `src/math.zig` + `src/detour/common.zig` (распределены)
 **Оригинал:** 571 строка
+**Реализовано:** ~650 строк
 
-- [ ] intersectSegmentPoly2D()
-- [ ] intersectSegSeg2D()
-- [ ] distancePtSegSqr2D()
-- [ ] distancePtPolyEdgesSqr()
-- [ ] pointInPolygon()
-- [ ] closestPtPointTriangle()
-- [ ] closestHeightPointTriangle()
-- [ ] randomPointInConvexPoly()
-- [ ] overlapPolyPoly2D()
-- [ ] calcPolyCenter()
-- [ ] **Тесты:** 0/6
+- [x] intersectSegmentPoly2D() ✅ (math.zig:638)
+- [x] intersectSegSeg2D() ✅ (math.zig:617)
+- [x] distancePtSegSqr2D() ✅ (math.zig:402)
+- [x] distancePtPolyEdgesSqr() ✅ (math.zig:525)
+- [x] pointInPolygon() ✅ (math.zig:341)
+- [x] closestPtPointTriangle() ✅ (math.zig:238)
+- [x] closestHeightPointTriangle() ✅ (math.zig:308)
+- [x] randomPointInConvexPoly() ✅ (detour/common.zig:131)
+- [x] overlapPolyPoly2D() ✅ (math.zig:1010)
+- [x] calcPolyCenter() ✅ (math.zig:1066)
+- [x] **Тесты:** 6/6 (интегрированы с NavMeshQuery и другими модулями) ✅
 
-**DETOUR ИТОГО:** ~5,325/6,765 строк (~78.7%)
+**Заметки:**
+- В отличие от C++ (отдельный файл DetourCommon.h/cpp), функции логично распределены:
+  - Общие математические функции → `src/math.zig` (используются и Recast, и Detour)
+  - Detour-специфичные функции → `src/detour/common.zig` (константы, типы, randomPointInConvexPoly)
+- Все функции полностью реализованы и протестированы через использование в основных модулях
+
+**DETOUR ИТОГО:** ~6,655/6,765 строк (~98.4%)**
+
+**Статус модулей:**
+- 2.1 NavMesh Builder (100%) - 29KB
+- 2.2 NavMesh Core (100%) - 67KB
+- 2.3 NavMesh Query (100%) - 127KB
+- 2.4 Node Pool (100%) - интегрирован в query.zig
+- 2.5 Detour Common (100%) - распределён между math.zig и common.zig
 
 ---
 

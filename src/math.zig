@@ -1057,3 +1057,26 @@ pub fn overlapPolyPoly2D(polya: []const f32, npolya: usize, polyb: []const f32, 
     // No separating axis found, polygons overlap
     return true;
 }
+
+/// Derives the centroid of a convex polygon.
+/// @param tc Output centroid [3]f32
+/// @param idx Polygon vertex indices
+/// @param nidx Number of indices in the polygon (must be >= 3)
+/// @param verts Polygon vertices (x,y,z triplets)
+pub fn calcPolyCenter(tc: *[3]f32, idx: []const u16, nidx: usize, verts: []const f32) void {
+    tc[0] = 0.0;
+    tc[1] = 0.0;
+    tc[2] = 0.0;
+
+    for (0..nidx) |j| {
+        const v = verts[idx[j] * 3 .. idx[j] * 3 + 3];
+        tc[0] += v[0];
+        tc[1] += v[1];
+        tc[2] += v[2];
+    }
+
+    const s: f32 = 1.0 / @as(f32, @floatFromInt(nidx));
+    tc[0] *= s;
+    tc[1] *= s;
+    tc[2] *= s;
+}
