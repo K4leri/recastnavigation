@@ -15,8 +15,8 @@
 | **Detour алгоритмы** | ✅ 90% |
 | **DetourCrowd** | ✅ 95% |
 | **DetourTileCache** | ✅ 100% |
-| **Тесты** | 🟡 27% (66 tests passing) |
-| **Примеры** | 🟡 40% |
+| **Тесты** | ✅ 100% (124 tests passing) |
+| **Примеры** | ✅ 70% (7/10 examples) |
 | **Документация** | 🟡 20% |
 
 ---
@@ -74,7 +74,7 @@
 - [x] dividePoly() helper
 - [x] overlapBounds() helper
 - [x] rasterizeTri() internal function
-- [x] **Тесты:** 9/9 ✅
+- [x] **Тесты:** 14/14 ✅ (6 встроенных + 8 в test/)
 
 ### 1.2 Filtering (100%) ✅
 **Файл:** `src/recast/filter.zig`
@@ -85,7 +85,7 @@
 - [x] filterWalkableLowHeightSpans()
 - [x] markWalkableTriangles()
 - [x] clearUnwalkableTriangles()
-- [x] **Тесты:** 11/11 ✅
+- [x] **Тесты:** 13/13 ✅ (3 встроенных + 10 в test/)
 
 ### 1.3 Compact Heightfield (100%) ✅
 **Файл:** `src/recast/compact.zig`
@@ -254,7 +254,7 @@
 - [x] Detail triangle storage and auto-triangulation ✅
 - [x] BV tree creation with quantization ✅
 - [x] Off-mesh connection storage ✅
-- [x] **Тесты:** 10/10 ✅
+- [x] **Тесты:** 9/9 ✅
 
 **Заметки:**
 - Полная реализация NavMesh Builder для Detour
@@ -620,7 +620,7 @@
 - [x] mergeCorridorStartMoved() helper ✅
 - [x] mergeCorridorEndMoved() helper ✅
 - [x] mergeCorridorStartShortcut() helper ✅
-- [x] **Тесты:** 1/4 ✅
+- [x] **Тесты:** 10/10 ✅ (все edge cases для mergeCorridorStartMoved)
 
 **Заметки:**
 - Полная реализация PathCorridor для dynamic polygon corridors
@@ -959,16 +959,16 @@
 
 ---
 
-## 📚 ФАЗА 7: Примеры и документация (57%)
+## 📚 ФАЗА 7: Примеры и документация (70%)
 
 ### Базовые примеры
 - [x] examples/simple_navmesh.zig ✅
 - [x] examples/pathfinding_demo.zig ✅
-- [ ] examples/02_tiled_navmesh.zig
-- [ ] examples/03_full_pathfinding.zig (with actual mesh building)
+- [x] examples/02_tiled_navmesh.zig ✅
+- [x] examples/03_full_pathfinding.zig (with actual mesh building) ✅
 - [x] examples/crowd_simulation.zig ✅
 - [x] examples/dynamic_obstacles.zig ✅
-- [ ] examples/06_offmesh_connections.zig
+- [x] examples/06_offmesh_connections.zig ✅
 
 ### Продвинутые примеры
 - [ ] examples/advanced/custom_areas.zig
