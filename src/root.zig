@@ -18,6 +18,9 @@ pub const detour_crowd = @import("detour_crowd.zig");
 /// DetourTileCache - Dynamic obstacle support for navigation meshes
 pub const detour_tilecache = @import("detour_tilecache.zig");
 
+/// Debug - Visualization and export utilities
+pub const debug = @import("debug.zig");
+
 // Re-export commonly used types for convenience
 pub const Vec3 = math.Vec3;
 pub const AABB = math.AABB;
