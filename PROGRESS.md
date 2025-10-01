@@ -336,11 +336,11 @@
 - [x] baseOffMeshLinks() ✅
 - [x] connectExtOffMeshLinks() ✅
 - [x] getOffMeshConnectionPolyEndPoints() ✅
-- [x] queryPolygonsInTile() (упрощенная версия без BVTree) ✅
-- [x] findNearestPolyInTile() (упрощенная версия) ✅
-- [x] closestPointOnPoly() ✅
+- [x] queryPolygonsInTile() (с BVTree оптимизацией) ✅
+- [x] findNearestPolyInTile() (полная версия с closestPointOnPoly) ✅
+- [x] closestPointOnPoly() (с detail mesh) ✅
 - [x] closestPointOnPolyBoundary() ✅
-- [x] getPolyHeight() (упрощенная версия без detail mesh) ✅
+- [x] getPolyHeight() (с detail mesh триангуляцией) ✅
 - [x] getPortalPoints() ✅
 - [x] getEdgeMidPoint() ✅
 - [x] getTileAndPolyByRefUnsafe() ✅
@@ -366,7 +366,13 @@
   - getOffMeshConnectionPolyEndPoints(): получение начала/конца off-mesh связи
   - Поддержка bidirectional флага для двунаправленных связей
   - Snap to mesh для корректного позиционирования
-- Упрощенные версии queryPolygonsInTile и findNearestPolyInTile (без BVTree оптимизации)
+- **Полные реализации core методов с оптимизациями:**
+  - queryPolygonsInTile(): с BVTree для быстрых spatial queries
+  - findNearestPolyInTile(): с closestPointOnPoly и walkableClimb учётом
+  - getPolyHeight(): с detail mesh триангуляцией для точной высоты
+  - closestPointOnPoly(): с detail mesh и boundary edge обработкой
+  - closestPointOnDetailEdges(): поиск ближайшей точки на detail edges
+  - Вспомогательные функции: overlapQuantBounds(), closestHeightPointTriangle()
 - **Tile state serialization:** Сохранение/восстановление состояния тайлов
   - getTileStateSize(): вычисление размера буфера для состояния тайла
   - storeTileState(): сохранение polygon flags и area IDs

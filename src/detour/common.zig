@@ -69,6 +69,9 @@ pub const EXT_LINK: u16 = 0x8000;
 pub const NULL_LINK: u32 = 0xffffffff;
 pub const OFFMESH_CON_BIDIR: u32 = 1;
 
+/// Detail triangle edge flags
+pub const DETAIL_EDGE_BOUNDARY: u8 = 0x01; // Detail triangle edge is part of the poly boundary
+
 /// Maximum area count
 pub const MAX_AREAS: usize = 64;
 
@@ -205,4 +208,12 @@ test "randomPointInConvexPoly - properly works when s is 1.0" {
     try std.testing.expectApproxEqAbs(@as(f32, 1.0), out[0], 0.001);
     try std.testing.expectApproxEqAbs(@as(f32, 0.0), out[1], 0.001);
     try std.testing.expectApproxEqAbs(@as(f32, 0.0), out[2], 0.001);
+}
+
+/// Get flags for edge in detail triangle
+///  @param[in]  tri_flags    The flags for the triangle (last component of detail vertices)
+///  @param[in]  edge_index   The index of the first vertex of the edge
+/// @return Edge flags
+pub inline fn getDetailTriEdgeFlags(tri_flags: u8, edge_index: usize) u8 {
+    return @intCast((tri_flags >> @intCast(edge_index * 2)) & 0x3);
 }

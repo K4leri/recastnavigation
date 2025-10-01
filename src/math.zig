@@ -284,6 +284,60 @@ pub fn closestPtPointTriangle(p: Vec3, a: Vec3, b: Vec3, c: Vec3) Vec3 {
     return a.add(ab.scale(v)).add(ac.scale(w));
 }
 
+/// Determines if two quantized axis-aligned bounding boxes overlap
+///  @param[in]  amin  Minimum bounds of box A
+///  @param[in]  amax  Maximum bounds of box A
+///  @param[in]  bmin  Minimum bounds of box B
+///  @param[in]  bmax  Maximum bounds of box B
+/// @return True if the two quantized AABB's overlap
+pub inline fn overlapQuantBounds(amin: *const [3]u16, amax: *const [3]u16, bmin: *const [3]u16, bmax: *const [3]u16) bool {
+    var overlap = true;
+    overlap = if (amin[0] > bmax[0] or amax[0] < bmin[0]) false else overlap;
+    overlap = if (amin[1] > bmax[1] or amax[1] < bmin[1]) false else overlap;
+    overlap = if (amin[2] > bmax[2] or amax[2] < bmin[2]) false else overlap;
+    return overlap;
+}
+
+/// Derives the y-axis height of the closest point on the triangle from the specified reference point
+///  @param[in]   p  The reference point from which to test
+///  @param[in]   a  Vertex A of triangle ABC
+///  @param[in]   b  Vertex B of triangle ABC
+///  @param[in]   c  Vertex C of triangle ABC
+///  @param[out]  h  The resulting height
+/// @return True if the point projects onto the triangle
+pub fn closestHeightPointTriangle(p: *const [3]f32, a: *const [3]f32, b: *const [3]f32, c: *const [3]f32, h: *f32) bool {
+    const EPS: f32 = 1e-6;
+    var v0: [3]f32 = undefined;
+    var v1: [3]f32 = undefined;
+    var v2: [3]f32 = undefined;
+
+    vsub(&v0, c, a);
+    vsub(&v1, b, a);
+    vsub(&v2, p, a);
+
+    // Compute scaled barycentric coordinates
+    var denom = v0[0] * v1[2] - v0[2] * v1[0];
+    if (@abs(denom) < EPS) {
+        return false;
+    }
+
+    var u = v1[2] * v2[0] - v1[0] * v2[2];
+    var v = v0[0] * v2[2] - v0[2] * v2[0];
+
+    if (denom < 0) {
+        denom = -denom;
+        u = -u;
+        v = -v;
+    }
+
+    // If point lies inside the triangle, return interpolated ycoord
+    if (u >= 0.0 and v >= 0.0 and (u + v) <= denom) {
+        h.* = a[1] + (v0[1] * u + v1[1] * v) / denom;
+        return true;
+    }
+    return false;
+}
+
 pub fn pointInPolygon(pt: Vec3, verts: []const Vec3) bool {
     var c = false;
     var i: usize = 0;
