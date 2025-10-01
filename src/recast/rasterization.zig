@@ -24,7 +24,7 @@ fn overlapBounds(amin: Vec3, amax: Vec3, bmin: Vec3, bmax: Vec3) bool {
 
 /// Adds a span to the heightfield. If the new span overlaps existing spans,
 /// it will merge the new span with the existing ones.
-fn addSpan(
+pub fn addSpan(
     heightfield: *Heightfield,
     x: i32,
     z: i32,

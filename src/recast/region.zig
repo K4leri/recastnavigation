@@ -826,6 +826,403 @@ pub fn buildRegionsMonotone(
     ctx.log(.info, "buildRegionsMonotone: Created {d} regions", .{id - 1});
 }
 
+/// Структура для отслеживания регионов
+const Region = struct {
+    span_count: i32,
+    id: u16,
+    area_type: u8,
+    remap: bool,
+    visited: bool,
+    overlap: bool,
+    connects_to_border: bool,
+    ymin: u16,
+    ymax: u16,
+    connections: std.ArrayList(i32),
+    floors: std.ArrayList(i32),
+
+    fn init(allocator: std.mem.Allocator, region_id: u16) !Region {
+        return Region{
+            .span_count = 0,
+            .id = region_id,
+            .area_type = 0,
+            .remap = false,
+            .visited = false,
+            .overlap = false,
+            .connects_to_border = false,
+            .ymin = 0xffff,
+            .ymax = 0,
+            .connections = std.ArrayList(i32).init(allocator),
+            .floors = std.ArrayList(i32).init(allocator),
+        };
+    }
+
+    fn deinit(self: *Region) void {
+        self.connections.deinit();
+        self.floors.deinit();
+    }
+};
+
+const NULL_NEI: u16 = 0xffff;
+
+/// Добавляет уникальное соединение к региону
+fn addUniqueConnection(reg: *Region, n: i32) !void {
+    for (reg.connections.items) |conn| {
+        if (conn == n) return;
+    }
+    try reg.connections.append(n);
+}
+
+/// Добавляет уникальный floor region
+fn addUniqueFloorRegion(reg: *Region, n: i32) !void {
+    for (reg.floors.items) |floor| {
+        if (floor == n) return;
+    }
+    try reg.floors.append(n);
+}
+
+/// Объединяет монотонные регионы в слои и удаляет мелкие регионы
+fn mergeAndFilterLayerRegions(
+    _: *const Context,
+    min_region_area: i32,
+    max_region_id: *u16,
+    chf: *CompactHeightfield,
+    src_reg: []u16,
+    allocator: std.mem.Allocator,
+) !bool {
+    const w = chf.width;
+    const h = chf.height;
+
+    const nreg: usize = @intCast(max_region_id.* + 1);
+    var regions = std.ArrayList(Region).init(allocator);
+    defer {
+        for (regions.items) |*reg| {
+            reg.deinit();
+        }
+        regions.deinit();
+    }
+
+    // Construct regions
+    try regions.ensureTotalCapacity(nreg);
+    for (0..nreg) |i| {
+        try regions.append(try Region.init(allocator, @intCast(i)));
+    }
+
+    // Find region neighbours and overlapping regions
+    var lregs = std.ArrayList(i32).init(allocator);
+    defer lregs.deinit();
+
+    for (0..@intCast(h)) |y| {
+        for (0..@intCast(w)) |x| {
+            const cell_idx = x + y * @as(usize, @intCast(w));
+            const c = chf.cells[cell_idx];
+
+            lregs.clearRetainingCapacity();
+
+            var i: usize = c.index;
+            const ni = c.index + c.count;
+            while (i < ni) : (i += 1) {
+                const s = chf.spans[i];
+                const area = chf.areas[i];
+                const ri = src_reg[i];
+                if (ri == 0 or ri >= nreg) continue;
+                var reg = &regions.items[ri];
+
+                reg.span_count += 1;
+                reg.area_type = area;
+                reg.ymin = @min(reg.ymin, s.y);
+                reg.ymax = @max(reg.ymax, s.y);
+
+                // Collect all region layers
+                try lregs.append(@intCast(ri));
+
+                // Update neighbours
+                for (0..4) |dir| {
+                    const dir_u2: u2 = @intCast(dir);
+                    if (s.getCon(dir_u2) != NOT_CONNECTED) {
+                        const ax: i32 = @intCast(x);
+                        const ay: i32 = @intCast(y);
+                        const neighbor_x = ax + heightfield_mod.getDirOffsetX(dir_u2);
+                        const neighbor_y = ay + heightfield_mod.getDirOffsetY(dir_u2);
+                        const ai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(neighbor_x + neighbor_y * @as(i32, @intCast(w))))].index + s.getCon(dir_u2)));
+                        const rai = src_reg[ai];
+                        if (rai > 0 and rai < nreg and rai != ri) {
+                            try addUniqueConnection(reg, @intCast(rai));
+                        }
+                        if ((rai & BORDER_REG) != 0) {
+                            reg.connects_to_border = true;
+                        }
+                    }
+                }
+            }
+
+            // Update overlapping regions
+            if (lregs.items.len > 1) {
+                for (0..lregs.items.len - 1) |ii| {
+                    for (ii + 1..lregs.items.len) |jj| {
+                        if (lregs.items[ii] != lregs.items[jj]) {
+                            const ri_idx: usize = @intCast(lregs.items[ii]);
+                            const rj_idx: usize = @intCast(lregs.items[jj]);
+                            try addUniqueFloorRegion(&regions.items[ri_idx], lregs.items[jj]);
+                            try addUniqueFloorRegion(&regions.items[rj_idx], lregs.items[ii]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Create 2D layers from regions
+    var layer_id: u16 = 1;
+
+    for (regions.items) |*reg| {
+        reg.id = 0;
+    }
+
+    // Merge monotone regions to create non-overlapping areas
+    var stack = std.ArrayList(i32).init(allocator);
+    defer stack.deinit();
+
+    for (1..nreg) |i| {
+        var root = &regions.items[i];
+        if (root.id != 0) continue;
+
+        root.id = layer_id;
+        stack.clearRetainingCapacity();
+        try stack.append(@intCast(i));
+
+        while (stack.items.len > 0) {
+            // Pop front
+            const reg_idx: usize = @intCast(stack.items[0]);
+            const reg = &regions.items[reg_idx];
+            stack.orderedRemove(0);
+
+            for (reg.connections.items) |nei| {
+                const nei_idx: usize = @intCast(nei);
+                var regn = &regions.items[nei_idx];
+                if (regn.id != 0) continue;
+                if (reg.area_type != regn.area_type) continue;
+
+                // Check if overlapping with root
+                var overlap = false;
+                for (root.floors.items) |floor| {
+                    if (floor == nei) {
+                        overlap = true;
+                        break;
+                    }
+                }
+                if (overlap) continue;
+
+                // Deepen
+                try stack.append(nei);
+
+                // Mark layer id
+                regn.id = layer_id;
+
+                // Merge current layers to root
+                for (regn.floors.items) |floor| {
+                    try addUniqueFloorRegion(root, floor);
+                }
+                root.ymin = @min(root.ymin, regn.ymin);
+                root.ymax = @max(root.ymax, regn.ymax);
+                root.span_count += regn.span_count;
+                regn.span_count = 0;
+                root.connects_to_border = root.connects_to_border or regn.connects_to_border;
+            }
+        }
+
+        layer_id += 1;
+    }
+
+    // Remove small regions
+    for (regions.items) |*reg| {
+        if (reg.span_count > 0 and reg.span_count < min_region_area and !reg.connects_to_border) {
+            const reg_id = reg.id;
+            for (regions.items) |*r| {
+                if (r.id == reg_id) {
+                    r.id = 0;
+                }
+            }
+        }
+    }
+
+    // Compress region IDs
+    for (regions.items) |*reg| {
+        reg.remap = false;
+        if (reg.id == 0) continue;
+        if ((reg.id & BORDER_REG) != 0) continue;
+        reg.remap = true;
+    }
+
+    var reg_id_gen: u16 = 0;
+    for (0..nreg) |i| {
+        if (!regions.items[i].remap) continue;
+        const old_id = regions.items[i].id;
+        const new_id = blk: {
+            reg_id_gen += 1;
+            break :blk reg_id_gen;
+        };
+        for (i..nreg) |j| {
+            if (regions.items[j].id == old_id) {
+                regions.items[j].id = new_id;
+                regions.items[j].remap = false;
+            }
+        }
+    }
+    max_region_id.* = reg_id_gen;
+
+    // Remap regions
+    for (0..chf.span_count) |i| {
+        if ((src_reg[i] & BORDER_REG) == 0) {
+            src_reg[i] = regions.items[src_reg[i]].id;
+        }
+    }
+
+    return true;
+}
+
+/// Строит регионы слоёв для tiled navmesh
+pub fn buildLayerRegions(
+    ctx: *const Context,
+    chf: *CompactHeightfield,
+    border_size: i32,
+    min_region_area: i32,
+    allocator: std.mem.Allocator,
+) !void {
+    // TODO: timer
+    const w = chf.width;
+    const h = chf.height;
+    var id: u16 = 1;
+
+    const src_reg = try allocator.alloc(u16, @intCast(chf.span_count));
+    defer allocator.free(src_reg);
+    @memset(src_reg, 0);
+
+    const nsweeps = @max(chf.width, chf.height);
+    const sweeps = try allocator.alloc(SweepSpan, @intCast(nsweeps));
+    defer allocator.free(sweeps);
+
+    // Mark border regions
+    if (border_size > 0) {
+        const bw = @min(w, border_size);
+        const bh = @min(h, border_size);
+        paintRectRegion(0, bw, 0, h, id | BORDER_REG, chf, src_reg);
+        id += 1;
+        paintRectRegion(w - bw, w, 0, h, id | BORDER_REG, chf, src_reg);
+        id += 1;
+        paintRectRegion(0, w, 0, bh, id | BORDER_REG, chf, src_reg);
+        id += 1;
+        paintRectRegion(0, w, h - bh, h, id | BORDER_REG, chf, src_reg);
+        id += 1;
+    }
+
+    chf.border_size = border_size;
+
+    var prev = std.ArrayList(i32).init(allocator);
+    defer prev.deinit();
+    try prev.resize(256);
+
+    // Sweep one line at a time
+    var y: i32 = border_size;
+    while (y < h - border_size) : (y += 1) {
+        // Collect spans from this row
+        const id_usize: usize = @intCast(id);
+        if (id_usize + 1 > prev.items.len) {
+            try prev.resize(id_usize + 1);
+        }
+        @memset(prev.items[0..id_usize], 0);
+        var rid: u16 = 1;
+
+        var x: i32 = border_size;
+        while (x < w - border_size) : (x += 1) {
+            const cell_idx = @as(usize, @intCast(x + y * w));
+            const c = chf.cells[cell_idx];
+
+            var i: usize = c.index;
+            const ni = c.index + c.count;
+            while (i < ni) : (i += 1) {
+                const s = chf.spans[i];
+                if (chf.areas[i] == NULL_AREA) continue;
+
+                // -x direction
+                var previd: u16 = 0;
+                if (s.getCon(0) != NOT_CONNECTED) {
+                    const ax = x + heightfield_mod.getDirOffsetX(0);
+                    const ay = y + heightfield_mod.getDirOffsetY(0);
+                    const ai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax + ay * w))].index + s.getCon(0)));
+                    if ((src_reg[ai] & BORDER_REG) == 0 and chf.areas[i] == chf.areas[ai]) {
+                        previd = src_reg[ai];
+                    }
+                }
+
+                if (previd == 0) {
+                    previd = rid;
+                    rid += 1;
+                    sweeps[previd].rid = previd;
+                    sweeps[previd].ns = 0;
+                    sweeps[previd].nei = 0;
+                }
+
+                // -y direction
+                if (s.getCon(3) != NOT_CONNECTED) {
+                    const ax = x + heightfield_mod.getDirOffsetX(3);
+                    const ay = y + heightfield_mod.getDirOffsetY(3);
+                    const ai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax + ay * w))].index + s.getCon(3)));
+                    if (src_reg[ai] != 0 and (src_reg[ai] & BORDER_REG) == 0 and chf.areas[i] == chf.areas[ai]) {
+                        const nr = src_reg[ai];
+                        if (sweeps[previd].nei == 0 or sweeps[previd].nei == nr) {
+                            sweeps[previd].nei = nr;
+                            sweeps[previd].ns += 1;
+                            prev.items[nr] += 1;
+                        } else {
+                            sweeps[previd].nei = NULL_NEI;
+                        }
+                    }
+                }
+
+                src_reg[i] = previd;
+            }
+        }
+
+        // Create unique ID
+        for (1..@intCast(rid)) |ii| {
+            if (sweeps[ii].nei != NULL_NEI and sweeps[ii].nei != 0 and
+                prev.items[sweeps[ii].nei] == @as(i32, @intCast(sweeps[ii].ns)))
+            {
+                sweeps[ii].id = sweeps[ii].nei;
+            } else {
+                sweeps[ii].id = id;
+                id += 1;
+            }
+        }
+
+        // Remap IDs
+        x = border_size;
+        while (x < w - border_size) : (x += 1) {
+            const cell_idx = @as(usize, @intCast(x + y * w));
+            const c = chf.cells[cell_idx];
+
+            var i: usize = c.index;
+            const ni = c.index + c.count;
+            while (i < ni) : (i += 1) {
+                if (src_reg[i] > 0 and src_reg[i] < rid) {
+                    src_reg[i] = sweeps[src_reg[i]].id;
+                }
+            }
+        }
+    }
+
+    // Merge monotone regions to layers and remove small regions
+    chf.max_regions = id;
+    if (!try mergeAndFilterLayerRegions(ctx, min_region_area, &chf.max_regions, chf, src_reg, allocator)) {
+        return error.MergeRegionsFailed;
+    }
+
+    // Store the result
+    for (0..@intCast(chf.span_count)) |i| {
+        chf.spans[i].reg = src_reg[i];
+    }
+}
+
 // Tests
 test "calculateDistanceField - simple grid" {
     const allocator = std.testing.allocator;

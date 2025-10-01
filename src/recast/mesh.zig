@@ -614,6 +614,55 @@ pub fn mergePolyMeshes(
     return error.NotImplemented;
 }
 
+/// Копирует polygon mesh из source в destination
+pub fn copyPolyMesh(
+    ctx: *const Context,
+    src: *const PolyMesh,
+    dst: *PolyMesh,
+) !void {
+    // Destination должен быть пуст
+    if (dst.verts.len > 0 or dst.polys.len > 0 or dst.regs.len > 0 or
+        dst.areas.len > 0 or dst.flags.len > 0) {
+        ctx.log(.err, "copyPolyMesh: Destination mesh must be empty", .{});
+        return error.DestinationNotEmpty;
+    }
+
+    // Копируем метаданные
+    dst.nverts = src.nverts;
+    dst.npolys = src.npolys;
+    dst.maxpolys = src.npolys;
+    dst.nvp = src.nvp;
+    dst.bmin = src.bmin;
+    dst.bmax = src.bmax;
+    dst.cs = src.cs;
+    dst.ch = src.ch;
+    dst.border_size = src.border_size;
+    dst.max_edge_error = src.max_edge_error;
+
+    // Allocate и копируем verts
+    const nverts_usize: usize = @intCast(src.nverts);
+    dst.verts = try dst.allocator.alloc(u16, nverts_usize * 3);
+    @memcpy(dst.verts, src.verts[0..nverts_usize * 3]);
+
+    // Allocate и копируем polys
+    const npolys_usize: usize = @intCast(src.npolys);
+    const nvp_usize: usize = @intCast(src.nvp);
+    dst.polys = try dst.allocator.alloc(u16, npolys_usize * 2 * nvp_usize);
+    @memcpy(dst.polys, src.polys[0..npolys_usize * 2 * nvp_usize]);
+
+    // Allocate и копируем regs
+    dst.regs = try dst.allocator.alloc(u16, npolys_usize);
+    @memcpy(dst.regs, src.regs[0..npolys_usize]);
+
+    // Allocate и копируем areas
+    dst.areas = try dst.allocator.alloc(u8, npolys_usize);
+    @memcpy(dst.areas, src.areas[0..npolys_usize]);
+
+    // Allocate и копируем flags
+    dst.flags = try dst.allocator.alloc(u16, npolys_usize);
+    @memcpy(dst.flags, src.flags[0..npolys_usize]);
+}
+
 // Tests
 test "area2 - basic triangle" {
     const a = [_]i32{ 0, 0, 0, 0 };

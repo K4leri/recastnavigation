@@ -1329,6 +1329,85 @@ pub fn buildPolyMeshDetail(
     }
 }
 
+/// Объединяет несколько detail meshes в один
+pub fn mergePolyMeshDetails(
+    ctx: *const Context,
+    meshes: []const *PolyMeshDetail,
+    mesh: *PolyMeshDetail,
+) !void {
+    // Подсчитываем суммарные размеры
+    var max_verts: usize = 0;
+    var max_tris: usize = 0;
+    var max_meshes: usize = 0;
+
+    for (meshes) |dm| {
+        max_verts += @intCast(dm.nverts);
+        max_tris += @intCast(dm.ntris);
+        max_meshes += @intCast(dm.nmeshes);
+    }
+
+    // Allocate массивы для результата
+    mesh.meshes = try mesh.allocator.alloc(u32, max_meshes * 4);
+    errdefer mesh.allocator.free(mesh.meshes);
+
+    mesh.tris = try mesh.allocator.alloc(u8, max_tris * 4);
+    errdefer mesh.allocator.free(mesh.tris);
+
+    mesh.verts = try mesh.allocator.alloc(f32, max_verts * 3);
+    errdefer mesh.allocator.free(mesh.verts);
+
+    mesh.nmeshes = 0;
+    mesh.ntris = 0;
+    mesh.nverts = 0;
+
+    // Объединяем данные из всех meshes
+    for (meshes) |dm| {
+        // Копируем meshes (sub-mesh данные)
+        const nmeshes_usize: usize = @intCast(dm.nmeshes);
+        for (0..nmeshes_usize) |j| {
+            const dst_idx = @as(usize, @intCast(mesh.nmeshes)) * 4;
+            const src_idx = j * 4;
+
+            mesh.meshes[dst_idx + 0] = @as(u32, @intCast(mesh.nverts)) + dm.meshes[src_idx + 0];
+            mesh.meshes[dst_idx + 1] = dm.meshes[src_idx + 1];
+            mesh.meshes[dst_idx + 2] = @as(u32, @intCast(mesh.ntris)) + dm.meshes[src_idx + 2];
+            mesh.meshes[dst_idx + 3] = dm.meshes[src_idx + 3];
+
+            mesh.nmeshes += 1;
+        }
+
+        // Копируем вершины
+        const nverts_usize: usize = @intCast(dm.nverts);
+        for (0..nverts_usize) |k| {
+            const dst_idx = @as(usize, @intCast(mesh.nverts)) * 3;
+            const src_idx = k * 3;
+            mesh.verts[dst_idx + 0] = dm.verts[src_idx + 0];
+            mesh.verts[dst_idx + 1] = dm.verts[src_idx + 1];
+            mesh.verts[dst_idx + 2] = dm.verts[src_idx + 2];
+            mesh.nverts += 1;
+        }
+
+        // Копируем треугольники
+        const ntris_usize: usize = @intCast(dm.ntris);
+        for (0..ntris_usize) |k| {
+            const dst_idx = @as(usize, @intCast(mesh.ntris)) * 4;
+            const src_idx = k * 4;
+            mesh.tris[dst_idx + 0] = dm.tris[src_idx + 0];
+            mesh.tris[dst_idx + 1] = dm.tris[src_idx + 1];
+            mesh.tris[dst_idx + 2] = dm.tris[src_idx + 2];
+            mesh.tris[dst_idx + 3] = dm.tris[src_idx + 3];
+            mesh.ntris += 1;
+        }
+    }
+
+    ctx.log(.info, "mergePolyMeshDetails: Merged {d} detail meshes into one (verts={d}, tris={d}, meshes={d})", .{
+        meshes.len,
+        mesh.nverts,
+        mesh.ntris,
+        mesh.nmeshes,
+    });
+}
+
 // ============================================================================
 // Tests
 // ============================================================================

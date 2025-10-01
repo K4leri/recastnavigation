@@ -583,6 +583,114 @@ pub fn markCylinderArea(
     }
 }
 
+/// Расширяет выпуклый полигон вдоль нормалей к вершинам
+/// Используется для расширения областей маркировки
+pub fn offsetPoly(
+    verts: []const f32,
+    num_verts: i32,
+    offset: f32,
+    out_verts: []f32,
+    max_out_verts: i32,
+) i32 {
+    // Лимит, при котором miter становится bevel
+    const MITER_LIMIT: f32 = 1.20;
+
+    var num_out_verts: i32 = 0;
+
+    var vert_index: i32 = 0;
+    while (vert_index < num_verts) : (vert_index += 1) {
+        // Берём три вершины полигона
+        const vert_index_a = @mod(vert_index + num_verts - 1, num_verts);
+        const vert_index_b = vert_index;
+        const vert_index_c = @mod(vert_index + 1, num_verts);
+
+        const vert_a_idx: usize = @intCast(vert_index_a * 3);
+        const vert_b_idx: usize = @intCast(vert_index_b * 3);
+        const vert_c_idx: usize = @intCast(vert_index_c * 3);
+
+        const vert_a = verts[vert_a_idx .. vert_a_idx + 3];
+        const vert_b = verts[vert_b_idx .. vert_b_idx + 3];
+        const vert_c = verts[vert_c_idx .. vert_c_idx + 3];
+
+        // Направление от A к B на плоскости x/z
+        var prev_seg_dir = Vec3.init(
+            vert_b[0] - vert_a[0],
+            0,
+            vert_b[2] - vert_a[2],
+        );
+        vsafeNormalize(&prev_seg_dir);
+
+        // Направление от B к C на плоскости x/z
+        var curr_seg_dir = Vec3.init(
+            vert_c[0] - vert_b[0],
+            0,
+            vert_c[2] - vert_b[2],
+        );
+        vsafeNormalize(&curr_seg_dir);
+
+        // Y компонента кросс-произведения двух нормализованных направлений
+        const cross = curr_seg_dir.x * prev_seg_dir.z - prev_seg_dir.x * curr_seg_dir.z;
+
+        // CCW перпендикулярный вектор к AB (нормаль сегмента)
+        const prev_seg_norm_x = -prev_seg_dir.z;
+        const prev_seg_norm_z = prev_seg_dir.x;
+
+        // CCW перпендикулярный вектор к BC (нормаль сегмента)
+        const curr_seg_norm_x = -curr_seg_dir.z;
+        const curr_seg_norm_z = curr_seg_dir.x;
+
+        // Усредняем две нормали сегментов для получения пропорционального miter смещения
+        var corner_miter_x = (prev_seg_norm_x + curr_seg_norm_x) * 0.5;
+        var corner_miter_z = (prev_seg_norm_z + curr_seg_norm_z) * 0.5;
+        const corner_miter_sq_mag = corner_miter_x * corner_miter_x + corner_miter_z * corner_miter_z;
+
+        // Если величина среднего достаточно мала, угол острый - нужен bevel
+        const bevel = corner_miter_sq_mag * MITER_LIMIT * MITER_LIMIT < 1.0;
+
+        // Масштабируем corner miter пропорционально смещению
+        if (corner_miter_sq_mag > EPSILON) {
+            const scale = 1.0 / corner_miter_sq_mag;
+            corner_miter_x *= scale;
+            corner_miter_z *= scale;
+        }
+
+        if (bevel and cross < 0.0) {
+            // Выпуклый угол с острым углом - генерируем bevel (2 вершины)
+            if (num_out_verts + 2 > max_out_verts) {
+                return 0;
+            }
+
+            // Генерируем две bevel вершины
+            const d = (1.0 - (prev_seg_dir.x * curr_seg_dir.x + prev_seg_dir.z * curr_seg_dir.z)) * 0.5;
+
+            const out_idx1: usize = @intCast(num_out_verts * 3);
+            out_verts[out_idx1 + 0] = vert_b[0] + (-prev_seg_norm_x + prev_seg_dir.x * d) * offset;
+            out_verts[out_idx1 + 1] = vert_b[1];
+            out_verts[out_idx1 + 2] = vert_b[2] + (-prev_seg_norm_z + prev_seg_dir.z * d) * offset;
+            num_out_verts += 1;
+
+            const out_idx2: usize = @intCast(num_out_verts * 3);
+            out_verts[out_idx2 + 0] = vert_b[0] + (-curr_seg_norm_x - curr_seg_dir.x * d) * offset;
+            out_verts[out_idx2 + 1] = vert_b[1];
+            out_verts[out_idx2 + 2] = vert_b[2] + (-curr_seg_norm_z - curr_seg_dir.z * d) * offset;
+            num_out_verts += 1;
+        } else {
+            // Обычная вершина - смещаем вдоль miter направления
+            if (num_out_verts + 1 > max_out_verts) {
+                return 0;
+            }
+
+            const out_idx: usize = @intCast(num_out_verts * 3);
+            out_verts[out_idx + 0] = vert_b[0] - corner_miter_x * offset;
+            out_verts[out_idx + 1] = vert_b[1];
+            out_verts[out_idx + 2] = vert_b[2] - corner_miter_z * offset;
+            num_out_verts += 1;
+        }
+    }
+
+    return num_out_verts;
+}
+
 // Tests
 test "insertSort" {
     var data = [_]u8{ 5, 2, 8, 1, 9 };
