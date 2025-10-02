@@ -8,6 +8,7 @@ const nav = @import("zig-recast");
 const BenchConfig = struct {
     iterations: usize = 100,
     warmup_iterations: usize = 10,
+    inner_iterations: usize = 10000, // Сколько раз вызывать функцию внутри одного замера
 };
 
 const BenchResult = struct {
@@ -18,15 +19,11 @@ const BenchResult = struct {
     iterations: usize,
 
     pub fn print(self: BenchResult) void {
-        const avg_us = @as(f64, @floatFromInt(self.avg_time_ns)) / 1_000.0;
-        const min_us = @as(f64, @floatFromInt(self.min_time_ns)) / 1_000.0;
-        const max_us = @as(f64, @floatFromInt(self.max_time_ns)) / 1_000.0;
-
-        std.debug.print("{s:<40} | Avg: {d:>8.2} μs | Min: {d:>8.2} μs | Max: {d:>8.2} μs | Iters: {d}\n", .{
+        std.debug.print("{s:<40} | Avg: {d:>8} ns | Min: {d:>8} ns | Max: {d:>8} ns | Iters: {d}\n", .{
             self.name,
-            avg_us,
-            min_us,
-            max_us,
+            self.avg_time_ns,
+            self.min_time_ns,
+            self.max_time_ns,
             self.iterations,
         });
     }
@@ -208,17 +205,17 @@ const NavMeshTestData = struct {
             .bmax = config.bmax.toArray(),
             .cs = config.cs,
             .ch = config.ch,
-            .build_bv_tree = true,
+            .build_bv_tree = false,
         };
 
         const navmesh_data = try nav.detour.createNavMeshData(&navmesh_create_params, allocator);
-        defer allocator.free(navmesh_data);
 
-        // Add tile to NavMesh
-        _ = try navmesh.addTile(navmesh_data, .{ .free_data = false }, 0);
+        // Add tile to NavMesh (NavMesh takes ownership with free_data = true)
+        _ = try navmesh.addTile(navmesh_data, .{ .free_data = true }, 0);
 
-        // Create query
-        var query = try nav.NavMeshQuery.init(allocator);
+        // Create query (init already returns pointer)
+        const query = try nav.NavMeshQuery.init(allocator);
+        errdefer query.deinit();
         try query.initQuery(navmesh, 2048);
 
         return NavMeshTestData{
@@ -250,7 +247,10 @@ fn benchmark(
     // Warmup
     var i: usize = 0;
     while (i < config.warmup_iterations) : (i += 1) {
-        _ = try @call(.auto, func, args);
+        var j: usize = 0;
+        while (j < config.inner_iterations) : (j += 1) {
+            _ = try @call(.auto, func, args);
+        }
     }
 
     // Actual benchmark
@@ -261,12 +261,19 @@ fn benchmark(
     i = 0;
     while (i < config.iterations) : (i += 1) {
         timer.reset();
-        _ = try @call(.auto, func, args);
-        const elapsed = timer.read();
 
-        min_time = @min(min_time, elapsed);
-        max_time = @max(max_time, elapsed);
-        total_time += elapsed;
+        // Вызываем функцию много раз для точного измерения
+        var j: usize = 0;
+        while (j < config.inner_iterations) : (j += 1) {
+            _ = try @call(.auto, func, args);
+        }
+
+        const elapsed = timer.read();
+        const per_call = elapsed / config.inner_iterations;
+
+        min_time = @min(min_time, per_call);
+        max_time = @max(max_time, per_call);
+        total_time += per_call;
     }
 
     return BenchResult{
@@ -340,14 +347,8 @@ fn benchmarkRaycast(query: *nav.NavMeshQuery, filter: *const nav.QueryFilter) !v
     try query.findNearestPoly(&start_pos, &extents, filter, &start_ref, null);
 
     if (start_ref != 0) {
-        var hit = nav.RaycastHit{
-            .t = 0,
-            .hit_normal = .{ 0, 0, 0 },
-            .path = undefined,
-            .path_count = 0,
-            .max_path = 256,
-            .path_cost = 0,
-        };
+        var path_buffer: [256]u32 = undefined;
+        var hit = nav.detour.RaycastHit.init(&path_buffer);
         _ = try query.raycast(start_ref, &start_pos, &end_pos, filter, 0, &hit, 0);
     }
 }
@@ -365,13 +366,14 @@ fn benchmarkFindStraightPath(query: *nav.NavMeshQuery, filter: *const nav.QueryF
     try query.findNearestPoly(&end_pos, &extents, filter, &end_ref, null);
 
     if (start_ref != 0 and end_ref != 0) {
-        var path: [256]u64 = undefined;
-        const path_count = try query.findPath(start_ref, end_ref, &start_pos, &end_pos, filter, &path);
+        var path: [256]u32 = undefined;
+        var path_count: usize = 0;
+        try query.findPath(start_ref, end_ref, &start_pos, &end_pos, filter, &path, &path_count);
 
         if (path_count > 0) {
             var straight_path: [256 * 3]f32 = undefined;
             var straight_path_flags: [256]u8 = undefined;
-            var straight_path_refs: [256]u64 = undefined;
+            var straight_path_refs: [256]u32 = undefined;
             var straight_path_count: usize = 0;
 
             _ = try query.findStraightPath(
@@ -382,7 +384,6 @@ fn benchmarkFindStraightPath(query: *nav.NavMeshQuery, filter: *const nav.QueryF
                 &straight_path_flags,
                 &straight_path_refs,
                 &straight_path_count,
-                256,
                 0,
             );
         }
@@ -393,10 +394,10 @@ fn benchmarkFindStraightPath(query: *nav.NavMeshQuery, filter: *const nav.QueryF
 fn benchmarkQueryPolygons(query: *nav.NavMeshQuery, filter: *const nav.QueryFilter) !void {
     const center = [3]f32{ 5.0, 0.0, 5.0 };
     const half_extents = [3]f32{ 3.0, 4.0, 3.0 };
-    var polys: [128]u64 = undefined;
-    var poly_count: i32 = 0;
+    var polys: [128]u32 = undefined;
+    var poly_count: usize = 0;
 
-    try query.queryPolygons(&center, &half_extents, filter, &polys, &poly_count, 128);
+    try query.queryPolygons(&center, &half_extents, filter, &polys, &poly_count);
 }
 
 /// Benchmark findDistanceToWall
@@ -432,16 +433,17 @@ pub fn main() !void {
     std.debug.print("\n", .{});
 
     const bench_config = BenchConfig{
-        .iterations = 500,
-        .warmup_iterations = 50,
+        .iterations = 100,
+        .warmup_iterations = 10,
+        .inner_iterations = 10000,
     };
 
-    // ========== SMALL NAVMESH (10x10 grid) ==========
+    // ========== SMALL NAVMESH (50x50 grid) ==========
     std.debug.print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n", .{});
-    std.debug.print("  SMALL NAVMESH (10x10 grid)\n", .{});
+    std.debug.print("  SMALL NAVMESH (50x50 grid)\n", .{});
     std.debug.print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n", .{});
 
-    var small_data = try NavMeshTestData.init(allocator, 10);
+    var small_data = try NavMeshTestData.init(allocator, 50);
     defer small_data.deinit();
 
     const filter = nav.QueryFilter.init();
@@ -469,12 +471,12 @@ pub fn main() !void {
 
     std.debug.print("\n", .{});
 
-    // ========== MEDIUM NAVMESH (20x20 grid) ==========
+    // ========== MEDIUM NAVMESH (100x100 grid) ==========
     std.debug.print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n", .{});
-    std.debug.print("  MEDIUM NAVMESH (20x20 grid)\n", .{});
+    std.debug.print("  MEDIUM NAVMESH (100x100 grid)\n", .{});
     std.debug.print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n", .{});
 
-    var medium_data = try NavMeshTestData.init(allocator, 20);
+    var medium_data = try NavMeshTestData.init(allocator, 100);
     defer medium_data.deinit();
 
     const r8 = try benchmark("findNearestPoly (Medium)", benchmarkFindNearestPoly, .{ medium_data.query, &filter }, bench_config);

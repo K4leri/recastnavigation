@@ -31,15 +31,14 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_tests.step);
 
     // Additional unit tests
-    // Note: filter_test.zig temporarily disabled due to outdated Heightfield structure
-    // const filter_tests = b.addTest(.{
-    //     .root_source_file = b.path("test/filter_test.zig"),
-    //     .target = target,
-    //     .optimize = optimize,
-    // });
-    // filter_tests.root_module.addImport("recast-nav", recast_nav);
-    // const run_filter_tests = b.addRunArtifact(filter_tests);
-    // test_step.dependOn(&run_filter_tests.step);
+    const filter_tests = b.addTest(.{
+        .root_source_file = b.path("test/filter_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    filter_tests.root_module.addImport("recast-nav", recast_nav);
+    const run_filter_tests = b.addRunArtifact(filter_tests);
+    test_step.dependOn(&run_filter_tests.step);
 
     const rasterization_tests = b.addTest(.{
         .root_source_file = b.path("test/rasterization_test.zig"),
