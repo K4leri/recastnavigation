@@ -210,9 +210,49 @@ test "Real Mesh: nav_test.obj full pipeline" {
 
     std.debug.print("Built PolyMesh: {d} vertices, {d} polygons\n", .{ pmesh.nverts, pmesh.npolys });
 
-    // Print polygon details (first 10 and last 10)
-    std.debug.print("[POLYMESH] Polygon details (showing first 10 and last 10):\n", .{});
+    // Export full PolyMesh data for comparison
+    std.debug.print("\n[POLYMESH_VERTICES_BEGIN]\n", .{});
+    for (0..@as(usize, @intCast(pmesh.nverts))) |vert_idx| {
+        std.debug.print("{d},{d},{d}\n", .{
+            pmesh.verts[vert_idx * 3 + 0],
+            pmesh.verts[vert_idx * 3 + 1],
+            pmesh.verts[vert_idx * 3 + 2],
+        });
+    }
+    std.debug.print("[POLYMESH_VERTICES_END]\n\n", .{});
+
+    std.debug.print("[POLYMESH_POLYGONS_BEGIN]\n", .{});
     const nvp = @as(usize, @intCast(pmesh.nvp));
+    for (0..@as(usize, @intCast(pmesh.npolys))) |poly_idx| {
+        const poly_offset = poly_idx * nvp * 2;
+        std.debug.print("poly={d},reg={d},area={d},verts=", .{ poly_idx, pmesh.regs[poly_idx], pmesh.areas[poly_idx] });
+
+        // Print vertex indices
+        for (0..nvp) |j| {
+            const vert_idx = pmesh.polys[poly_offset + j];
+            if (vert_idx == nav.recast.config.MESH_NULL_IDX) break;
+            std.debug.print("{d}", .{vert_idx});
+            if (j < nvp - 1 and pmesh.polys[poly_offset + j + 1] != nav.recast.config.MESH_NULL_IDX) {
+                std.debug.print(",", .{});
+            }
+        }
+
+        // Print neighbor indices
+        std.debug.print(",neighbors=", .{});
+        for (0..nvp) |j| {
+            const vert_idx = pmesh.polys[poly_offset + j];
+            if (vert_idx == nav.recast.config.MESH_NULL_IDX) break;
+            std.debug.print("{d}", .{pmesh.polys[poly_offset + nvp + j]});
+            if (j < nvp - 1 and pmesh.polys[poly_offset + j + 1] != nav.recast.config.MESH_NULL_IDX) {
+                std.debug.print(",", .{});
+            }
+        }
+        std.debug.print("\n", .{});
+    }
+    std.debug.print("[POLYMESH_POLYGONS_END]\n\n", .{});
+
+    // Print polygon details (first 10 and last 10) - for human readability
+    std.debug.print("[POLYMESH] Polygon details (showing first 10 and last 10):\n", .{});
     var i: usize = 0;
     while (i < pmesh.npolys and i < 10) : (i += 1) {
         const poly_offset = i * nvp * 2;
@@ -270,6 +310,28 @@ test "Real Mesh: nav_test.obj full pipeline" {
         dmesh.nverts,
         dmesh.ntris,
     });
+
+    // Export full DetailMesh data for comparison
+    std.debug.print("\n[DETAILMESH_VERTICES_BEGIN]\n", .{});
+    for (0..@as(usize, @intCast(dmesh.nverts))) |vert_idx| {
+        std.debug.print("{d:.6},{d:.6},{d:.6}\n", .{
+            dmesh.verts[vert_idx * 3 + 0],
+            dmesh.verts[vert_idx * 3 + 1],
+            dmesh.verts[vert_idx * 3 + 2],
+        });
+    }
+    std.debug.print("[DETAILMESH_VERTICES_END]\n\n", .{});
+
+    std.debug.print("[DETAILMESH_TRIANGLES_BEGIN]\n", .{});
+    for (0..@as(usize, @intCast(dmesh.ntris))) |tri_idx| {
+        std.debug.print("{d},{d},{d},{d}\n", .{
+            dmesh.tris[tri_idx * 4 + 0],
+            dmesh.tris[tri_idx * 4 + 1],
+            dmesh.tris[tri_idx * 4 + 2],
+            dmesh.tris[tri_idx * 4 + 3],
+        });
+    }
+    std.debug.print("[DETAILMESH_TRIANGLES_END]\n\n", .{});
 
     // Test canRemoveVertex on real mesh
     std.debug.print("\n=== Testing canRemoveVertex on real mesh ===\n", .{});
