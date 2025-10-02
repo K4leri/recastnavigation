@@ -8,6 +8,7 @@ const nav = @import("zig-recast");
 const BenchConfig = struct {
     iterations: usize = 100,
     warmup_iterations: usize = 10,
+    inner_iterations: usize = 1, // Recast операции долгие, 1 вызов достаточно
 };
 
 const BenchResult = struct {
@@ -18,15 +19,16 @@ const BenchResult = struct {
     iterations: usize,
 
     pub fn print(self: BenchResult) void {
-        const avg_ms = @as(f64, @floatFromInt(self.avg_time_ns)) / 1_000_000.0;
-        const min_ms = @as(f64, @floatFromInt(self.min_time_ns)) / 1_000_000.0;
-        const max_ms = @as(f64, @floatFromInt(self.max_time_ns)) / 1_000_000.0;
+        // Для удобочитаемости выводим в микросекундах (Recast операции долгие)
+        const avg_us = @as(f64, @floatFromInt(self.avg_time_ns)) / 1_000.0;
+        const min_us = @as(f64, @floatFromInt(self.min_time_ns)) / 1_000.0;
+        const max_us = @as(f64, @floatFromInt(self.max_time_ns)) / 1_000.0;
 
-        std.debug.print("{s:<40} | Avg: {d:>8.3} ms | Min: {d:>8.3} ms | Max: {d:>8.3} ms | Iters: {d}\n", .{
+        std.debug.print("{s:<40} | Avg: {d:>10.1} μs | Min: {d:>10.1} μs | Max: {d:>10.1} μs | Iters: {d}\n", .{
             self.name,
-            avg_ms,
-            min_ms,
-            max_ms,
+            avg_us,
+            min_us,
+            max_us,
             self.iterations,
         });
     }
@@ -153,7 +155,10 @@ fn benchmark(
     // Warmup
     var i: usize = 0;
     while (i < config.warmup_iterations) : (i += 1) {
-        _ = try @call(.auto, func, args);
+        var j: usize = 0;
+        while (j < config.inner_iterations) : (j += 1) {
+            _ = try @call(.auto, func, args);
+        }
     }
 
     // Actual benchmark
@@ -164,12 +169,19 @@ fn benchmark(
     i = 0;
     while (i < config.iterations) : (i += 1) {
         timer.reset();
-        _ = try @call(.auto, func, args);
-        const elapsed = timer.read();
 
-        min_time = @min(min_time, elapsed);
-        max_time = @max(max_time, elapsed);
-        total_time += elapsed;
+        // Вызываем функцию много раз для точного измерения
+        var j: usize = 0;
+        while (j < config.inner_iterations) : (j += 1) {
+            _ = try @call(.auto, func, args);
+        }
+
+        const elapsed = timer.read();
+        const per_call = elapsed / config.inner_iterations;
+
+        min_time = @min(min_time, per_call);
+        max_time = @max(max_time, per_call);
+        total_time += per_call;
     }
 
     return BenchResult{

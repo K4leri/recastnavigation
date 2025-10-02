@@ -1021,6 +1021,9 @@ pub fn buildPolyMesh(
     mesh.regs = try allocator.alloc(u16, max_tris);
     @memset(mesh.regs, 0);
 
+    mesh.flags = try allocator.alloc(u16, max_tris);
+    @memset(mesh.flags, 1); // Default flag value (walkable)
+
     mesh.areas = try allocator.alloc(u8, max_tris);
     @memset(mesh.areas, 0);
 

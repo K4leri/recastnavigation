@@ -8,6 +8,7 @@ const nav = @import("zig-recast");
 const BenchConfig = struct {
     iterations: usize = 100,
     warmup_iterations: usize = 10,
+    inner_iterations: usize = 100, // Crowd операции средней длины
 };
 
 const BenchResult = struct {
@@ -18,15 +19,11 @@ const BenchResult = struct {
     iterations: usize,
 
     pub fn print(self: BenchResult) void {
-        const avg_us = @as(f64, @floatFromInt(self.avg_time_ns)) / 1_000.0;
-        const min_us = @as(f64, @floatFromInt(self.min_time_ns)) / 1_000.0;
-        const max_us = @as(f64, @floatFromInt(self.max_time_ns)) / 1_000.0;
-
-        std.debug.print("{s:<50} | Avg: {d:>9.2} μs | Min: {d:>9.2} μs | Max: {d:>9.2} μs\n", .{
+        std.debug.print("{s:<50} | Avg: {d:>9} ns | Min: {d:>9} ns | Max: {d:>9} ns\n", .{
             self.name,
-            avg_us,
-            min_us,
-            max_us,
+            self.avg_time_ns,
+            self.min_time_ns,
+            self.max_time_ns,
         });
     }
 };
@@ -181,15 +178,17 @@ const NavMeshTestData = struct {
             .bmax = config.bmax.toArray(),
             .cs = config.cs,
             .ch = config.ch,
-            .build_bv_tree = true,
+            .build_bv_tree = false,
         };
 
         const navmesh_data = try nav.detour.createNavMeshData(&navmesh_create_params, allocator);
-        defer allocator.free(navmesh_data);
 
-        _ = try navmesh.addTile(navmesh_data, .{ .free_data = false }, 0);
+        // Add tile to NavMesh (NavMesh takes ownership with free_data = true)
+        _ = try navmesh.addTile(navmesh_data, .{ .free_data = true }, 0);
 
-        var query = try nav.NavMeshQuery.init(allocator);
+        // Create query (init already returns pointer)
+        const query = try nav.NavMeshQuery.init(allocator);
+        errdefer query.deinit();
         try query.initQuery(navmesh, 2048);
 
         return NavMeshTestData{
@@ -221,7 +220,10 @@ fn benchmark(
     // Warmup
     var i: usize = 0;
     while (i < config.warmup_iterations) : (i += 1) {
-        _ = try @call(.auto, func, args);
+        var j: usize = 0;
+        while (j < config.inner_iterations) : (j += 1) {
+            _ = try @call(.auto, func, args);
+        }
     }
 
     // Actual benchmark
@@ -232,12 +234,19 @@ fn benchmark(
     i = 0;
     while (i < config.iterations) : (i += 1) {
         timer.reset();
-        _ = try @call(.auto, func, args);
-        const elapsed = timer.read();
 
-        min_time = @min(min_time, elapsed);
-        max_time = @max(max_time, elapsed);
-        total_time += elapsed;
+        // Вызываем функцию много раз для точного измерения
+        var j: usize = 0;
+        while (j < config.inner_iterations) : (j += 1) {
+            _ = try @call(.auto, func, args);
+        }
+
+        const elapsed = timer.read();
+        const per_call = elapsed / config.inner_iterations;
+
+        min_time = @min(min_time, per_call);
+        max_time = @max(max_time, per_call);
+        total_time += per_call;
     }
 
     return BenchResult{
@@ -255,7 +264,7 @@ fn benchmark(
 
 /// Benchmark crowd update with N agents
 fn benchmarkCrowdUpdate(crowd: *nav.Crowd, dt: f32) !void {
-    try crowd.update(dt, null);
+    try crowd.update(dt);
 }
 
 /// Benchmark adding agent to crowd
@@ -268,14 +277,14 @@ fn benchmarkAddAgent(crowd: *nav.Crowd, pos: [3]f32, params: nav.CrowdAgentParam
 
 /// Benchmark setting move target for agent
 fn benchmarkRequestMoveTarget(crowd: *nav.Crowd, agent_idx: i32, target_pos: [3]f32) !void {
-    const filter = crowd.getFilter(0);
+    const filter = crowd.getFilter(0).?;
     const extents = [3]f32{ 2.0, 4.0, 2.0 };
 
     var target_ref: u32 = 0;
     try crowd.navquery.findNearestPoly(&target_pos, &extents, filter, &target_ref, null);
 
     if (target_ref != 0) {
-        try crowd.requestMoveTarget(agent_idx, target_ref, &target_pos);
+        _ = crowd.requestMoveTarget(agent_idx, target_ref, &target_pos);
     }
 }
 
@@ -291,10 +300,14 @@ const CrowdTestScenario = struct {
 
     pub fn init(allocator: std.mem.Allocator, grid_size: usize, agent_count: usize) !CrowdTestScenario {
         // Create NavMesh
-        const navmesh_data = try NavMeshTestData.init(allocator, grid_size);
+        var navmesh_data = try NavMeshTestData.init(allocator, grid_size);
+        errdefer navmesh_data.deinit();
 
-        // Create crowd
-        var crowd = try nav.Crowd.init(allocator, @intCast(agent_count * 2), 0.6, navmesh_data.navmesh);
+        // Create crowd (heap-allocated)
+        const crowd = try allocator.create(nav.Crowd);
+        errdefer allocator.destroy(crowd);
+        crowd.* = try nav.Crowd.init(allocator, @intCast(agent_count * 2), 0.6, navmesh_data.navmesh);
+        errdefer crowd.deinit();
 
         // Configure obstacle avoidance
         var oa_params = nav.ObstacleAvoidanceParams{
@@ -313,6 +326,7 @@ const CrowdTestScenario = struct {
 
         // Add agents
         var agent_indices = try allocator.alloc(i32, agent_count);
+        errdefer allocator.free(agent_indices);
         const grid_float = @as(f32, @floatFromInt(grid_size));
 
         var params = nav.CrowdAgentParams.init();
@@ -347,13 +361,13 @@ const CrowdTestScenario = struct {
                 center_z - @sin(angle) * radius,
             };
 
-            const filter = crowd.getFilter(0);
+            const filter = crowd.getFilter(0).?;
             const extents = [3]f32{ 2.0, 4.0, 2.0 };
             var target_ref: u32 = 0;
 
             try crowd.navquery.findNearestPoly(&target_pos, &extents, filter, &target_ref, null);
             if (target_ref != 0) {
-                try crowd.requestMoveTarget(idx, target_ref, &target_pos);
+                _ = crowd.requestMoveTarget(idx, target_ref, &target_pos);
             }
         }
 
@@ -373,6 +387,7 @@ const CrowdTestScenario = struct {
         self.allocator.free(self.agent_indices);
 
         self.crowd.deinit();
+        self.allocator.destroy(self.crowd);
         self.navmesh_data.deinit();
     }
 };

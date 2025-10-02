@@ -1376,6 +1376,21 @@ pub fn buildPolyMeshDetail(
             dmesh.ntris += 1;
         }
     }
+
+    // Trim arrays to actual used size
+    if (dmesh.nverts > 0) {
+        const final_verts = try allocator.alloc(f32, @as(usize, @intCast(dmesh.nverts)) * 3);
+        @memcpy(final_verts, dmesh.verts[0 .. @as(usize, @intCast(dmesh.nverts)) * 3]);
+        allocator.free(dmesh.verts);
+        dmesh.verts = final_verts;
+    }
+
+    if (dmesh.ntris > 0) {
+        const final_tris = try allocator.alloc(u8, @as(usize, @intCast(dmesh.ntris)) * 4);
+        @memcpy(final_tris, dmesh.tris[0 .. @as(usize, @intCast(dmesh.ntris)) * 4]);
+        allocator.free(dmesh.tris);
+        dmesh.tris = final_tris;
+    }
 }
 
 /// Объединяет несколько detail meshes в один

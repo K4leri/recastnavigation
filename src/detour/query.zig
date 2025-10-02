@@ -1872,7 +1872,7 @@ pub const NavMeshQuery = struct {
                 i += 1;
             }) {
                 // Skip non-solid edges
-                if ((best_poly.?.neis[j] & common.DT_EXT_LINK) != 0) {
+                if ((best_poly.?.neis[j] & common.EXT_LINK) != 0) {
                     // Tile border
                     var solid = true;
                     var k = best_poly.?.first_link;
@@ -1965,7 +1965,7 @@ pub const NavMeshQuery = struct {
                 }
 
                 // Cost
-                if (neighbour_node.flags.asByte() == 0) {
+                if (@as(u3, @bitCast(neighbour_node.flags)) == 0) {
                     try nav.getEdgeMidPoint(best_ref, best_poly.?, best_tile.?, neighbour_ref, neighbour_poly.?, neighbour_tile.?, &neighbour_node.pos);
                 }
 
