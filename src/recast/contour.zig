@@ -198,7 +198,8 @@ fn walkContour(
 }
 
 /// Distance from point to line segment (squared)
-fn distancePtSeg(x: i32, z: i32, px: i32, pz: i32, qx: i32, qz: i32) f32 {
+/// INTERNAL: Exported for testing purposes only
+pub fn distancePtSeg(x: i32, z: i32, px: i32, pz: i32, qx: i32, qz: i32) f32 {
     const pqx: f32 = @floatFromInt(qx - px);
     const pqz: f32 = @floatFromInt(qz - pz);
     var dx: f32 = @floatFromInt(x - px);
@@ -227,7 +228,8 @@ fn distancePtSeg(x: i32, z: i32, px: i32, pz: i32, qx: i32, qz: i32) f32 {
 }
 
 /// Simplifies a contour using Douglas-Peucker algorithm
-fn simplifyContour(
+/// INTERNAL: Exported for testing purposes only
+pub fn simplifyContour(
     points: *const std.ArrayList(i32),
     simplified: *std.ArrayList(i32),
     max_error: f32,

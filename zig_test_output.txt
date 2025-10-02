@@ -1,0 +1,105 @@
+test-integration
++- run test stderr
+[PROGRESS] buildRegions: Created 1 regions
+[PROGRESS] buildContours: Finding boundaries...
+[PROGRESS] buildContours: Walking contours...
+[PROGRESS] buildContours: Checking for holes...
+[PROGRESS] buildContours: Created 1 contours
+[PROGRESS] buildPolyMesh: max_vertices=4, max_tris=2
+[PROGRESS] buildPolyMesh: Created mesh with 4 vertices and 1 polygons
+[PROGRESS] buildRegions: Created 1 regions
+[PROGRESS] buildContours: Finding boundaries...
+[PROGRESS] buildContours: Walking contours...
+[PROGRESS] buildContours: Checking for holes...
+[PROGRESS] buildContours: Created 1 contours
+[PROGRESS] buildPolyMesh: max_vertices=4, max_tris=2
+[PROGRESS] buildPolyMesh: Created mesh with 4 vertices and 1 polygons
+[PROGRESS] buildRegions: Created 1 regions
+[PROGRESS] buildContours: Finding boundaries...
+[PROGRESS] buildContours: Walking contours...
+[PROGRESS] buildContours: Checking for holes...
+[PROGRESS] buildContours: Created 1 contours
+[PROGRESS] buildPolyMesh: max_vertices=4, max_tris=2
+[PROGRESS] buildPolyMesh: Created mesh with 4 vertices and 1 polygons
+[PROGRESS] buildRegions: Created 1 regions
+[PROGRESS] buildContours: Finding boundaries...
+[PROGRESS] buildContours: Walking contours...
+[PROGRESS] buildContours: Checking for holes...
+[PROGRESS] buildContours: Created 1 contours
+[PROGRESS] buildPolyMesh: max_vertices=4, max_tris=2
+[PROGRESS] buildPolyMesh: Created mesh with 4 vertices and 1 polygons
+[PROGRESS] buildRegions: Created 1 regions
+[PROGRESS] buildContours: Finding boundaries...
+[PROGRESS] buildContours: Walking contours...
+[PROGRESS] buildContours: Checking for holes...
+[PROGRESS] buildContours: Created 1 contours
+[PROGRESS] buildPolyMesh: max_vertices=4, max_tris=2
+[PROGRESS] buildPolyMesh: Created mesh with 4 vertices and 1 polygons
+
+=== Loaded nav_test.obj ===
+Vertices: 884
+Triangles: 1560
+Bounds: min=(-28.89, -4.87, -46.30) max=(62.49, 17.01, 31.05)
+Grid size: 305x258
+Rasterized 1560 triangles
+Built compact heightfield with 55226 spans
+[PROGRESS] buildRegions: Created 44 regions
+[PROGRESS] buildContours: Finding boundaries...
+[PROGRESS] buildContours: Walking contours...
+[PROGRESS] buildContours: Checking for holes...
+[PROGRESS] buildContours: Created 42 contours
+Built 42 contours
+Contour details:
+  Contour 0: nverts=13, reg=2, area=1
+  Contour 1: nverts=12, reg=5, area=1
+  Contour 2: nverts=16, reg=1, area=1
+  Contour 3: nverts=15, reg=3, area=1
+  Contour 4: nverts=7, reg=16, area=1
+  Contour 5: nverts=9, reg=15, area=1
+  Contour 6: nverts=12, reg=17, area=1
+  Contour 7: nverts=15, reg=9, area=1
+  Contour 8: nverts=7, reg=29, area=1
+  Contour 9: nverts=15, reg=12, area=1
+  Contour 10: nverts=5, reg=30, area=1
+  Contour 11: nverts=12, reg=24, area=1
+  Contour 12: nverts=6, reg=31, area=1
+  Contour 13: nverts=10, reg=19, area=1
+  Contour 14: nverts=9, reg=20, area=1
+  Contour 15: nverts=38, reg=6, area=1
+  Contour 16: nverts=6, reg=32, area=1
+  Contour 17: nverts=15, reg=8, area=1
+  Contour 18: nverts=13, reg=28, area=1
+  Contour 19: nverts=15, reg=10, area=1
+  Contour 20: nverts=4, reg=33, area=1
+  Contour 21: nverts=8, reg=22, area=1
+  Contour 22: nverts=15, reg=34, area=1
+  Contour 23: nverts=33, reg=13, area=1
+  Contour 24: nverts=11, reg=25, area=1
+  Contour 25: nverts=14, reg=21, area=1
+  Contour 26: nverts=7, reg=36, area=1
+  Contour 27: nverts=10, reg=35, area=1
+  Contour 28: nverts=9, reg=26, area=1
+  Contour 29: nverts=15, reg=4, area=1
+  Contour 30: nverts=18, reg=7, area=1
+  Contour 31: nverts=10, reg=37, area=1
+  Contour 32: nverts=9, reg=38, area=1
+  Contour 33: nverts=4, reg=39, area=1
+  Contour 34: nverts=15, reg=18, area=1
+  Contour 35: nverts=9, reg=14, area=1
+  Contour 36: nverts=11, reg=27, area=1
+  Contour 37: nverts=24, reg=11, area=1
+  Contour 38: nverts=10, reg=23, area=1
+  Contour 39: nverts=4, reg=40, area=1
+  Contour 40: nverts=4, reg=41, area=1
+  Contour 41: nverts=13, reg=42, area=1
+[PROGRESS] buildPolyMesh: max_vertices=507, max_tris=423
+[PROGRESS] buildPolyMesh: Created mesh with 431 vertices and 203 polygons
+Built PolyMesh: 431 vertices, 203 polygons
+Built PolyMeshDetail: 203 meshes, 829 verts, 423 tris
+
+=== Testing canRemoveVertex on real mesh ===
+Can remove vertex 0: true
+Can remove vertex 430: true
+Can remove vertex 215: true
+
+=== Real mesh test completed successfully ===

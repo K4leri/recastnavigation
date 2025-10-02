@@ -8,7 +8,7 @@ const ContourSet = polymesh_mod.ContourSet;
 const Contour = polymesh_mod.Contour;
 const PolyMesh = polymesh_mod.PolyMesh;
 
-const MESH_NULL_IDX = config.MESH_NULL_IDX;
+pub const MESH_NULL_IDX = config.MESH_NULL_IDX;
 const BORDER_VERTEX = config.BORDER_VERTEX;
 
 const VERTEX_BUCKET_COUNT: usize = 1 << 12;
@@ -429,7 +429,7 @@ pub fn buildMeshAdjacency(
 }
 
 /// Counts actual vertices in a polygon (until MESH_NULL_IDX)
-fn countPolyVerts(p: []const u16, nvp: usize) usize {
+pub fn countPolyVerts(p: []const u16, nvp: usize) usize {
     for (0..nvp) |i| {
         if (p[i] == MESH_NULL_IDX) {
             return i;
@@ -439,7 +439,8 @@ fn countPolyVerts(p: []const u16, nvp: usize) usize {
 }
 
 /// Left test for u16 coordinates (used for polygon merging convexity check)
-inline fn uleft(a: []const u16, b: []const u16, c: []const u16) bool {
+/// INTERNAL: Exported for testing purposes only
+pub inline fn uleft(a: []const u16, b: []const u16, c: []const u16) bool {
     return (@as(i32, @intCast(b[0])) - @as(i32, @intCast(a[0]))) *
            (@as(i32, @intCast(c[2])) - @as(i32, @intCast(a[2]))) -
            (@as(i32, @intCast(c[0])) - @as(i32, @intCast(a[0]))) *
@@ -449,7 +450,8 @@ inline fn uleft(a: []const u16, b: []const u16, c: []const u16) bool {
 /// Returns merge value for two polygons if they can be merged (shared edge + convexity check)
 /// Returns -1 if polygons cannot be merged
 /// ea and eb are output parameters for edge indices
-fn getPolyMergeValue(
+/// INTERNAL: Exported for testing purposes only
+pub fn getPolyMergeValue(
     pa: []u16,
     pb: []u16,
     verts: []const u16,
@@ -527,7 +529,8 @@ fn getPolyMergeValue(
 
 /// Merges two polygons pa and pb by shared edge (ea, eb) into pa
 /// tmp is temporary storage for nvp vertices
-fn mergePolyVerts(
+/// INTERNAL: Exported for testing purposes only
+pub fn mergePolyVerts(
     pa: []u16,
     pb: []const u16,
     ea: usize,
@@ -558,7 +561,8 @@ fn mergePolyVerts(
 }
 
 /// Checks if a vertex can be removed from the mesh
-fn canRemoveVertex(
+/// INTERNAL: Exported for testing purposes only
+pub fn canRemoveVertex(
     ctx: *const Context,
     mesh: *const PolyMesh,
     rem: u16,

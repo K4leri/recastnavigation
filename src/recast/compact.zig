@@ -159,7 +159,7 @@ pub fn buildCompactHeightfield(
 
                         // Check that the gap between the spans is walkable,
                         // and that the climb height between the gaps is not too high
-                        if ((top - bot) >= walkable_height and
+                        if (top >= bot and (top - bot) >= walkable_height and
                             @abs(@as(i32, neighbor_span.y) - @as(i32, span.y)) <= walkable_climb) {
                             // Mark direction as walkable
                             const layer_index: i32 = @as(i32, @intCast(k)) - @as(i32, @intCast(neighbor_cell.index));
