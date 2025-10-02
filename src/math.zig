@@ -357,6 +357,7 @@ pub fn pointInPolygon(pt: Vec3, verts: []const Vec3) bool {
 
 // Bit manipulation utilities
 pub fn nextPow2(v: u32) u32 {
+    if (v == 0) return 1;
     var n = v;
     n -= 1;
     n |= n >> 1;

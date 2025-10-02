@@ -207,25 +207,18 @@ pub const CompactHeightfield = struct {
         ch: f32,
         border_size: i32,
     ) !Self {
-        const cell_count = @as(usize, @intCast(width * height));
         const span_ucount = @as(usize, @intCast(span_count));
 
-        const cells = try allocator.alloc(CompactCell, cell_count);
-        @memset(cells, CompactCell.init(0, 0));
-
-        const spans = try allocator.alloc(CompactSpan, span_ucount);
-        for (spans) |*span| {
-            span.* = CompactSpan.init();
-        }
+        // Note: cells, spans, and areas will be allocated in buildCompactHeightfield()
+        // to prevent memory leaks when they are replaced
+        const cells: []CompactCell = &[_]CompactCell{};
+        const spans: []CompactSpan = &[_]CompactSpan{};
 
         const dist = try allocator.alloc(u16, span_ucount);
         @memset(dist, 0);
 
-        // KNOWN ISSUE: This allocation causes a memory leak when buildCompactHeightfield
-        // reallocates the areas array. Freeing before reallocation causes hang.
-        // See KNOWN_ISSUES.md for details.
-        const areas = try allocator.alloc(u8, span_ucount);
-        @memset(areas, 0);
+        // areas will be allocated in buildCompactHeightfield()
+        const areas: []u8 = &[_]u8{};
 
         return Self{
             .width = width,

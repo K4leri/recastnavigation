@@ -539,7 +539,7 @@ fn mergePolyVerts(
     const nb = countPolyVerts(pb, nvp);
 
     // Merge polygons
-    @memset(tmp[0..nvp], 0xff);
+    @memset(tmp[0..nvp], MESH_NULL_IDX);
     var n: usize = 0;
 
     // Add pa
@@ -745,7 +745,7 @@ fn removeVertex(
             if (p.ptr != p2.ptr) {
                 @memcpy(@constCast(p), p2);
             }
-            @memset(@constCast(p[nvp..nvp * 2]), 0xff);
+            @memset(@constCast(p[nvp..nvp * 2]), MESH_NULL_IDX);
             mesh.regs[i] = mesh.regs[@intCast(mesh.npolys - 1)];
             mesh.areas[i] = mesh.areas[@intCast(mesh.npolys - 1)];
             mesh.npolys -= 1;
@@ -874,7 +874,7 @@ fn removeVertex(
 
     // Build initial polygons
     var npolys: usize = 0;
-    @memset(polys[0 .. ntris_usize * nvp], 0xff);
+    @memset(polys[0 .. ntris_usize * nvp], MESH_NULL_IDX);
     for (0..ntris_usize) |j| {
         const t = tris[j * 3 .. j * 3 + 3];
         if (t[0] != t[1] and t[0] != t[2] and t[1] != t[2]) {
@@ -959,7 +959,7 @@ fn removeVertex(
         }
 
         const p = mesh.polys[@as(usize, @intCast(mesh.npolys)) * nvp * 2 .. @as(usize, @intCast(mesh.npolys)) * nvp * 2 + nvp * 2];
-        @memset(p, 0xff);
+        @memset(p, MESH_NULL_IDX);
         for (0..nvp) |j| {
             p[j] = polys[pi * nvp + j];
         }
@@ -1012,7 +1012,7 @@ pub fn buildPolyMesh(
     @memset(mesh.verts, 0);
 
     mesh.polys = try allocator.alloc(u16, max_tris * nvp * 2);
-    @memset(mesh.polys, 0xff);
+    @memset(mesh.polys, MESH_NULL_IDX);
 
     mesh.regs = try allocator.alloc(u16, max_tris);
     @memset(mesh.regs, 0);
@@ -1085,7 +1085,7 @@ pub fn buildPolyMesh(
 
         // Build initial polygons from triangles
         var npolys: usize = 0;
-        @memset(polys, 0xff);
+        @memset(polys, MESH_NULL_IDX);
 
         const ntris_usize: usize = @intCast(@abs(ntris));
         for (0..ntris_usize) |j| {

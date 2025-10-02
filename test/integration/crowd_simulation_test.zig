@@ -194,17 +194,98 @@ test "Crowd Simulation: Basic Setup (Stub)" {
     try testing.expect(pmesh.npolys > 0);
     try testing.expect(pmesh.nverts > 0);
 
-    // TODO: Create NavMesh from pmesh/dmesh
-    // TODO: Initialize NavMeshQuery
-    // TODO: Create Crowd instance
-    // TODO: Add agent to crowd
-    // TODO: Set agent target
-    // TODO: Update crowd simulation
-    // TODO: Verify agent movement
+    // Create default poly flags (mark all as walkable)
+    const poly_flags = try allocator.alloc(u16, @intCast(pmesh.npolys));
+    defer allocator.free(poly_flags);
+    @memset(poly_flags, 0x01); // Default walkable flag
 
-    // This test is a stub - full implementation requires:
-    // - createNavMeshData to build NavMesh
-    // - NavMeshQuery initialization
-    // - Crowd initialization with NavMeshQuery
-    // - Agent addition and movement APIs
+    // Create NavMesh data using Detour
+    const navmesh_params = nav.detour.NavMeshCreateParams{
+        .verts = pmesh.verts,
+        .vert_count = @intCast(pmesh.nverts),
+        .polys = pmesh.polys,
+        .poly_flags = poly_flags,
+        .poly_areas = pmesh.areas,
+        .poly_count = @intCast(pmesh.npolys),
+        .nvp = @intCast(pmesh.nvp),
+        .detail_meshes = dmesh.meshes,
+        .detail_verts = dmesh.verts,
+        .detail_verts_count = @intCast(dmesh.nverts),
+        .detail_tris = dmesh.tris,
+        .detail_tri_count = @intCast(dmesh.ntris),
+        .bmin = [3]f32{ pmesh.bmin.x, pmesh.bmin.y, pmesh.bmin.z },
+        .bmax = [3]f32{ pmesh.bmax.x, pmesh.bmax.y, pmesh.bmax.z },
+        .walkable_height = @as(f32, @floatFromInt(config.walkable_height)) * config.ch,
+        .walkable_radius = @as(f32, @floatFromInt(config.walkable_radius)) * config.cs,
+        .walkable_climb = @as(f32, @floatFromInt(config.walkable_climb)) * config.ch,
+        .cs = pmesh.cs,
+        .ch = pmesh.ch,
+        .build_bv_tree = true,
+    };
+
+    const navmesh_data = try nav.detour.createNavMeshData(&navmesh_params, allocator);
+    defer allocator.free(navmesh_data);
+
+    // Initialize NavMesh
+    const nm_params = nav.detour.NavMeshParams{
+        .orig = bmin,
+        .tile_width = bmax.x - bmin.x,
+        .tile_height = bmax.z - bmin.z,
+        .max_tiles = 1,
+        .max_polys = 256,
+    };
+
+    var navmesh = try nav.detour.NavMesh.init(allocator, nm_params);
+    defer navmesh.deinit();
+
+    // Add tile to NavMesh
+    const tile_flags = nav.detour.TileFlags{ .free_data = false };
+    _ = try navmesh.addTile(navmesh_data, tile_flags, 0);
+
+    // Create Crowd instance
+    var crowd = try nav.detour_crowd.Crowd.init(
+        allocator,
+        10, // max_agents
+        @as(f32, @floatFromInt(config.walkable_radius)) * config.cs, // max_agent_radius
+        &navmesh,
+    );
+    defer crowd.deinit();
+
+    // Add agent to crowd
+    const start_pos = [3]f32{ 1.0, 0.5, 1.0 };
+    var agent_params = nav.detour_crowd.CrowdAgentParams.init();
+    agent_params.radius = 0.3;
+    agent_params.height = 2.0;
+    agent_params.max_speed = 2.0;
+
+    const agent_idx = try crowd.addAgent(&start_pos, &agent_params);
+    try testing.expect(agent_idx >= 0);
+
+    // Set target for agent
+    const target_pos = [3]f32{ 8.0, 0.5, 8.0 };
+
+    // Find nearest polygon for target
+    const ext = [3]f32{ 2.0, 4.0, 2.0 };
+    var filter = nav.detour.QueryFilter.init();
+    var target_ref: nav.detour.PolyRef = 0;
+    var nearest_pt = [3]f32{ 0, 0, 0 };
+
+    try crowd.navquery.findNearestPoly(&target_pos, &ext, &filter, &target_ref, &nearest_pt);
+    try testing.expect(target_ref != 0);
+
+    // Request move to target
+    const move_requested = crowd.requestMoveTarget(@intCast(agent_idx), target_ref, &nearest_pt);
+    try testing.expect(move_requested);
+
+    // Update crowd simulation for a few steps
+    const dt: f32 = 0.1; // 100ms per step
+    for (0..10) |_| {
+        try crowd.update(dt);
+    }
+
+    // Verify agent has moved toward target
+    const agent = &crowd.agents[@intCast(agent_idx)];
+    const dist_to_start = nav.math.vdist(&agent.npos, &start_pos);
+    try testing.expect(dist_to_start > 0.1); // Agent should have moved
+    try testing.expect(agent.state != .invalid); // Agent should be in valid state
 }

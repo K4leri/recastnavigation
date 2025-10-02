@@ -723,12 +723,12 @@ pub const NavMesh = struct {
             var bmin: [3]u16 = undefined;
             var bmax: [3]u16 = undefined;
             // Clamp query box to world box
-            const minx = math.clamp(f32, qmin[0], tbmin[0], tbmax[0]) - tbmin[0];
-            const miny = math.clamp(f32, qmin[1], tbmin[1], tbmax[1]) - tbmin[1];
-            const minz = math.clamp(f32, qmin[2], tbmin[2], tbmax[2]) - tbmin[2];
-            const maxx = math.clamp(f32, qmax[0], tbmin[0], tbmax[0]) - tbmin[0];
-            const maxy = math.clamp(f32, qmax[1], tbmin[1], tbmax[1]) - tbmin[1];
-            const maxz = math.clamp(f32, qmax[2], tbmin[2], tbmax[2]) - tbmin[2];
+            const minx = math.clamp(f32, qmin[0], tbmin.x, tbmax.x) - tbmin.x;
+            const miny = math.clamp(f32, qmin[1], tbmin.y, tbmax.y) - tbmin.y;
+            const minz = math.clamp(f32, qmin[2], tbmin.z, tbmax.z) - tbmin.z;
+            const maxx = math.clamp(f32, qmax[0], tbmin.x, tbmax.x) - tbmin.x;
+            const maxy = math.clamp(f32, qmax[1], tbmin.y, tbmax.y) - tbmin.y;
+            const maxz = math.clamp(f32, qmax[2], tbmin.z, tbmax.z) - tbmin.z;
             // Quantize
             bmin[0] = @intFromFloat(qfac * minx);
             bmin[0] &= 0xfffe;
@@ -781,14 +781,16 @@ pub const NavMesh = struct {
                 if (p.getType() == .offmesh_connection) continue;
 
                 // Calc polygon bounds
-                const v0 = &tile.verts[p.verts[0] * 3];
-                math.vcopy(&bmin, v0[0..3]);
-                math.vcopy(&bmax, v0[0..3]);
+                const v0_idx = p.verts[0] * 3;
+                const v0: *const [3]f32 = tile.verts[v0_idx..][0..3];
+                math.vcopy(&bmin, v0);
+                math.vcopy(&bmax, v0);
 
                 for (1..@intCast(p.vert_count)) |j| {
-                    const v = &tile.verts[p.verts[j] * 3];
-                    math.vmin(&bmin, v[0..3]);
-                    math.vmax(&bmax, v[0..3]);
+                    const v_idx = p.verts[j] * 3;
+                    const v: *const [3]f32 = tile.verts[v_idx..][0..3];
+                    math.vmin(&bmin, v);
+                    math.vmax(&bmax, v);
                 }
 
                 if (qmin[0] <= bmax[0] and qmax[0] >= bmin[0] and

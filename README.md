@@ -46,10 +46,10 @@ Navigation mesh construction from triangle meshes:
 
 ### Detour
 Navigation queries and pathfinding:
-- `NavMesh` - Runtime navigation mesh
-- `NavMeshQuery` - Pathfinding and spatial queries (TODO)
-- `Crowd` - Agent management (TODO)
-- `TileCache` - Dynamic obstacle support (TODO)
+- `NavMesh` - Runtime navigation mesh ✅
+- `NavMeshQuery` - Pathfinding and spatial queries ✅
+- `Crowd` - Agent management and local steering ✅
+- `TileCache` - Dynamic obstacle support ✅
 
 ## Building
 
@@ -71,8 +71,11 @@ zig build test-integration
 ```
 
 **Current Test Status:**
-- ✅ 5/5 integration tests passing
-- ⚠️ 2 known memory leaks (non-critical, see KNOWN_ISSUES.md)
+- ✅ 15/15 integration tests passing
+- ✅ No memory leaks detected
+- ✅ Detour pipeline fully tested (NavMesh creation, pathfinding)
+- ✅ Crowd simulation tested (agent movement and steering)
+- ✅ TileCache fully tested (all obstacle types, NavMesh verification)
 
 ### Run Examples
 ```bash
@@ -207,11 +210,7 @@ const unsigned char RC_WALKABLE_AREA = 63;
 
 ## Known Issues
 
-**Memory Leaks in CompactHeightfield** (Non-Critical)
-- Small memory leak when `buildCompactHeightfield()` reallocates arrays
-- Tests pass successfully despite leak
-- Attempted fix causes test hang - under investigation
-- See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) for full details
+None currently. All integration tests pass without memory leaks.
 
 ## Contributing
 

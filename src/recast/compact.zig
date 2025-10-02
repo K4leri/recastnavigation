@@ -69,7 +69,7 @@ pub fn buildCompactHeightfield(
     compact_hf.cs = heightfield.cs;
     compact_hf.ch = heightfield.ch;
 
-    // Allocate cells
+    // Allocate cells (or reallocate if size changed)
     const cells_len = @as(usize, @intCast(x_size * z_size));
     compact_hf.cells = try compact_hf.allocator.alloc(CompactCell, cells_len);
     @memset(compact_hf.cells, .{ .index = 0, .count = 0 });
@@ -78,9 +78,7 @@ pub fn buildCompactHeightfield(
     compact_hf.spans = try compact_hf.allocator.alloc(CompactSpan, span_count);
     @memset(compact_hf.spans, .{ .y = 0, .reg = 0, .con = 0, .h = 0 });
 
-    // Allocate areas (WARNING: This causes memory leak - replaces areas allocated in init())
-    // TODO: Fix by either reusing existing arrays or properly freeing old ones
-    // See KNOWN_ISSUES.md for details
+    // Allocate areas
     compact_hf.areas = try compact_hf.allocator.alloc(u8, span_count);
     @memset(compact_hf.areas, NULL_AREA);
 

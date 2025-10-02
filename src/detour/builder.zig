@@ -406,7 +406,9 @@ pub fn createNavMeshData(
                 if (p[j] == MESH_NULL_IDX) break;
                 nv += 1;
             }
-            unique_detail_vert_count += ndv - nv;
+            if (ndv >= nv) {
+                unique_detail_vert_count += ndv - nv;
+            }
         }
     } else {
         for (0..params.poly_count) |i| {

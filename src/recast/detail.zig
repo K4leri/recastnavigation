@@ -784,7 +784,7 @@ fn getHeightData(
     region: u16,
 ) !void {
     try queue.resize(0);
-    @memset(hp.data, 0xff);
+    @memset(hp.data, 0xffff);
 
     var empty = true;
 
