@@ -1,0 +1,2933 @@
+test
++- run test stderr
+[PROGRESS] buildRegions: max_distance=14, level_start=14
+[PROGRESS] buildRegions: Watershed created 1 regions (before merging)
+[PROGRESS] mergeAndFilterRegions: Region span counts:
+[PROGRESS]   Region 1: 256 spans, 1 connections
+[PROGRESS] mergeAndFilterRegions: Merged and filtered to 2 regions
+[PROGRESS] buildRegions: Created 1 regions
+[PROGRESS] buildContours: Finding boundaries...
+[PROGRESS] buildContours: Walking contours...
+[PROGRESS] buildContours: Checking for holes...
+[PROGRESS] buildContours: Created 1 contours
+[PROGRESS] buildPolyMesh: max_vertices=4, max_tris=2
+[PROGRESS] buildPolyMesh: Created mesh with 4 vertices and 1 polygons
+[PROGRESS] buildRegions: max_distance=14, level_start=14
+[PROGRESS] buildRegions: Watershed created 1 regions (before merging)
+[PROGRESS] mergeAndFilterRegions: Region span counts:
+[PROGRESS]   Region 1: 256 spans, 1 connections
+[PROGRESS] mergeAndFilterRegions: Merged and filtered to 2 regions
+[PROGRESS] buildRegions: Created 1 regions
+[PROGRESS] buildContours: Finding boundaries...
+[PROGRESS] buildContours: Walking contours...
+[PROGRESS] buildContours: Checking for holes...
+[PROGRESS] buildContours: Created 1 contours
+[PROGRESS] buildPolyMesh: max_vertices=4, max_tris=2
+[PROGRESS] buildPolyMesh: Created mesh with 4 vertices and 1 polygons
+[PROGRESS] buildRegions: max_distance=14, level_start=14
+[PROGRESS] buildRegions: Watershed created 1 regions (before merging)
+[PROGRESS] mergeAndFilterRegions: Region span counts:
+[PROGRESS]   Region 1: 256 spans, 1 connections
+[PROGRESS] mergeAndFilterRegions: Merged and filtered to 2 regions
+[PROGRESS] buildRegions: Created 1 regions
+[PROGRESS] buildContours: Finding boundaries...
+[PROGRESS] buildContours: Walking contours...
+[PROGRESS] buildContours: Checking for holes...
+[PROGRESS] buildContours: Created 1 contours
+[PROGRESS] buildPolyMesh: max_vertices=4, max_tris=2
+[PROGRESS] buildPolyMesh: Created mesh with 4 vertices and 1 polygons
+[PROGRESS] buildRegions: max_distance=14, level_start=14
+[PROGRESS] buildRegions: Watershed created 1 regions (before merging)
+[PROGRESS] mergeAndFilterRegions: Region span counts:
+[PROGRESS]   Region 1: 256 spans, 1 connections
+[PROGRESS] mergeAndFilterRegions: Merged and filtered to 2 regions
+[PROGRESS] buildRegions: Created 1 regions
+[PROGRESS] buildContours: Finding boundaries...
+[PROGRESS] buildContours: Walking contours...
+[PROGRESS] buildContours: Checking for holes...
+[PROGRESS] buildContours: Created 1 contours
+[PROGRESS] buildPolyMesh: max_vertices=4, max_tris=2
+[PROGRESS] buildPolyMesh: Created mesh with 4 vertices and 1 polygons
+    [DEBUG closestPointOnPoly] ref=256, poly=0, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=0, dmin=2.890000, tmin=0.000000, result=(2.700000, 0.600000, 2.700000)
+    [DEBUG closestPointOnPoly] ref=256, poly=0, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=0, dmin=0.250000, tmin=1.000000, result=(7.500000, 0.600000, 7.500001)
+[PROGRESS] buildRegions: max_distance=14, level_start=14
+[PROGRESS] buildRegions: Watershed created 1 regions (before merging)
+[PROGRESS] mergeAndFilterRegions: Region span counts:
+[PROGRESS]   Region 1: 256 spans, 1 connections
+[PROGRESS] mergeAndFilterRegions: Merged and filtered to 2 regions
+[PROGRESS] buildRegions: Created 1 regions
+[PROGRESS] buildContours: Finding boundaries...
+[PROGRESS] buildContours: Walking contours...
+[PROGRESS] buildContours: Checking for holes...
+[PROGRESS] buildContours: Created 1 contours
+[PROGRESS] buildPolyMesh: max_vertices=4, max_tris=2
+[PROGRESS] buildPolyMesh: Created mesh with 4 vertices and 1 polygons
+    [DEBUG closestPointOnPoly] ref=256, poly=0, pos_over_poly=true, height=0.600000
+    [DEBUG closestPointOnPoly] ref=256, poly=0, pos_over_poly=true, height=0.600000
+
+=== Loaded nav_test.obj ===
+Vertices: 884
+Triangles: 1560
+Bounds: min=(-28.89, -4.87, -46.30) max=(62.49, 17.01, 31.05)
+Grid size: 305x258
+Rasterized 1560 triangles
+Built compact heightfield with 55226 spans
+[PROGRESS] buildRegions: max_distance=47, level_start=48
+[PROGRESS] buildRegions: Watershed created 46 regions (before merging)
+[PROGRESS] mergeAndFilterRegions: Region span counts:
+[PROGRESS]   Region 1: 2045 spans, 4 connections
+[PROGRESS]   Region 2: 1893 spans, 4 connections
+[PROGRESS]   Region 3: 1567 spans, 4 connections
+[PROGRESS]   Region 4: 1883 spans, 4 connections
+[PROGRESS]   Region 5: 1486 spans, 4 connections
+[PROGRESS]   Region 6: 2017 spans, 8 connections
+[PROGRESS]   Region 7: 1437 spans, 4 connections
+[PROGRESS]   Region 8: 1041 spans, 4 connections
+[PROGRESS]   Region 9: 667 spans, 2 connections
+[PROGRESS]   Region 10: 698 spans, 4 connections
+[PROGRESS]   Region 11: 434 spans, 1 connections
+[PROGRESS]   Region 12: 873 spans, 6 connections
+[PROGRESS]   Region 13: 574 spans, 6 connections
+[PROGRESS]   Region 14: 1311 spans, 8 connections
+[PROGRESS]   Region 15: 302 spans, 2 connections
+[PROGRESS]   Region 16: 493 spans, 2 connections
+[PROGRESS]   Region 17: 220 spans, 2 connections
+[PROGRESS]   Region 18: 343 spans, 4 connections
+[PROGRESS]   Region 19: 210 spans, 4 connections
+[PROGRESS]   Region 20: 212 spans, 4 connections
+[PROGRESS]   Region 21: 255 spans, 6 connections
+[PROGRESS]   Region 22: 203 spans, 4 connections
+[PROGRESS]   Region 23: 179 spans, 4 connections
+[PROGRESS]   Region 24: 254 spans, 4 connections
+[PROGRESS]   Region 25: 116 spans, 4 connections
+[PROGRESS]   Region 26: 160 spans, 4 connections
+[PROGRESS]   Region 27: 169 spans, 4 connections
+[PROGRESS]   Region 28: 257 spans, 2 connections
+[PROGRESS]   Region 29: 122 spans, 2 connections
+[PROGRESS]   Region 30: 107 spans, 6 connections
+[PROGRESS]   Region 31: 74 spans, 4 connections
+[PROGRESS]   Region 32: 25 spans, 1 connections
+[PROGRESS]   Region 33: 30 spans, 2 connections
+[PROGRESS]   Region 34: 29 spans, 2 connections
+[PROGRESS]   Region 35: 22 spans, 4 connections
+[PROGRESS]   Region 36: 56 spans, 4 connections
+[PROGRESS]   Region 37: 125 spans, 2 connections
+[PROGRESS]   Region 38: 75 spans, 4 connections
+[PROGRESS]   Region 39: 99 spans, 4 connections
+[PROGRESS]   Region 40: 75 spans, 4 connections
+[PROGRESS]   Region 41: 29 spans, 4 connections
+[PROGRESS]   Region 42: 22 spans, 2 connections
+[PROGRESS]   Region 43: 44 spans, 2 connections
+[PROGRESS]   Region 44: 127 spans, 2 connections
+[PROGRESS]   Region 45: 1 spans, 1 connections
+[PROGRESS]   Region 46: 2 spans, 1 connections
+[PROGRESS]   Removing small region group (spanCount=1 < 8): ids={ 45 }
+[PROGRESS]   Removing small region group (spanCount=2 < 8): ids={ 46 }
+[PROGRESS] mergeAndFilterRegions: Merged and filtered to 45 regions
+[PROGRESS] buildRegions: Created 44 regions
+[REGION] Built 44 regions
+[REGION] Region details:
+[REGION]   Region 1: 2045 spans
+[REGION]   Region 2: 1893 spans
+[REGION]   Region 3: 1567 spans
+[REGION]   Region 4: 1883 spans
+[REGION]   Region 5: 1486 spans
+[REGION]   Region 6: 2017 spans
+[REGION]   Region 7: 1437 spans
+[REGION]   Region 8: 1041 spans
+[REGION]   Region 9: 667 spans
+[REGION]   Region 10: 698 spans
+[REGION]   Region 11: 434 spans
+[REGION]   Region 12: 873 spans
+[REGION]   Region 13: 574 spans
+[REGION]   Region 14: 1311 spans
+[REGION]   Region 15: 302 spans
+[REGION]   Region 16: 493 spans
+[REGION]   Region 17: 220 spans
+[REGION]   Region 18: 343 spans
+[REGION]   Region 19: 210 spans
+[REGION]   Region 20: 212 spans
+[REGION]   Region 21: 255 spans
+[REGION]   Region 22: 203 spans
+[REGION]   Region 23: 179 spans
+[REGION]   Region 24: 254 spans
+[REGION]   Region 25: 116 spans
+[REGION]   Region 26: 160 spans
+[REGION]   Region 27: 169 spans
+[REGION]   Region 28: 257 spans
+[REGION]   Region 29: 122 spans
+[REGION]   Region 30: 107 spans
+[REGION]   Region 31: 74 spans
+[REGION]   Region 32: 25 spans
+[REGION]   Region 33: 30 spans
+[REGION]   Region 34: 29 spans
+[REGION]   Region 35: 22 spans
+[REGION]   Region 36: 56 spans
+[REGION]   Region 37: 125 spans
+[REGION]   Region 38: 75 spans
+[REGION]   Region 39: 99 spans
+[REGION]   Region 40: 75 spans
+[REGION]   Region 41: 29 spans
+[REGION]   Region 42: 22 spans
+[REGION]   Region 43: 44 spans
+[REGION]   Region 44: 127 spans
+[PROGRESS] buildContours: Finding boundaries...
+[PROGRESS] buildContours: Walking contours...
+[PROGRESS] buildContours: Checking for holes...
+[PROGRESS] buildContours: Created 44 contours
+Built 44 contours
+[CONTOUR] Contour details:
+[CONTOUR]   Contour 0: nverts=13, reg=2, area=1, first_vert=(226,23,15)
+[CONTOUR]   Contour 1: nverts=12, reg=5, area=1, first_vert=(189,16,57)
+[CONTOUR]   Contour 2: nverts=16, reg=1, area=1, first_vert=(235,23,55)
+[CONTOUR]   Contour 3: nverts=15, reg=3, area=1, first_vert=(189,16,57)
+[CONTOUR]   Contour 4: nverts=7, reg=17, area=1, first_vert=(145,13,78)
+[CONTOUR]   Contour 5: nverts=9, reg=15, area=1, first_vert=(145,13,92)
+[CONTOUR]   Contour 6: nverts=12, reg=18, area=1, first_vert=(80,13,97)
+[CONTOUR]   Contour 7: nverts=15, reg=9, area=1, first_vert=(80,13,109)
+[CONTOUR]   Contour 8: nverts=7, reg=32, area=1, first_vert=(9,13,94)
+[CONTOUR]   Contour 9: nverts=15, reg=13, area=1, first_vert=(93,13,113)
+[CONTOUR]   Contour 10: nverts=5, reg=33, area=1, first_vert=(13,13,123)
+[CONTOUR]   Contour 11: nverts=12, reg=24, area=1, first_vert=(121,13,120)
+[CONTOUR]   Contour 12: nverts=6, reg=34, area=1, first_vert=(122,66,120)
+[CONTOUR]   Contour 13: nverts=10, reg=19, area=1, first_vert=(108,71,134)
+[CONTOUR]   Contour 14: nverts=9, reg=20, area=1, first_vert=(150,13,125)
+[CONTOUR]   Contour 15: nverts=37, reg=6, area=1, first_vert=(13,13,123)
+[CONTOUR]   Contour 16: nverts=9, reg=29, area=1, first_vert=(50,21,150)
+[CONTOUR]   Contour 17: nverts=15, reg=8, area=1, first_vert=(256,17,137)
+[CONTOUR]   Contour 18: nverts=13, reg=28, area=1, first_vert=(114,70,134)
+[CONTOUR]   Contour 19: nverts=15, reg=10, area=1, first_vert=(216,21,142)
+[CONTOUR]   Contour 20: nverts=4, reg=35, area=1, first_vert=(165,13,147)
+[CONTOUR]   Contour 21: nverts=8, reg=22, area=1, first_vert=(203,17,163)
+[CONTOUR]   Contour 22: nverts=10, reg=30, area=1, first_vert=(110,13,147)
+[CONTOUR]   Contour 23: nverts=33, reg=14, area=1, first_vert=(140,13,156)
+[CONTOUR]   Contour 24: nverts=7, reg=36, area=1, first_vert=(120,13,155)
+[CONTOUR]   Contour 25: nverts=8, reg=25, area=1, first_vert=(62,13,166)
+[CONTOUR]   Contour 26: nverts=7, reg=38, area=1, first_vert=(203,17,163)
+[CONTOUR]   Contour 27: nverts=10, reg=37, area=1, first_vert=(43,64,167)
+[CONTOUR]   Contour 28: nverts=7, reg=31, area=1, first_vert=(77,13,169)
+[CONTOUR]   Contour 29: nverts=9, reg=26, area=1, first_vert=(28,61,185)
+[CONTOUR]   Contour 30: nverts=11, reg=21, area=1, first_vert=(92,13,170)
+[CONTOUR]   Contour 31: nverts=15, reg=4, area=1, first_vert=(246,19,189)
+[CONTOUR]   Contour 32: nverts=18, reg=7, area=1, first_vert=(205,16,181)
+[CONTOUR]   Contour 33: nverts=10, reg=39, area=1, first_vert=(32,27,216)
+[CONTOUR]   Contour 34: nverts=9, reg=40, area=1, first_vert=(103,13,189)
+[CONTOUR]   Contour 35: nverts=4, reg=41, area=1, first_vert=(51,13,208)
+[CONTOUR]   Contour 36: nverts=15, reg=16, area=1, first_vert=(137,70,234)
+[CONTOUR]   Contour 37: nverts=9, reg=11, area=1, first_vert=(229,64,209)
+[CONTOUR]   Contour 38: nverts=11, reg=27, area=1, first_vert=(127,13,222)
+[CONTOUR]   Contour 39: nverts=24, reg=12, area=1, first_vert=(52,13,213)
+[CONTOUR]   Contour 40: nverts=10, reg=23, area=1, first_vert=(127,13,219)
+[CONTOUR]   Contour 41: nverts=4, reg=42, area=1, first_vert=(173,13,225)
+[CONTOUR]   Contour 42: nverts=4, reg=43, area=1, first_vert=(137,70,234)
+[CONTOUR]   Contour 43: nverts=13, reg=44, area=1, first_vert=(74,13,239)
+[PROGRESS] buildPolyMesh: max_vertices=512, max_tris=424
+[PROGRESS] buildPolyMesh: Created mesh with 432 vertices and 206 polygons
+Built PolyMesh: 432 vertices, 206 polygons
+
+[POLYMESH_VERTICES_BEGIN]
+226,23,15
+226,28,47
+232,26,49
+235,23,55
+274,13,54
+273,13,48
+273,12,42
+272,11,31
+270,8,21
+269,6,10
+258,9,11
+247,13,12
+236,19,13
+189,16,57
+217,25,56
+219,28,50
+215,24,16
+205,22,17
+195,19,19
+185,15,20
+186,17,29
+187,17,38
+188,17,47
+233,20,62
+227,20,65
+228,13,100
+234,13,99
+241,13,99
+247,14,98
+253,16,97
+259,19,96
+266,24,96
+272,27,95
+279,29,94
+278,25,83
+277,19,73
+275,15,64
+190,15,62
+190,14,69
+192,16,80
+192,19,86
+193,24,92
+194,25,98
+195,26,104
+203,25,103
+211,21,102
+219,15,101
+220,22,63
+145,13,78
+145,13,92
+153,13,91
+161,13,92
+161,13,87
+159,13,76
+152,13,77
+134,13,79
+123,13,80
+128,13,86
+129,13,96
+132,13,98
+133,13,102
+137,13,95
+80,13,97
+80,13,109
+87,13,108
+93,13,113
+100,13,109
+97,13,104
+96,13,97
+96,13,88
+98,13,84
+88,13,85
+89,13,90
+87,13,94
+73,13,94
+71,13,87
+63,13,88
+55,13,89
+47,13,90
+39,13,91
+47,13,96
+50,13,102
+53,13,109
+53,13,113
+59,13,112
+66,13,111
+73,13,110
+9,13,94
+10,13,102
+11,13,111
+12,13,104
+11,13,98
+13,13,96
+13,13,94
+96,13,122
+96,13,130
+97,13,138
+107,13,141
+110,13,147
+112,13,146
+111,13,136
+113,13,132
+122,13,128
+121,13,120
+115,13,121
+111,13,119
+108,13,111
+13,13,123
+17,13,122
+15,13,116
+12,13,111
+12,13,117
+131,13,128
+135,13,130
+138,13,139
+140,13,136
+150,13,133
+150,13,125
+139,13,126
+134,13,123
+132,13,117
+127,13,120
+122,66,120
+122,66,123
+133,66,121
+133,66,119
+131,66,117
+127,66,120
+108,71,134
+114,70,134
+117,66,126
+111,66,119
+105,66,120
+99,66,120
+100,66,126
+104,68,127
+157,13,133
+161,13,135
+164,13,140
+167,13,140
+166,13,129
+164,13,119
+156,13,121
+14,13,131
+15,13,140
+16,13,148
+17,13,157
+18,13,165
+19,13,174
+20,13,183
+21,13,192
+27,13,191
+33,13,190
+43,13,190
+47,13,192
+50,13,197
+51,13,208
+56,13,206
+56,13,199
+60,13,193
+56,13,191
+54,13,187
+54,13,180
+53,13,175
+56,13,170
+62,13,168
+62,13,166
+55,13,163
+53,21,156
+55,21,153
+50,21,150
+44,13,152
+40,13,150
+37,13,145
+39,13,139
+32,13,137
+27,13,133
+21,13,130
+62,34,144
+66,41,140
+71,48,136
+70,55,130
+65,48,135
+60,34,140
+55,27,145
+256,17,137
+256,21,146
+262,18,148
+265,18,153
+264,19,160
+265,19,168
+266,17,176
+290,13,176
+289,12,165
+287,11,155
+286,8,144
+285,6,133
+277,8,134
+270,10,135
+263,13,136
+105,78,145
+101,84,155
+100,90,166
+96,97,176
+100,101,178
+102,97,178
+104,92,171
+106,88,163
+108,83,155
+110,78,147
+116,73,140
+216,21,142
+216,27,152
+222,30,155
+224,37,164
+230,34,160
+236,34,159
+242,34,159
+247,37,162
+247,31,154
+249,28,150
+245,22,138
+235,23,139
+226,23,141
+165,13,147
+168,13,147
+203,17,163
+206,19,162
+208,20,155
+209,18,143
+201,15,143
+202,17,153
+111,13,154
+111,13,162
+108,13,167
+114,13,167
+116,13,159
+120,13,157
+120,13,155
+114,13,152
+140,13,156
+138,13,157
+141,13,162
+141,13,168
+146,13,167
+150,13,169
+155,13,176
+155,13,184
+156,13,192
+157,13,200
+158,13,208
+154,13,214
+147,13,216
+149,13,219
+157,13,223
+159,13,218
+166,13,216
+171,13,219
+173,13,225
+177,13,224
+176,13,214
+175,13,204
+174,13,194
+172,13,186
+171,13,176
+170,13,166
+169,13,156
+163,13,155
+158,13,158
+152,13,159
+145,13,159
+127,13,155
+138,13,148
+131,13,154
+73,13,167
+77,13,169
+81,13,166
+78,13,159
+71,13,159
+67,13,164
+204,17,172
+205,16,181
+209,18,180
+208,19,173
+208,20,166
+43,64,167
+45,64,171
+51,64,170
+58,64,169
+65,64,168
+72,64,167
+73,64,163
+65,64,164
+58,64,165
+50,64,166
+80,13,175
+87,13,173
+92,13,176
+92,13,170
+86,13,170
+28,61,185
+31,61,185
+33,64,176
+39,64,172
+34,64,168
+26,64,169
+27,64,177
+101,13,183
+103,13,189
+107,13,188
+106,13,179
+110,13,173
+115,13,171
+100,13,169
+246,19,189
+249,13,223
+260,13,222
+265,15,221
+272,18,221
+283,25,219
+289,27,219
+295,29,218
+294,25,207
+293,19,196
+291,14,186
+262,17,183
+254,18,186
+206,15,186
+206,14,193
+208,16,204
+208,19,210
+209,24,216
+210,25,222
+211,26,228
+220,24,227
+230,18,226
+240,14,225
+240,19,191
+230,19,191
+223,18,191
+212,17,187
+32,27,216
+35,27,216
+34,34,208
+33,47,200
+32,54,192
+29,54,192
+30,47,200
+31,34,208
+102,13,192
+105,13,196
+105,13,204
+106,13,211
+109,13,211
+109,13,204
+108,13,199
+52,13,213
+57,13,212
+137,70,234
+141,71,233
+141,73,225
+143,75,221
+149,77,217
+153,77,218
+152,79,212
+152,80,206
+143,79,207
+134,77,208
+126,75,210
+118,74,211
+120,71,222
+129,73,221
+133,73,223
+229,64,209
+230,64,220
+231,64,225
+231,64,232
+241,64,231
+252,64,230
+251,64,219
+250,64,208
+240,64,211
+127,13,222
+127,13,219
+117,13,219
+111,13,215
+107,13,219
+108,13,227
+114,13,225
+120,13,229
+121,13,225
+52,13,221
+49,13,226
+45,13,228
+37,20,225
+32,20,223
+29,13,228
+26,13,229
+27,13,238
+28,13,248
+39,13,247
+44,13,246
+51,13,246
+61,13,244
+67,13,244
+73,13,243
+74,13,239
+67,13,239
+61,13,235
+59,13,230
+59,13,223
+134,13,225
+137,13,235
+142,13,235
+141,13,226
+144,13,221
+137,13,218
+175,13,231
+178,13,230
+138,68,243
+144,69,243
+79,13,242
+86,13,241
+93,13,240
+101,13,240
+105,13,238
+104,13,234
+102,13,234
+100,13,236
+93,13,237
+86,13,237
+80,13,238
+[POLYMESH_VERTICES_END]
+
+[POLYMESH_POLYGONS_BEGIN]
+poly=0,reg=2,area=1,verts=8,9,10,neighbors=65535,65535,3
+poly=1,reg=2,area=1,verts=5,6,7,neighbors=65535,65535,4
+poly=2,reg=2,area=1,verts=11,12,0,neighbors=65535,65535,4
+poly=3,reg=2,area=1,verts=7,8,10,11,neighbors=65535,0,65535,4
+poly=4,reg=2,area=1,verts=11,0,2,3,5,7,neighbors=2,5,65535,6,1,3
+poly=5,reg=2,area=1,verts=0,1,2,neighbors=12,65535,4
+poly=6,reg=2,area=1,verts=3,4,5,neighbors=18,65535,4
+poly=7,reg=5,area=1,verts=18,19,20,neighbors=65535,65535,9
+poly=8,reg=5,area=1,verts=16,17,18,neighbors=65535,65535,12
+poly=9,reg=5,area=1,verts=18,20,21,neighbors=7,65535,10
+poly=10,reg=5,area=1,verts=18,21,22,neighbors=9,65535,12
+poly=11,reg=5,area=1,verts=22,13,14,15,neighbors=65535,26,65535,12
+poly=12,reg=5,area=1,verts=0,16,18,22,15,1,neighbors=65535,8,10,11,65535,5
+poly=13,reg=1,area=1,verts=26,27,28,neighbors=65535,65535,16
+poly=14,reg=1,area=1,verts=30,31,32,neighbors=65535,65535,15
+poly=15,reg=1,area=1,verts=32,33,34,35,36,30,neighbors=65535,65535,65535,65535,18,14
+poly=16,reg=1,area=1,verts=26,28,29,neighbors=13,65535,19
+poly=17,reg=1,area=1,verts=24,25,26,23,neighbors=24,65535,18,65535
+poly=18,reg=1,area=1,verts=36,4,3,23,26,30,neighbors=65535,6,65535,17,19,15
+poly=19,reg=1,area=1,verts=26,29,30,neighbors=16,65535,18
+poly=20,reg=3,area=1,verts=42,43,44,neighbors=65535,65535,22
+poly=21,reg=3,area=1,verts=39,40,41,neighbors=65535,65535,24
+poly=22,reg=3,area=1,verts=41,42,44,45,neighbors=65535,20,65535,25
+poly=23,reg=3,area=1,verts=37,38,39,47,14,neighbors=65535,65535,24,65535,26
+poly=24,reg=3,area=1,verts=39,41,46,25,24,47,neighbors=21,25,65535,17,65535,23
+poly=25,reg=3,area=1,verts=41,45,46,neighbors=22,65535,24
+poly=26,reg=3,area=1,verts=14,13,37,neighbors=11,65535,23
+poly=27,reg=17,area=1,verts=50,51,52,neighbors=65535,65535,29
+poly=28,reg=17,area=1,verts=52,53,54,neighbors=65535,65535,29
+poly=29,reg=17,area=1,verts=50,52,54,48,49,neighbors=27,28,65535,33,65535
+poly=30,reg=15,area=1,verts=59,60,61,neighbors=65535,65535,31
+poly=31,reg=15,area=1,verts=58,59,61,neighbors=65535,30,33
+poly=32,reg=15,area=1,verts=55,56,57,neighbors=65535,65535,33
+poly=33,reg=15,area=1,verts=57,58,61,49,48,55,neighbors=65535,31,65535,29,65535,32
+poly=34,reg=18,area=1,verts=69,70,71,72,neighbors=65535,65535,65535,37
+poly=35,reg=18,area=1,verts=62,63,64,67,68,73,neighbors=44,65535,36,65535,37,65535
+poly=36,reg=18,area=1,verts=65,66,67,64,neighbors=49,65535,35,65535
+poly=37,reg=18,area=1,verts=68,69,72,73,neighbors=65535,34,65535,35
+poly=38,reg=9,area=1,verts=78,79,80,neighbors=65535,65535,40
+poly=39,reg=9,area=1,verts=82,83,84,neighbors=65535,65535,42
+poly=40,reg=9,area=1,verts=77,78,80,81,neighbors=65535,38,65535,43
+poly=41,reg=9,area=1,verts=74,75,76,neighbors=65535,65535,43
+poly=42,reg=9,area=1,verts=82,84,85,81,neighbors=39,65535,43,65535
+poly=43,reg=9,area=1,verts=85,86,74,76,77,81,neighbors=65535,44,41,65535,40,42
+poly=44,reg=9,area=1,verts=86,63,62,74,neighbors=65535,35,65535,43
+poly=45,reg=32,area=1,verts=88,89,90,neighbors=65535,65535,46
+poly=46,reg=32,area=1,verts=88,90,91,87,neighbors=45,65535,47,65535
+poly=47,reg=32,area=1,verts=87,91,92,93,neighbors=46,65535,65535,65535
+poly=48,reg=13,area=1,verts=97,98,99,100,neighbors=65535,113,65535,51
+poly=49,reg=13,area=1,verts=66,65,94,105,106,neighbors=36,65535,53,65535,65535
+poly=50,reg=13,area=1,verts=102,103,104,neighbors=57,65535,52
+poly=51,reg=13,area=1,verts=97,100,101,neighbors=48,65535,53
+poly=52,reg=13,area=1,verts=101,102,104,105,neighbors=65535,50,65535,53
+poly=53,reg=13,area=1,verts=95,96,97,101,105,94,neighbors=65535,65535,51,52,49,65535
+poly=54,reg=33,area=1,verts=109,110,111,107,108,neighbors=65535,65535,65535,73,65535
+poly=55,reg=24,area=1,verts=119,120,121,neighbors=65535,65535,57
+poly=56,reg=24,area=1,verts=113,114,115,neighbors=65535,65535,58
+poly=57,reg=24,area=1,verts=121,103,102,112,119,neighbors=65535,50,65535,59,55
+poly=58,reg=24,area=1,verts=118,113,115,116,117,neighbors=59,56,65535,66,65535
+poly=59,reg=24,area=1,verts=113,118,119,112,neighbors=58,65535,57,65535
+poly=60,reg=34,area=1,verts=124,125,126,127,neighbors=65535,65535,65535,61
+poly=61,reg=34,area=1,verts=127,122,123,124,neighbors=65535,62,65535,60
+poly=62,reg=19,area=1,verts=130,123,122,131,neighbors=65535,61,65535,64
+poly=63,reg=19,area=1,verts=132,133,134,135,neighbors=65535,65535,65535,64
+poly=64,reg=19,area=1,verts=131,132,135,128,129,130,neighbors=65535,63,65535,98,65535,62
+poly=65,reg=20,area=1,verts=137,138,139,140,neighbors=65535,106,65535,67
+poly=66,reg=20,area=1,verts=117,116,136,140,141,142,neighbors=58,65535,67,65535,65535,65535
+poly=67,reg=20,area=1,verts=136,137,140,neighbors=65535,65,66
+poly=68,reg=6,area=1,verts=168,169,170,neighbors=65535,86,75
+poly=69,reg=6,area=1,verts=164,165,166,167,neighbors=65535,130,65535,70
+poly=70,reg=6,area=1,verts=163,164,167,neighbors=65535,69,79
+poly=71,reg=6,area=1,verts=158,159,160,neighbors=65535,65535,78
+poly=72,reg=6,area=1,verts=173,174,175,neighbors=65535,65535,74
+poly=73,reg=6,area=1,verts=108,107,143,177,neighbors=54,65535,83,65535
+poly=74,reg=6,area=1,verts=172,173,175,145,146,147,neighbors=65535,72,83,65535,65535,79
+poly=75,reg=6,area=1,verts=168,170,171,167,neighbors=68,65535,77,65535
+poly=76,reg=6,area=1,verts=156,157,158,155,neighbors=169,65535,78,65535
+poly=77,reg=6,area=1,verts=167,171,172,neighbors=75,65535,79
+poly=78,reg=6,area=1,verts=155,158,160,161,154,neighbors=76,71,65535,82,65535
+poly=79,reg=6,area=1,verts=163,167,172,147,148,152,neighbors=70,77,74,65535,80,84
+poly=80,reg=6,area=1,verts=149,151,152,148,neighbors=81,65535,79,65535
+poly=81,reg=6,area=1,verts=149,150,151,neighbors=65535,65535,80
+poly=82,reg=6,area=1,verts=153,154,161,neighbors=65535,78,84
+poly=83,reg=6,area=1,verts=177,143,144,145,175,176,neighbors=73,65535,65535,74,65535,65535
+poly=84,reg=6,area=1,verts=161,162,163,152,153,neighbors=65535,65535,79,65535,82
+poly=85,reg=29,area=1,verts=180,181,182,179,neighbors=65535,65535,87,65535
+poly=86,reg=29,area=1,verts=169,178,184,170,neighbors=65535,88,65535,68
+poly=87,reg=29,area=1,verts=179,182,183,178,neighbors=85,65535,88,65535
+poly=88,reg=29,area=1,verts=178,183,184,neighbors=87,65535,86
+poly=89,reg=8,area=1,verts=199,185,186,187,neighbors=65535,102,65535,93
+poly=90,reg=8,area=1,verts=192,193,194,188,190,191,neighbors=65535,65535,94,92,65535,153
+poly=91,reg=8,area=1,verts=195,196,197,neighbors=65535,65535,94
+poly=92,reg=8,area=1,verts=188,189,190,neighbors=65535,65535,90
+poly=93,reg=8,area=1,verts=198,199,187,neighbors=65535,89,94
+poly=94,reg=8,area=1,verts=195,197,198,187,188,194,neighbors=91,65535,93,65535,90,65535
+poly=95,reg=28,area=1,verts=203,204,205,206,207,202,neighbors=65535,65535,65535,65535,96,65535
+poly=96,reg=28,area=1,verts=201,202,207,208,neighbors=65535,95,65535,97
+poly=97,reg=28,area=1,verts=200,201,208,209,neighbors=65535,96,65535,98
+poly=98,reg=28,area=1,verts=210,129,128,200,209,neighbors=65535,64,65535,97,65535
+poly=99,reg=10,area=1,verts=217,218,219,neighbors=65535,65535,101
+poly=100,reg=10,area=1,verts=213,214,215,neighbors=65535,65535,105
+poly=101,reg=10,area=1,verts=217,219,220,216,neighbors=99,65535,103,65535
+poly=102,reg=10,area=1,verts=186,185,221,220,neighbors=89,65535,103,65535
+poly=103,reg=10,area=1,verts=220,221,222,223,213,216,neighbors=102,65535,65535,104,105,101
+poly=104,reg=10,area=1,verts=211,212,213,223,neighbors=109,65535,103,65535
+poly=105,reg=10,area=1,verts=213,215,216,neighbors=100,65535,103
+poly=106,reg=35,area=1,verts=224,225,139,138,neighbors=121,65535,65,65535
+poly=107,reg=22,area=1,verts=226,227,228,231,neighbors=133,65535,108,65535
+poly=108,reg=22,area=1,verts=228,212,229,230,231,neighbors=65535,109,65535,65535,107
+poly=109,reg=22,area=1,verts=212,211,229,neighbors=104,65535,108
+poly=110,reg=30,area=1,verts=236,237,238,neighbors=65535,126,112
+poly=111,reg=30,area=1,verts=233,234,235,236,neighbors=65535,144,65535,112
+poly=112,reg=30,area=1,verts=232,233,236,238,239,neighbors=65535,111,110,65535,113
+poly=113,reg=30,area=1,verts=239,99,98,232,neighbors=65535,48,65535,112
+poly=114,reg=14,area=1,verts=240,241,242,270,neighbors=129,65535,120,65535
+poly=115,reg=14,area=1,verts=250,251,255,256,neighbors=65535,117,65535,123
+poly=116,reg=14,area=1,verts=242,243,244,neighbors=65535,65535,120
+poly=117,reg=14,area=1,verts=251,252,253,254,255,neighbors=65535,196,65535,65535,115
+poly=118,reg=14,area=1,verts=257,258,259,260,neighbors=65535,199,65535,123
+poly=119,reg=14,area=1,verts=261,262,263,248,249,neighbors=65535,65535,122,65535,123
+poly=120,reg=14,area=1,verts=270,242,244,245,269,neighbors=114,116,65535,124,65535
+poly=121,reg=14,area=1,verts=225,224,267,266,neighbors=106,65535,125,65535
+poly=122,reg=14,area=1,verts=246,247,248,263,264,neighbors=65535,65535,119,65535,124
+poly=123,reg=14,area=1,verts=256,257,260,261,249,250,neighbors=65535,118,65535,119,65535,115
+poly=124,reg=14,area=1,verts=268,269,245,246,264,265,neighbors=65535,120,65535,122,65535,125
+poly=125,reg=14,area=1,verts=266,267,268,265,neighbors=121,65535,124,65535
+poly=126,reg=36,area=1,verts=238,237,271,neighbors=110,65535,127
+poly=127,reg=36,area=1,verts=273,238,271,neighbors=65535,126,128
+poly=128,reg=36,area=1,verts=273,271,241,neighbors=127,65535,129
+poly=129,reg=36,area=1,verts=241,240,272,273,neighbors=114,65535,65535,128
+poly=130,reg=25,area=1,verts=279,166,165,274,neighbors=65535,69,65535,131
+poly=131,reg=25,area=1,verts=278,279,274,276,277,neighbors=65535,130,132,65535,65535
+poly=132,reg=25,area=1,verts=274,275,276,neighbors=65535,140,131
+poly=133,reg=38,area=1,verts=284,227,226,280,283,neighbors=65535,107,65535,134,65535
+poly=134,reg=38,area=1,verts=281,282,283,280,neighbors=154,65535,133,65535
+poly=135,reg=37,area=1,verts=294,285,286,287,neighbors=65535,141,65535,138
+poly=136,reg=37,area=1,verts=289,292,293,288,neighbors=137,65535,138,65535
+poly=137,reg=37,area=1,verts=290,291,292,289,neighbors=65535,65535,136,65535
+poly=138,reg=37,area=1,verts=288,293,294,287,neighbors=136,65535,135,65535
+poly=139,reg=31,area=1,verts=296,297,298,299,neighbors=65535,145,65535,140
+poly=140,reg=31,area=1,verts=295,296,299,276,275,neighbors=65535,139,65535,132,65535
+poly=141,reg=26,area=1,verts=303,286,285,304,neighbors=65535,135,65535,143
+poly=142,reg=26,area=1,verts=306,300,301,302,neighbors=65535,163,65535,143
+poly=143,reg=26,area=1,verts=302,303,304,305,306,neighbors=65535,141,65535,65535,142
+poly=144,reg=21,area=1,verts=311,312,235,234,neighbors=65535,65535,111,147
+poly=145,reg=21,area=1,verts=313,298,297,neighbors=65535,139,147
+poly=146,reg=21,area=1,verts=307,308,309,310,neighbors=65535,167,65535,147
+poly=147,reg=21,area=1,verts=311,234,313,297,307,310,neighbors=144,65535,145,65535,146,65535
+poly=148,reg=4,area=1,verts=319,320,321,322,neighbors=65535,65535,65535,150
+poly=149,reg=4,area=1,verts=315,316,317,326,314,neighbors=65535,65535,150,65535,160
+poly=150,reg=4,area=1,verts=317,319,322,324,325,326,neighbors=151,148,152,153,65535,149
+poly=151,reg=4,area=1,verts=317,318,319,neighbors=65535,65535,150
+poly=152,reg=4,area=1,verts=322,323,324,neighbors=65535,65535,150
+poly=153,reg=4,area=1,verts=324,192,191,325,neighbors=65535,90,65535,150
+poly=154,reg=7,area=1,verts=282,281,327,340,neighbors=134,65535,156,65535
+poly=155,reg=7,area=1,verts=329,331,335,315,337,338,neighbors=158,159,161,160,65535,162
+poly=156,reg=7,area=1,verts=340,327,328,339,neighbors=154,65535,162,65535
+poly=157,reg=7,area=1,verts=332,333,334,neighbors=65535,65535,159
+poly=158,reg=7,area=1,verts=329,330,331,neighbors=65535,65535,155
+poly=159,reg=7,area=1,verts=331,332,334,335,neighbors=65535,157,65535,155
+poly=160,reg=7,area=1,verts=315,314,337,neighbors=149,65535,155
+poly=161,reg=7,area=1,verts=335,336,315,neighbors=65535,65535,155
+poly=162,reg=7,area=1,verts=339,328,329,338,neighbors=156,65535,155,65535
+poly=163,reg=39,area=1,verts=301,300,346,345,neighbors=142,65535,164,65535
+poly=164,reg=39,area=1,verts=345,346,347,344,neighbors=163,65535,166,65535
+poly=165,reg=39,area=1,verts=341,342,343,348,neighbors=187,65535,166,65535
+poly=166,reg=39,area=1,verts=348,343,344,347,neighbors=165,65535,164,65535
+poly=167,reg=40,area=1,verts=309,308,349,350,355,neighbors=146,65535,65535,168,65535
+poly=168,reg=40,area=1,verts=351,352,353,354,355,350,neighbors=65535,181,65535,65535,167,65535
+poly=169,reg=41,area=1,verts=156,356,357,157,neighbors=65535,193,65535,76
+poly=170,reg=16,area=1,verts=362,363,364,neighbors=65535,65535,174
+poly=171,reg=16,area=1,verts=358,359,360,372,neighbors=200,65535,173,65535
+poly=172,reg=16,area=1,verts=361,362,366,367,371,372,neighbors=65535,174,65535,175,65535,173
+poly=173,reg=16,area=1,verts=372,360,361,neighbors=171,65535,172
+poly=174,reg=16,area=1,verts=364,365,366,362,neighbors=65535,65535,172,170
+poly=175,reg=16,area=1,verts=367,368,371,neighbors=65535,176,172
+poly=176,reg=16,area=1,verts=368,369,370,371,neighbors=65535,65535,65535,175
+poly=177,reg=11,area=1,verts=375,376,377,neighbors=65535,65535,180
+poly=178,reg=11,area=1,verts=381,373,374,neighbors=65535,65535,180
+poly=179,reg=11,area=1,verts=379,380,381,neighbors=65535,65535,180
+poly=180,reg=11,area=1,verts=374,375,377,378,379,381,neighbors=65535,177,65535,65535,179,178
+poly=181,reg=27,area=1,verts=385,353,352,386,neighbors=65535,168,65535,182
+poly=182,reg=27,area=1,verts=386,387,388,384,385,neighbors=65535,65535,184,65535,181
+poly=183,reg=27,area=1,verts=388,389,390,neighbors=65535,65535,184
+poly=184,reg=27,area=1,verts=390,382,383,384,388,neighbors=65535,198,65535,182,183
+poly=185,reg=12,area=1,verts=405,406,407,404,neighbors=204,65535,189,65535
+poly=186,reg=12,area=1,verts=409,410,392,393,neighbors=65535,195,65535,188
+poly=187,reg=12,area=1,verts=342,341,395,394,neighbors=165,65535,190,65535
+poly=188,reg=12,area=1,verts=403,408,409,393,401,402,neighbors=189,65535,186,191,65535,65535
+poly=189,reg=12,area=1,verts=403,404,407,408,neighbors=65535,185,65535,188
+poly=190,reg=12,area=1,verts=394,395,396,neighbors=187,65535,191
+poly=191,reg=12,area=1,verts=393,394,396,398,400,401,neighbors=65535,190,192,194,65535,188
+poly=192,reg=12,area=1,verts=396,397,398,neighbors=65535,65535,191
+poly=193,reg=12,area=1,verts=357,356,391,410,neighbors=169,65535,195,65535
+poly=194,reg=12,area=1,verts=398,399,400,neighbors=65535,65535,191
+poly=195,reg=12,area=1,verts=410,391,392,neighbors=193,65535,186
+poly=196,reg=23,area=1,verts=415,253,252,416,neighbors=65535,117,65535,198
+poly=197,reg=23,area=1,verts=412,413,414,411,neighbors=65535,65535,198,65535
+poly=198,reg=23,area=1,verts=411,414,415,416,383,382,neighbors=197,65535,196,65535,184,65535
+poly=199,reg=42,area=1,verts=258,417,418,259,neighbors=65535,65535,65535,118
+poly=200,reg=43,area=1,verts=419,420,359,358,neighbors=65535,65535,171,65535
+poly=201,reg=44,area=1,verts=426,427,428,424,425,neighbors=65535,65535,203,65535,65535
+poly=202,reg=44,area=1,verts=431,421,422,430,neighbors=204,65535,205,65535
+poly=203,reg=44,area=1,verts=423,424,428,429,neighbors=65535,201,65535,205
+poly=204,reg=44,area=1,verts=406,405,421,431,neighbors=185,65535,202,65535
+poly=205,reg=44,area=1,verts=430,422,423,429,neighbors=202,65535,203,65535
+[POLYMESH_POLYGONS_END]
+
+[POLYMESH] Polygon details (showing first 10 and last 10):
+[POLYMESH]   Poly 0: verts=[8,9,10], reg=2, area=1
+[POLYMESH]   Poly 1: verts=[5,6,7], reg=2, area=1
+[POLYMESH]   Poly 2: verts=[11,12,0], reg=2, area=1
+[POLYMESH]   Poly 3: verts=[7,8,10,11], reg=2, area=1
+[POLYMESH]   Poly 4: verts=[11,0,2,3,5,7], reg=2, area=1
+[POLYMESH]   Poly 5: verts=[0,1,2], reg=2, area=1
+[POLYMESH]   Poly 6: verts=[3,4,5], reg=2, area=1
+[POLYMESH]   Poly 7: verts=[18,19,20], reg=5, area=1
+[POLYMESH]   Poly 8: verts=[16,17,18], reg=5, area=1
+[POLYMESH]   Poly 9: verts=[18,20,21], reg=5, area=1
+[POLYMESH]   ... (186 polygons omitted) ...
+[POLYMESH]   Poly 196: verts=[415,253,252,416], reg=23, area=1
+[POLYMESH]   Poly 197: verts=[412,413,414,411], reg=23, area=1
+[POLYMESH]   Poly 198: verts=[411,414,415,416,383,382], reg=23, area=1
+[POLYMESH]   Poly 199: verts=[258,417,418,259], reg=42, area=1
+[POLYMESH]   Poly 200: verts=[419,420,359,358], reg=43, area=1
+[POLYMESH]   Poly 201: verts=[426,427,428,424,425], reg=44, area=1
+[POLYMESH]   Poly 202: verts=[431,421,422,430], reg=44, area=1
+[POLYMESH]   Poly 203: verts=[423,424,428,429], reg=44, area=1
+[POLYMESH]   Poly 204: verts=[406,405,421,431], reg=44, area=1
+[POLYMESH]   Poly 205: verts=[430,422,423,429], reg=44, area=1
+Built PolyMeshDetail: 206 meshes, 836 verts, 424 tris
+
+[DETAILMESH_VERTICES_BEGIN]
+52.110683,-3.069517,-40.000153
+51.810688,-3.469517,-43.300150
+48.510685,-2.869517,-43.000153
+53.010685,-2.069517,-31.900150
+53.010685,-2.269517,-33.700150
+52.710690,-2.469517,-37.000153
+45.210690,-2.069517,-42.700153
+41.910686,-0.869517,-42.400150
+38.910686,-0.069517,-41.800150
+52.710690,-2.469517,-37.000153
+52.110683,-3.069517,-40.000153
+48.510685,-2.869517,-43.000153
+45.210690,-2.069517,-42.700153
+45.210690,-2.069517,-42.700153
+38.910686,-0.069517,-41.800150
+40.710690,0.530483,-31.600151
+41.610683,-0.069517,-29.800152
+53.010685,-2.069517,-31.900150
+52.710690,-2.469517,-37.000153
+38.910686,-0.069517,-41.800150
+38.910686,0.930483,-32.200150
+40.710690,0.530483,-31.600151
+41.610683,-0.069517,-29.800152
+53.310688,-2.069517,-30.100151
+53.010685,-2.069517,-31.900150
+29.610687,-0.869517,-40.600150
+26.610687,-1.669517,-40.300150
+26.910686,-1.269517,-37.600150
+35.610683,0.130483,-41.500153
+32.610687,-0.269517,-41.200150
+29.610687,-0.869517,-40.600150
+29.610687,-0.869517,-40.600150
+26.910686,-1.269517,-37.600150
+27.210686,-1.269517,-34.900150
+29.610687,-0.869517,-40.600150
+27.210686,-1.269517,-34.900150
+27.510685,-1.269517,-32.200150
+27.510685,-1.269517,-32.200150
+27.810684,-1.469517,-29.200151
+36.210690,0.330483,-29.500150
+36.810688,0.930483,-31.300152
+38.910686,-0.069517,-41.800150
+35.610683,0.130483,-41.500153
+29.610687,-0.869517,-40.600150
+27.510685,-1.269517,-32.200150
+36.810688,0.930483,-31.300152
+38.910686,0.930483,-32.200150
+41.310688,-2.069517,-16.600151
+43.410686,-2.069517,-16.600151
+45.210690,-1.869517,-16.900150
+48.810688,-0.869517,-17.500150
+50.910686,0.130483,-17.500150
+52.710690,0.730483,-17.800150
+52.710690,0.730483,-17.800150
+54.810688,1.130483,-18.100151
+54.510685,0.330483,-21.400150
+54.210690,-0.869517,-24.400150
+53.610683,-1.669517,-27.100151
+48.810688,-0.869517,-17.500150
+41.310688,-2.069517,-16.600151
+45.210690,-1.869517,-16.900150
+47.010685,-1.469517,-17.200151
+39.210690,-0.669517,-26.800152
+39.510685,-2.069517,-16.300150
+41.310688,-2.069517,-16.600151
+41.010685,-0.669517,-27.700151
+53.610683,-1.669517,-27.100151
+53.310688,-2.069517,-30.100151
+41.610683,-0.069517,-29.800152
+41.010685,-0.669517,-27.700151
+41.310688,-2.069517,-16.600151
+48.810688,-0.869517,-17.500150
+41.310688,-2.069517,-16.600151
+47.010685,-1.469517,-17.200151
+48.810688,-0.869517,-17.500150
+29.310684,0.330483,-16.900150
+29.610687,0.530483,-15.100151
+32.010685,0.330483,-15.400150
+28.710686,-1.469517,-22.300152
+28.710686,-0.869517,-20.500150
+29.010685,0.130483,-18.700151
+29.010685,0.130483,-18.700151
+29.310684,0.330483,-16.900150
+32.010685,0.330483,-15.400150
+34.410686,-0.469517,-15.700151
+28.110687,-1.669517,-27.700151
+28.110687,-1.869517,-25.600151
+28.710686,-1.469517,-22.300152
+37.110683,-0.269517,-27.400150
+36.210690,0.330483,-29.500150
+28.710686,-1.469517,-22.300152
+29.010685,0.130483,-18.700151
+36.810688,-1.669517,-16.000150
+39.510685,-2.069517,-16.300150
+39.210690,-0.669517,-26.800152
+37.110683,-0.269517,-27.400150
+29.010685,0.130483,-18.700151
+34.410686,-0.469517,-15.700151
+36.810688,-1.669517,-16.000150
+36.210690,0.330483,-29.500150
+27.810684,-1.469517,-29.200151
+28.110687,-1.669517,-27.700151
+17.010685,-2.069517,-19.000150
+19.410686,-2.069517,-18.700151
+19.410686,-2.069517,-20.200151
+19.410686,-2.069517,-20.200151
+18.810684,-2.069517,-23.500150
+16.710686,-2.069517,-23.200151
+17.010685,-2.069517,-19.000150
+19.410686,-2.069517,-20.200151
+16.710686,-2.069517,-23.200151
+14.610683,-2.069517,-22.900150
+14.610683,-2.069517,-18.700151
+10.710686,-2.069517,-16.900150
+11.010685,-2.069517,-15.700151
+12.210686,-2.069517,-17.800150
+9.810684,-2.069517,-17.500150
+10.710686,-2.069517,-16.900150
+12.210686,-2.069517,-17.800150
+11.310684,-2.069517,-22.600151
+8.010685,-2.069517,-22.300152
+9.510685,-2.069517,-20.500150
+9.510685,-2.069517,-20.500150
+9.810684,-2.069517,-17.500150
+12.210686,-2.069517,-17.800150
+14.610683,-2.069517,-18.700151
+14.610683,-2.069517,-22.900150
+11.310684,-2.069517,-22.600151
+-0.089315,-2.069517,-19.900150
+0.510685,-2.069517,-21.100151
+-2.489315,-2.069517,-20.800150
+-2.189316,-2.069517,-19.300150
+-4.889317,-2.069517,-17.200151
+-4.889317,-2.069517,-13.600151
+-2.789316,-2.069517,-13.900150
+0.210684,-2.069517,-15.100151
+-0.089315,-2.069517,-17.200151
+-2.789316,-2.069517,-18.100151
+-0.989315,-2.069517,-12.400150
+1.110685,-2.069517,-13.600151
+0.210684,-2.069517,-15.100151
+-2.789316,-2.069517,-13.900150
+-0.089315,-2.069517,-17.200151
+-0.089315,-2.069517,-19.900150
+-2.189316,-2.069517,-19.300150
+-2.789316,-2.069517,-18.100151
+-14.789316,-2.069517,-19.300150
+-17.189316,-2.069517,-19.000150
+-14.789316,-2.069517,-17.500150
+-12.989316,-2.069517,-13.600151
+-12.989316,-2.069517,-12.400150
+-11.189316,-2.069517,-12.700150
+-12.389317,-2.069517,-19.600151
+-14.789316,-2.069517,-19.300150
+-14.789316,-2.069517,-17.500150
+-13.889316,-2.069517,-15.700151
+-6.989315,-2.069517,-18.100151
+-7.589315,-2.069517,-20.200151
+-9.989315,-2.069517,-19.900150
+-12.989316,-2.069517,-13.600151
+-11.189316,-2.069517,-12.700150
+-9.089315,-2.069517,-13.000149
+-13.889316,-2.069517,-15.700151
+-9.089315,-2.069517,-13.000149
+-6.989315,-2.069517,-13.300152
+-6.989315,-2.069517,-18.100151
+-9.989315,-2.069517,-19.900150
+-12.389317,-2.069517,-19.600151
+-13.889316,-2.069517,-15.700151
+-6.989315,-2.069517,-13.300152
+-4.889317,-2.069517,-13.600151
+-4.889317,-2.069517,-17.200151
+-6.989315,-2.069517,-18.100151
+-25.889317,-2.069517,-15.700151
+-25.589317,-2.069517,-13.000149
+-25.289316,-2.069517,-15.100151
+-25.889317,-2.069517,-15.700151
+-25.289316,-2.069517,-15.100151
+-25.589317,-2.069517,-16.900150
+-26.189316,-2.069517,-18.100151
+-26.189316,-2.069517,-18.100151
+-25.589317,-2.069517,-16.900150
+-24.989317,-2.069517,-17.500150
+-24.989317,-2.069517,-18.100151
+3.210686,-2.069517,-4.000149
+4.110683,-2.069517,-2.200150
+4.710686,-2.069517,-2.500149
+4.410687,-2.069517,-5.500149
+1.110685,-2.069517,-13.600151
+-0.989315,-2.069517,-12.400150
+-0.089315,-2.069517,-9.700150
+4.410687,-2.069517,-10.600151
+3.510685,-2.069517,-13.000149
+7.710686,-2.069517,-7.900150
+7.410687,-2.069517,-10.300152
+5.610683,-2.069517,-10.000149
+3.210686,-2.069517,-4.000149
+4.410687,-2.069517,-5.500149
+5.010685,-2.069517,-6.700150
+5.010685,-2.069517,-6.700150
+7.710686,-2.069517,-7.900150
+5.610683,-2.069517,-10.000149
+4.410687,-2.069517,-10.600151
+-0.089315,-2.069517,-7.300152
+0.210684,-2.069517,-4.900150
+3.210686,-2.069517,-4.000149
+5.010685,-2.069517,-6.700150
+4.410687,-2.069517,-10.600151
+-0.089315,-2.069517,-9.700150
+-24.389317,-2.069517,-11.500149
+-25.289316,-2.069517,-13.000149
+-25.289316,-2.069517,-11.200150
+-24.989317,-2.069517,-9.400150
+-23.789316,-2.069517,-9.700150
+11.310684,-2.069517,-9.400150
+10.710686,-2.069517,-11.200150
+9.210686,-2.069517,-10.300152
+11.610683,-2.069517,-7.300152
+12.510685,-2.069517,-4.600151
+13.110683,-2.069517,-5.500149
+9.210686,-2.069517,-10.300152
+7.410687,-2.069517,-10.300152
+7.710686,-2.069517,-7.900150
+10.410687,-2.069517,-7.900150
+11.310684,-2.069517,-9.400150
+12.810684,-2.069517,-8.500149
+11.610683,-2.069517,-7.300152
+13.110683,-2.069517,-5.500149
+16.110683,-2.069517,-6.400150
+16.110683,-2.069517,-8.800152
+11.610683,-2.069517,-7.300152
+12.810684,-2.069517,-8.500149
+11.310684,-2.069517,-9.400150
+10.410687,-2.069517,-7.900150
+11.010685,8.530483,-10.000149
+11.010685,8.530483,-10.600151
+10.410687,8.530483,-11.200150
+9.210686,8.530483,-10.300152
+9.210686,8.530483,-10.300152
+7.710686,8.530483,-10.300152
+7.710686,8.530483,-9.400150
+11.010685,8.530483,-10.000149
+6.210686,8.530483,-8.500149
+7.710686,8.530483,-9.400150
+7.710686,8.530483,-10.300152
+4.410687,8.530483,-10.600151
+2.610685,8.530483,-10.300152
+0.810684,8.530483,-10.300152
+1.110685,8.530483,-8.500149
+2.310684,8.930483,-8.200150
+4.410687,8.530483,-10.600151
+2.610685,8.530483,-10.300152
+2.310684,8.930483,-8.200150
+3.510685,9.530483,-6.100151
+5.310684,9.330483,-6.100151
+6.210686,8.530483,-8.500149
+19.410686,-2.069517,-5.800152
+20.310684,-2.069517,-4.300152
+21.210686,-2.069517,-4.300152
+20.910686,-2.069517,-7.600151
+16.110683,-2.069517,-8.800152
+16.110683,-2.069517,-6.400150
+18.210686,-2.069517,-6.400150
+20.910686,-2.069517,-7.600151
+20.310684,-2.069517,-10.600151
+17.910686,-2.069517,-10.000149
+18.210686,-2.069517,-6.400150
+19.410686,-2.069517,-5.800152
+20.910686,-2.069517,-7.600151
+-12.989316,-0.469517,0.499851
+-12.389317,-0.469517,-0.400150
+-13.889316,-0.469517,-1.300152
+-12.089315,-2.069517,4.699852
+-10.289316,-2.069517,4.099850
+-10.289316,-2.069517,3.499851
+-12.389317,-2.069517,2.599850
+-12.989316,-2.069517,6.199852
+-12.089315,-2.069517,4.699852
+-12.389317,-2.069517,2.599850
+-12.089315,-2.069517,13.399849
+-10.889317,-2.069517,11.599850
+-12.089315,-2.069517,10.999851
+-17.789316,-2.069517,-2.800152
+-17.189316,-2.069517,-4.600151
+-19.289316,-2.069517,-5.200150
+-23.789316,-2.069517,-9.700150
+-24.989317,-2.069517,-9.400150
+-24.689316,-2.069517,-7.000149
+-22.589317,-2.069517,-7.300152
+-16.889317,-2.069517,-1.300152
+-17.789316,-2.069517,-2.800152
+-19.289316,-2.069517,-5.200150
+-24.089317,-2.069517,-1.900150
+-23.789316,-2.069517,0.799850
+-23.489317,-2.069517,3.199852
+-12.989316,-0.469517,0.499851
+-13.889316,-0.469517,-1.300152
+-15.689316,-2.069517,-0.700150
+-12.389317,-2.069517,2.599850
+-13.589316,-2.069517,16.099850
+-12.089315,-2.069517,15.499851
+-12.089315,-2.069517,13.399849
+-13.889316,-2.069517,12.799850
+-12.389317,-2.069517,2.599850
+-15.689316,-2.069517,-0.700150
+-16.889317,-2.069517,-1.300152
+-13.889316,-2.069517,12.799850
+-12.089315,-2.069517,13.399849
+-12.089315,-2.069517,10.999851
+-12.689316,-2.069517,9.799850
+-14.789316,-2.069517,11.299850
+-12.989316,-2.069517,6.199852
+-12.389317,-2.069517,2.599850
+-16.889317,-2.069517,-1.300152
+-23.489317,-2.069517,3.199852
+-23.189316,-2.069517,5.899849
+-18.989315,-2.069517,10.699852
+-22.889317,-2.069517,8.599850
+-20.789316,-2.069517,10.999851
+-18.989315,-2.069517,10.699852
+-23.189316,-2.069517,5.899849
+-22.889317,-2.069517,8.599850
+-22.589317,-2.069517,11.299850
+-20.789316,-2.069517,10.999851
+-15.989316,-2.069517,10.699852
+-14.789316,-2.069517,11.299850
+-12.689316,-2.069517,9.799850
+-22.589317,-2.069517,-7.300152
+-24.689316,-2.069517,-7.000149
+-24.389317,-2.069517,-4.300152
+-24.089317,-2.069517,-1.900150
+-19.289316,-2.069517,-5.200150
+-20.789316,-2.069517,-6.400150
+-12.689316,-2.069517,9.799850
+-12.689316,-2.069517,7.699852
+-12.989316,-2.069517,6.199852
+-18.989315,-2.069517,10.699852
+-15.989316,-2.069517,10.699852
+-7.589315,4.930483,-5.500149
+-7.889317,6.330483,-7.300152
+-9.389317,4.930483,-5.800152
+-9.089315,3.530483,-4.300152
+-12.389317,-0.469517,-0.400150
+-10.289316,2.130483,-3.100151
+-12.389317,0.730483,-2.800152
+-13.889316,-0.469517,-1.300152
+-9.089315,3.530483,-4.300152
+-9.389317,4.930483,-5.800152
+-10.889317,2.130483,-4.300152
+-10.289316,2.130483,-3.100151
+-10.289316,2.130483,-3.100151
+-10.889317,2.130483,-4.300152
+-12.389317,0.730483,-2.800152
+50.010685,-2.069517,-5.500149
+47.910686,-1.269517,-5.200150
+47.910686,-0.469517,-2.500149
+49.710690,-1.069517,-1.900150
+58.110683,-2.069517,6.499851
+57.810688,-2.269517,3.199852
+57.210690,-2.469517,0.199848
+50.610683,-1.069517,-0.400150
+50.610683,-0.869517,4.099850
+50.910686,-1.269517,6.499851
+56.910686,-3.069517,-3.100151
+56.610683,-3.469517,-6.400150
+54.210690,-3.069517,-6.100151
+50.610683,-1.069517,-0.400150
+50.310688,-0.869517,1.699848
+50.610683,-0.869517,4.099850
+52.110683,-2.669517,-5.800152
+50.010685,-2.069517,-5.500149
+49.710690,-1.069517,-1.900150
+56.910686,-3.069517,-3.100151
+54.210690,-3.069517,-6.100151
+52.110683,-2.669517,-5.800152
+49.710690,-1.069517,-1.900150
+50.610683,-1.069517,-0.400150
+57.210690,-2.469517,0.199848
+-0.089315,14.730482,6.499851
+1.110685,15.530483,7.099850
+1.710684,14.730482,7.099850
+2.310684,13.730482,4.999851
+2.910685,12.930483,2.599850
+1.110685,13.330483,3.499851
+1.410685,12.130484,0.199848
+1.110685,13.330483,3.499851
+2.910685,12.930483,2.599850
+3.510685,11.930483,0.199848
+2.610685,10.930483,-2.800152
+1.410685,12.130484,0.199848
+3.510685,11.930483,0.199848
+4.110683,10.930483,-2.200150
+5.910687,9.930483,-4.300152
+5.310684,9.330483,-6.100151
+3.510685,9.530483,-6.100151
+2.610685,10.930483,-2.800152
+4.110683,10.930483,-2.200150
+43.710690,2.130483,1.399849
+45.210690,2.730483,2.299851
+45.210690,1.530483,-0.100151
+37.710690,1.330483,0.199848
+38.310688,2.730483,2.899849
+40.110683,2.130483,1.699848
+43.710690,2.130483,1.399849
+45.210690,1.530483,-0.100151
+45.810688,0.930483,-1.300152
+41.910686,2.130483,1.399849
+47.910686,-0.469517,-2.500149
+47.910686,-1.269517,-5.200150
+44.610683,-0.269517,-4.900150
+45.810688,0.930483,-1.300152
+45.810688,0.930483,-1.300152
+44.610683,-0.269517,-4.900150
+41.610683,-0.069517,-4.600151
+38.910686,-0.069517,-4.000149
+37.710690,1.330483,0.199848
+41.910686,2.130483,1.399849
+35.910686,-0.469517,-3.700150
+35.910686,0.730483,-0.700150
+37.710690,1.330483,0.199848
+38.910686,-0.069517,-4.000149
+37.710690,1.330483,0.199848
+40.110683,2.130483,1.699848
+41.910686,2.130483,1.399849
+20.610687,-2.069517,-2.200150
+21.510685,-2.069517,-2.200150
+21.210686,-2.069517,-4.300152
+20.310684,-2.069517,-4.300152
+32.010685,-1.269517,2.599850
+32.910686,-0.869517,2.299851
+33.510685,-0.669517,0.199848
+31.710686,-1.269517,-0.400150
+33.510685,-0.669517,0.199848
+35.910686,0.730483,-0.700150
+33.810684,-1.069517,-3.400150
+31.410686,-1.669517,-3.400150
+31.710686,-1.269517,-0.400150
+35.910686,0.730483,-0.700150
+35.910686,-0.469517,-3.700150
+33.810684,-1.069517,-3.400150
+5.910687,-2.069517,1.399849
+7.110683,-2.069517,0.799850
+7.110683,-2.069517,0.199848
+4.410687,-2.069517,2.299851
+3.510685,-2.069517,3.799851
+5.310684,-2.069517,3.799851
+5.910687,-2.069517,1.399849
+4.410687,-2.069517,-0.100151
+4.410687,-2.069517,2.299851
+5.910687,-2.069517,1.399849
+7.110683,-2.069517,0.199848
+5.310684,-2.069517,-0.700150
+5.310684,-2.069517,-0.700150
+4.710686,-2.069517,-2.500149
+4.110683,-2.069517,-2.200150
+4.410687,-2.069517,-0.100151
+13.110683,-2.069517,0.499851
+12.510685,-2.069517,0.799850
+13.410687,-2.069517,2.299851
+14.610683,-2.069517,1.399849
+18.510685,-2.069517,16.099850
+17.310684,-2.069517,17.899853
+18.810684,-2.069517,19.099850
+20.910686,-2.069517,18.499851
+13.410687,-2.069517,2.299851
+13.410687,-2.069517,4.099850
+14.910687,-2.069517,3.799851
+17.310684,-2.069517,17.899853
+15.210686,-2.069517,18.499851
+15.810684,-2.069517,19.399853
+18.210686,-2.069517,20.599850
+18.810684,-2.069517,19.099850
+22.410686,-2.069517,19.399853
+23.010685,-2.069517,21.199848
+24.210686,-2.069517,20.899853
+23.910686,-2.069517,17.899853
+23.610687,-2.069517,14.899849
+23.310684,-2.069517,11.899849
+22.710686,-2.069517,9.499851
+17.910686,-2.069517,11.299850
+18.210686,-2.069517,13.699852
+14.610683,-2.069517,1.399849
+13.410687,-2.069517,2.299851
+14.910687,-2.069517,3.799851
+16.110683,-2.069517,4.399849
+16.710686,-2.069517,1.399849
+21.510685,-2.069517,-2.200150
+20.610687,-2.069517,-2.200150
+20.010685,-2.069517,0.199848
+21.810684,-2.069517,0.499851
+17.610683,-2.069517,6.499851
+17.610683,-2.069517,8.899849
+17.910686,-2.069517,11.299850
+22.710686,-2.069517,9.499851
+22.410686,-2.069517,6.499851
+20.910686,-2.069517,18.499851
+22.410686,-2.069517,19.399853
+23.910686,-2.069517,17.899853
+23.610687,-2.069517,14.899849
+18.210686,-2.069517,13.699852
+18.510685,-2.069517,16.099850
+18.510685,-2.069517,1.099850
+16.710686,-2.069517,1.399849
+16.110683,-2.069517,4.399849
+17.610683,-2.069517,6.499851
+22.410686,-2.069517,6.499851
+22.110687,-2.069517,3.499851
+21.810684,-2.069517,0.499851
+20.010685,-2.069517,0.199848
+18.510685,-2.069517,1.099850
+22.110687,-2.069517,3.499851
+7.110683,-2.069517,0.199848
+7.110683,-2.069517,0.799850
+9.210686,-2.069517,0.199848
+10.410687,-2.069517,-0.100151
+7.110683,-2.069517,0.199848
+9.210686,-2.069517,0.199848
+10.410687,-2.069517,-0.100151
+9.210686,-2.069517,0.199848
+12.510685,-2.069517,0.799850
+12.510685,-2.069517,0.799850
+13.110683,-2.069517,0.499851
+12.510685,-2.069517,-1.900150
+10.410687,-2.069517,-0.100151
+-8.789316,-2.069517,2.899849
+-10.289316,-2.069517,3.499851
+-10.289316,-2.069517,4.099850
+-6.989315,-2.069517,3.799851
+-7.589315,-2.069517,1.399849
+-8.789316,-2.069517,2.899849
+-6.989315,-2.069517,3.799851
+-4.589315,-2.069517,3.499851
+-5.489315,-2.069517,1.399849
+-6.989315,-2.069517,3.799851
+-5.789316,-2.069517,4.399849
+-4.589315,-2.069517,3.499851
+33.510685,-0.669517,3.499851
+32.910686,-0.869517,2.299851
+32.010685,-1.269517,2.599850
+32.310684,-1.269517,5.299851
+33.510685,-0.869517,5.599850
+32.610687,-1.469517,7.999851
+33.810684,-1.069517,7.699852
+33.510685,-0.869517,5.599850
+32.310684,-1.269517,5.299851
+-13.889316,8.130484,3.499851
+-15.989316,8.130484,3.799851
+-15.389316,8.130484,4.999851
+-13.589316,8.130484,4.699852
+-9.389317,8.130484,4.099850
+-9.389317,8.130484,2.899849
+-11.489315,8.130484,3.199852
+-11.489315,8.130484,4.399849
+-7.289316,8.130484,3.799851
+-6.989315,8.130484,2.599850
+-9.389317,8.130484,2.899849
+-9.389317,8.130484,4.099850
+-11.489315,8.130484,4.399849
+-11.489315,8.130484,3.199852
+-13.889316,8.130484,3.499851
+-13.589316,8.130484,4.699852
+-2.789316,-2.069517,5.599850
+-1.289316,-2.069517,6.499851
+-1.289316,-2.069517,4.699852
+-3.089315,-2.069517,4.699852
+-4.889317,-2.069517,6.199852
+-2.789316,-2.069517,5.599850
+-3.089315,-2.069517,4.699852
+-4.589315,-2.069517,3.499851
+-5.789316,-2.069517,4.399849
+-17.189316,8.130484,5.299851
+-15.389316,8.130484,4.999851
+-15.989316,8.130484,3.799851
+-18.689316,8.130484,4.099850
+-20.789316,8.130484,6.799851
+-20.489315,7.530483,9.199852
+-19.589317,7.530483,9.199852
+-18.989315,8.130484,6.499851
+-18.989315,8.130484,6.499851
+-17.189316,8.130484,5.299851
+-18.689316,8.130484,4.099850
+-21.089317,8.130484,4.399849
+-20.789316,8.130484,6.799851
+4.110683,-2.069517,5.599850
+5.610683,-2.069517,4.999851
+5.310684,-2.069517,3.799851
+3.510685,-2.069517,3.799851
+1.110685,-2.069517,4.399849
+-1.289316,-2.069517,4.699852
+-1.289316,-2.069517,6.499851
+1.410685,-2.069517,8.599850
+2.010685,-2.069517,10.399849
+3.210686,-2.069517,10.099850
+2.910685,-2.069517,7.399849
+4.110683,-2.069517,5.599850
+3.510685,-2.069517,3.799851
+1.110685,-2.069517,4.399849
+-1.289316,-2.069517,6.499851
+1.410685,-2.069517,8.599850
+2.910685,-2.069517,7.399849
+56.010685,0.330483,19.399853
+57.810688,0.730483,19.399853
+59.610683,1.130483,19.099850
+59.310688,0.330483,15.799850
+45.810688,-2.069517,20.599850
+49.110683,-2.069517,20.299854
+50.610683,-1.669517,19.999851
+47.310688,-1.069517,9.499851
+44.910686,-0.869517,10.399849
+50.610683,-1.669517,19.999851
+56.010685,0.330483,19.399853
+59.310688,0.330483,15.799850
+58.410686,-1.869517,9.499851
+49.710690,-1.269517,8.599850
+47.310688,-1.069517,9.499851
+50.610683,-1.669517,19.999851
+52.710690,-1.069517,19.999851
+56.010685,0.330483,19.399853
+59.310688,0.330483,15.799850
+59.010685,-0.869517,12.499851
+58.410686,-1.869517,9.499851
+58.410686,-1.869517,9.499851
+58.110683,-2.069517,6.499851
+50.910686,-1.269517,6.499851
+49.710690,-1.269517,8.599850
+33.810684,-1.069517,7.699852
+32.610687,-1.469517,7.999851
+32.910686,-1.669517,9.499851
+34.710686,-1.269517,9.799850
+33.510685,-1.469517,14.899849
+33.810684,0.130483,18.499851
+40.110683,-1.069517,21.499851
+45.810688,-2.069517,20.599850
+43.110683,-0.869517,10.999851
+40.110683,-0.869517,10.999851
+34.710686,-1.269517,9.799850
+32.910686,-1.669517,9.499851
+32.910686,-1.869517,11.599850
+38.010685,-1.069517,10.999851
+34.110687,0.330483,20.299854
+34.410686,0.530483,22.099850
+37.110683,0.130483,21.799854
+33.510685,-1.469517,14.899849
+33.510685,-0.869517,16.699852
+33.810684,0.130483,18.499851
+33.810684,0.130483,18.499851
+34.110687,0.330483,20.299854
+37.110683,0.130483,21.799854
+40.110683,-1.069517,21.499851
+45.810688,-2.069517,20.599850
+44.910686,-0.869517,10.399849
+43.110683,-0.869517,10.999851
+40.110683,-1.069517,21.499851
+43.110683,-1.869517,21.199848
+45.810688,-2.069517,20.599850
+38.010685,-1.069517,10.999851
+32.910686,-1.869517,11.599850
+33.510685,-1.469517,14.899849
+40.110683,-0.869517,10.999851
+-19.589317,7.530483,9.199852
+-20.489315,7.530483,9.199852
+-20.189316,6.130483,11.299850
+-19.289316,6.130483,11.299850
+-19.289316,6.130483,11.299850
+-20.189316,6.130483,11.299850
+-19.889317,4.730484,13.699852
+-18.989315,4.730484,13.699852
+-19.289316,0.730483,18.499851
+-18.389317,0.730483,18.499851
+-18.689316,2.130483,16.099850
+-19.589317,2.130483,16.099850
+-19.589317,2.130483,16.099850
+-18.689316,2.130483,16.099850
+-18.989315,4.730484,13.699852
+-19.889317,4.730484,13.699852
+3.210686,-2.069517,10.099850
+2.010685,-2.069517,10.399849
+1.710684,-2.069517,11.299850
+2.610685,-2.069517,12.499851
+3.510685,-2.069517,13.399849
+2.610685,-2.069517,14.899849
+2.910685,-2.069517,16.999851
+3.810684,-2.069517,16.999851
+3.810684,-2.069517,14.899849
+3.510685,-2.069517,13.399849
+2.610685,-2.069517,12.499851
+-13.589316,-2.069517,16.099850
+-13.289316,-2.069517,17.599850
+-11.789316,-2.069517,17.299850
+-12.089315,-2.069517,15.499851
+15.810684,10.730484,18.799854
+17.010685,10.730484,19.099850
+16.710686,11.130484,17.299850
+12.210686,9.330483,23.899853
+13.410687,9.530483,23.599850
+13.410687,9.930483,21.199848
+11.010685,9.930483,20.599850
+14.010685,10.330483,19.999851
+15.810684,10.730484,18.799854
+14.010685,11.130484,15.799850
+11.310684,10.730484,16.099850
+9.810684,9.930483,19.999851
+11.010685,9.930483,20.599850
+11.010685,9.930483,20.599850
+13.410687,9.930483,21.199848
+14.010685,10.330483,19.999851
+16.710686,11.130484,17.299850
+16.710686,11.330483,15.499851
+14.010685,11.130484,15.799850
+15.810684,10.730484,18.799854
+11.310684,10.730484,16.099850
+8.910687,10.330483,16.699852
+9.810684,9.930483,19.999851
+8.910687,10.330483,16.699852
+6.510685,10.130484,16.999851
+7.110683,9.530483,20.299854
+9.810684,9.930483,19.999851
+40.410686,8.130484,21.199848
+40.410686,8.130484,23.299854
+43.410686,8.130484,22.999851
+43.110683,8.130484,16.999851
+39.810688,8.130484,16.399849
+40.110683,8.130484,19.699848
+46.410686,8.130484,19.399853
+46.110683,8.130484,16.099850
+43.110683,8.130484,16.999851
+40.110683,8.130484,19.699848
+40.410686,8.130484,21.199848
+43.410686,8.130484,22.999851
+46.710690,8.130484,22.699848
+46.410686,8.130484,19.399853
+43.110683,8.130484,16.999851
+4.410687,-2.069517,18.199848
+3.810684,-2.069517,16.999851
+2.910685,-2.069517,16.999851
+3.210686,-2.069517,19.399853
+3.210686,-2.069517,19.399853
+3.510685,-2.069517,21.799854
+5.310684,-2.069517,21.199848
+6.210686,-2.069517,19.399853
+4.410687,-2.069517,18.199848
+5.310684,-2.069517,21.199848
+7.110683,-2.069517,22.399853
+7.410687,-2.069517,21.199848
+7.410687,-2.069517,21.199848
+9.210686,-2.069517,20.299854
+9.210686,-2.069517,19.399853
+6.210686,-2.069517,19.399853
+5.310684,-2.069517,21.199848
+-6.989315,-2.069517,26.599850
+-6.689316,-2.069517,25.399853
+-8.789316,-2.069517,25.399853
+-8.789316,-2.069517,26.899853
+-11.189316,-2.069517,22.699848
+-11.189316,-2.069517,20.599850
+-14.189316,-2.069517,21.499851
+-15.389316,-2.069517,22.099850
+-18.389317,0.730483,18.499851
+-19.289316,0.730483,18.499851
+-19.289316,-0.669517,20.599850
+-17.789316,-0.669517,21.199848
+-10.589315,-2.069517,26.899853
+-10.589315,-2.069517,24.199848
+-11.189316,-2.069517,22.699848
+-15.389316,-2.069517,22.099850
+-15.689316,-2.069517,27.499851
+-13.589316,-2.069517,27.499851
+-10.589315,-2.069517,26.899853
+-8.789316,-2.069517,26.899853
+-8.789316,-2.069517,25.399853
+-10.589315,-2.069517,24.199848
+-17.789316,-0.669517,21.199848
+-19.289316,-0.669517,20.599850
+-20.189316,-2.069517,22.099850
+-15.389316,-2.069517,22.099850
+-17.789316,-0.669517,21.199848
+-20.189316,-2.069517,22.099850
+-20.789316,-2.069517,25.099850
+-17.189316,-2.069517,27.799854
+-15.689316,-2.069517,27.499851
+-20.189316,-2.069517,22.099850
+-21.089317,-2.069517,22.399853
+-20.789316,-2.069517,25.099850
+-11.789316,-2.069517,17.299850
+-13.289316,-2.069517,17.599850
+-13.289316,-2.069517,19.999851
+-11.189316,-2.069517,20.599850
+-20.789316,-2.069517,25.099850
+-20.489315,-2.069517,28.099850
+-17.189316,-2.069517,27.799854
+-11.189316,-2.069517,20.599850
+-13.289316,-2.069517,19.999851
+-14.189316,-2.069517,21.499851
+14.310684,-2.069517,19.999851
+15.810684,-2.069517,19.399853
+15.210686,-2.069517,18.499851
+12.210686,-2.069517,19.099850
+12.210686,-2.069517,24.199848
+13.710686,-2.069517,24.199848
+13.410687,-2.069517,21.499851
+11.310684,-2.069517,21.199848
+11.310684,-2.069517,21.199848
+13.410687,-2.069517,21.499851
+14.310684,-2.069517,19.999851
+12.210686,-2.069517,19.099850
+9.210686,-2.069517,19.399853
+9.210686,-2.069517,20.299854
+23.010685,-2.069517,21.199848
+23.610687,-2.069517,22.999851
+24.510685,-2.069517,22.699848
+24.210686,-2.069517,20.899853
+12.510685,8.930483,26.599850
+14.310684,9.130484,26.599850
+13.410687,9.530483,23.599850
+12.210686,9.330483,23.899853
+2.310684,-2.069517,23.899853
+1.710684,-2.069517,23.899853
+1.110685,-2.069517,24.499851
+1.410685,-2.069517,25.699848
+2.610685,-2.069517,25.099850
+-4.889317,-2.069517,25.099850
+-5.189316,-2.069517,26.299854
+-3.089315,-2.069517,25.999851
+-3.089315,-2.069517,24.799854
+-0.989315,-2.069517,25.699848
+1.410685,-2.069517,25.699848
+1.110685,-2.069517,24.499851
+-0.989315,-2.069517,24.799854
+-6.689316,-2.069517,25.399853
+-6.989315,-2.069517,26.599850
+-5.189316,-2.069517,26.299854
+-4.889317,-2.069517,25.099850
+-3.089315,-2.069517,24.799854
+-3.089315,-2.069517,25.999851
+-0.989315,-2.069517,25.699848
+-0.989315,-2.069517,24.799854
+[DETAILMESH_VERTICES_END]
+
+[DETAILMESH_TRIANGLES_BEGIN]
+0,0,1,4
+0,0,1,4
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,4,1
+1,2,4,1
+2,3,4,5
+2,2,3,4
+0,0,1,4
+0,0,1,4
+0,0,1,4
+0,0,1,4
+0,0,1,4
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,4,1
+1,2,4,1
+2,3,4,5
+2,2,3,4
+0,0,1,4
+0,0,1,4
+0,3,4,4
+0,2,3,4
+0,1,2,5
+0,0,1,4
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,4,1
+1,3,4,4
+1,2,3,5
+1,1,2,4
+0,0,1,4
+0,0,1,4
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,3,1
+1,2,3,5
+1,1,2,4
+0,1,4,1
+1,2,4,1
+2,3,4,5
+2,2,3,4
+0,0,1,4
+0,0,1,4
+0,0,1,4
+0,0,1,4
+0,2,3,4
+0,1,2,5
+0,0,1,4
+0,0,1,4
+0,0,1,4
+0,0,1,4
+0,3,4,4
+0,2,3,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,3,4,4
+0,2,3,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,0,1,4
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,3,4,4
+0,2,3,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,3,1
+1,2,3,5
+1,1,2,4
+0,0,1,4
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,3,4,4
+0,1,3,1
+1,2,3,5
+1,1,2,4
+0,2,3,4
+0,1,2,5
+0,0,1,4
+0,0,1,4
+0,0,1,4
+0,2,3,4
+0,1,2,5
+0,0,1,4
+0,2,3,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,3,4,4
+0,2,3,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,3,4,4
+0,2,3,4
+0,1,2,5
+0,0,1,4
+0,0,1,4
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,0,1,4
+0,0,1,4
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,4,1
+1,3,4,4
+1,2,3,5
+1,1,2,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,0,1,4
+0,2,3,4
+0,1,2,5
+0,0,1,4
+0,3,4,4
+0,1,3,1
+1,2,3,5
+1,1,2,4
+0,1,2,5
+0,0,1,4
+0,0,1,4
+0,0,1,4
+0,1,4,1
+1,2,4,1
+2,3,4,5
+2,2,3,4
+0,1,3,1
+1,2,3,5
+1,1,2,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,4,1
+1,2,4,1
+2,3,4,5
+2,2,3,4
+0,0,1,4
+0,0,1,4
+0,0,1,4
+0,3,4,4
+0,2,3,4
+0,1,2,5
+0,0,1,4
+0,3,4,4
+0,1,3,1
+1,2,3,5
+1,1,2,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,3,1
+1,2,3,5
+1,1,2,4
+0,0,1,4
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,3,4,4
+0,2,3,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,2,3,4
+0,1,2,5
+0,0,1,4
+0,0,1,4
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,2,3,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,0,1,4
+0,2,3,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,3,1
+1,2,3,5
+1,1,2,4
+0,2,3,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,3,1
+1,2,3,5
+1,1,2,4
+0,1,4,1
+1,2,4,1
+2,3,4,5
+2,2,3,4
+0,1,4,1
+1,2,4,1
+2,3,4,5
+2,2,3,4
+0,1,2,5
+0,0,1,4
+0,0,1,4
+0,0,1,4
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,2,3,4
+0,1,2,5
+0,0,1,4
+0,0,1,4
+0,1,3,1
+1,2,3,5
+1,1,2,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,2,3,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,2,3,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,4,1
+1,2,4,1
+2,3,4,5
+2,2,3,4
+0,1,2,5
+0,0,1,4
+0,1,3,1
+1,2,3,5
+1,1,2,4
+0,1,4,1
+1,2,4,1
+2,3,4,5
+2,2,3,4
+0,0,1,4
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,4,1
+1,2,4,1
+2,3,4,5
+2,2,3,4
+0,1,2,5
+0,0,1,4
+0,0,1,4
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,0,1,4
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,2,3,4
+0,1,2,5
+0,0,1,4
+0,3,4,4
+0,1,3,1
+1,2,3,5
+1,1,2,4
+0,1,2,5
+0,0,1,4
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,4,1
+1,3,4,4
+1,2,3,5
+1,1,2,4
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,0,1,4
+0,0,1,4
+0,0,1,4
+0,1,4,1
+1,2,4,1
+2,3,4,5
+2,2,3,4
+0,1,2,5
+0,0,1,4
+0,2,3,4
+0,1,2,5
+0,0,1,4
+0,0,1,4
+0,1,3,1
+1,2,3,5
+1,1,2,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,4,1
+1,2,4,1
+2,3,4,5
+2,2,3,4
+0,1,2,5
+0,0,1,4
+0,0,1,4
+0,1,4,1
+1,2,4,1
+2,3,4,5
+2,2,3,4
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,0,1,4
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,3,4,4
+0,1,3,1
+1,2,3,5
+1,1,2,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,3,1
+1,2,3,5
+1,1,2,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+0,1,2,5
+0,0,1,4
+[DETAILMESH_TRIANGLES_END]
+
+
+=== Testing canRemoveVertex on real mesh ===
+Can remove vertex 0: true
+Can remove vertex 431: true
+Can remove vertex 216: true
+
+=== Real mesh test completed successfully ===
+
+=== Loaded dungeon.obj ===
+Vertices: 5101
+Triangles: 10133
+
+Grid size: 248x330
+Compact heightfield: 42853 spans
+[PROGRESS] buildRegions: max_distance=40, level_start=40
+[PROGRESS] buildRegions: Watershed created 27 regions (before merging)
+[PROGRESS] mergeAndFilterRegions: Region span counts:
+[PROGRESS]   Region 1: 1383 spans, 1 connections
+[PROGRESS]   Region 2: 1412 spans, 1 connections
+[PROGRESS]   Region 3: 1324 spans, 1 connections
+[PROGRESS]   Region 4: 1249 spans, 1 connections
+[PROGRESS]   Region 5: 455 spans, 1 connections
+[PROGRESS]   Region 6: 381 spans, 1 connections
+[PROGRESS]   Region 7: 552 spans, 1 connections
+[PROGRESS]   Region 8: 511 spans, 1 connections
+[PROGRESS]   Region 9: 549 spans, 1 connections
+[PROGRESS]   Region 10: 539 spans, 1 connections
+[PROGRESS]   Region 11: 475 spans, 1 connections
+[PROGRESS]   Region 12: 481 spans, 1 connections
+[PROGRESS]   Region 13: 326 spans, 4 connections
+[PROGRESS]   Region 14: 751 spans, 1 connections
+[PROGRESS]   Region 15: 782 spans, 1 connections
+[PROGRESS]   Region 16: 243 spans, 4 connections
+[PROGRESS]   Region 17: 713 spans, 1 connections
+[PROGRESS]   Region 18: 752 spans, 1 connections
+[PROGRESS]   Region 19: 110 spans, 4 connections
+[PROGRESS]   Region 20: 198 spans, 2 connections
+[PROGRESS]   Region 21: 202 spans, 1 connections
+[PROGRESS]   Region 22: 124 spans, 1 connections
+[PROGRESS]   Region 23: 87 spans, 1 connections
+[PROGRESS]   Region 24: 117 spans, 1 connections
+[PROGRESS]   Region 25: 92 spans, 1 connections
+[PROGRESS]   Region 26: 138 spans, 1 connections
+[PROGRESS]   Region 27: 23 spans, 2 connections
+[PROGRESS] mergeAndFilterRegions: Merged and filtered to 28 regions
+[PROGRESS] buildRegions: Created 27 regions
+Regions: 27
+[PROGRESS] buildContours: Finding boundaries...
+[PROGRESS] buildContours: Walking contours...
+[PROGRESS] buildContours: Checking for holes...
+[PROGRESS] buildContours: Created 27 contours
+Contours: 27
+[PROGRESS] buildPolyMesh: max_vertices=312, max_tris=258
+[PROGRESS] buildPolyMesh: Created mesh with 304 vertices and 132 polygons
+PolyMesh: 304 vertices, 132 polygons
+PolyMeshDetail: 132 meshes, 522 verts, 258 tris
+
+
+=== Loaded undulating.obj ===
+Vertices: 2800
+Triangles: 5202
+
+Grid size: 330x331
+Compact heightfield: 105081 spans
+[PROGRESS] buildRegions: max_distance=95, level_start=96
+[PROGRESS] buildRegions: Watershed created 47 regions (before merging)
+[PROGRESS] mergeAndFilterRegions: Region span counts:
+[PROGRESS]   Region 1: 8750 spans, 14 connections
+[PROGRESS]   Region 2: 7409 spans, 12 connections
+[PROGRESS]   Region 3: 6551 spans, 8 connections
+[PROGRESS]   Region 4: 3043 spans, 10 connections
+[PROGRESS]   Region 5: 3796 spans, 8 connections
+[PROGRESS]   Region 6: 3994 spans, 10 connections
+[PROGRESS]   Region 7: 2971 spans, 8 connections
+[PROGRESS]   Region 8: 3183 spans, 8 connections
+[PROGRESS]   Region 9: 4223 spans, 8 connections
+[PROGRESS]   Region 10: 2755 spans, 8 connections
+[PROGRESS]   Region 11: 1297 spans, 6 connections
+[PROGRESS]   Region 12: 828 spans, 6 connections
+[PROGRESS]   Region 13: 1813 spans, 8 connections
+[PROGRESS]   Region 14: 2682 spans, 8 connections
+[PROGRESS]   Region 15: 1371 spans, 6 connections
+[PROGRESS]   Region 16: 1073 spans, 6 connections
+[PROGRESS]   Region 17: 1143 spans, 6 connections
+[PROGRESS]   Region 18: 1424 spans, 6 connections
+[PROGRESS]   Region 19: 1495 spans, 10 connections
+[PROGRESS]   Region 20: 1048 spans, 4 connections
+[PROGRESS]   Region 21: 2214 spans, 8 connections
+[PROGRESS]   Region 22: 1403 spans, 4 connections
+[PROGRESS]   Region 23: 1137 spans, 6 connections
+[PROGRESS]   Region 24: 231 spans, 4 connections
+[PROGRESS]   Region 25: 445 spans, 4 connections
+[PROGRESS]   Region 26: 1166 spans, 8 connections
+[PROGRESS]   Region 27: 1044 spans, 6 connections
+[PROGRESS]   Region 28: 607 spans, 6 connections
+[PROGRESS]   Region 29: 153 spans, 4 connections
+[PROGRESS]   Region 30: 549 spans, 6 connections
+[PROGRESS]   Region 31: 1403 spans, 4 connections
+[PROGRESS]   Region 32: 665 spans, 4 connections
+[PROGRESS]   Region 33: 901 spans, 4 connections
+[PROGRESS]   Region 34: 703 spans, 6 connections
+[PROGRESS]   Region 35: 403 spans, 6 connections
+[PROGRESS]   Region 36: 337 spans, 6 connections
+[PROGRESS]   Region 37: 566 spans, 6 connections
+[PROGRESS]   Region 38: 600 spans, 6 connections
+[PROGRESS]   Region 39: 233 spans, 4 connections
+[PROGRESS]   Region 40: 73 spans, 4 connections
+[PROGRESS]   Region 41: 368 spans, 4 connections
+[PROGRESS]   Region 42: 165 spans, 4 connections
+[PROGRESS]   Region 43: 178 spans, 4 connections
+[PROGRESS]   Region 44: 152 spans, 4 connections
+[PROGRESS]   Region 45: 89 spans, 2 connections
+[PROGRESS]   Region 46: 30 spans, 4 connections
+[PROGRESS]   Region 47: 36 spans, 4 connections
+[PROGRESS] mergeAndFilterRegions: Merged and filtered to 48 regions
+[PROGRESS] buildRegions: Created 47 regions
+Regions: 47
+[PROGRESS] buildContours: Finding boundaries...
+[PROGRESS] buildContours: Walking contours...
+[PROGRESS] buildContours: Checking for holes...
+[PROGRESS] buildContours: Created 47 contours
+Contours: 47
+[PROGRESS] buildPolyMesh: max_vertices=704, max_tris=610
+[PROGRESS] buildPolyMesh: Created mesh with 558 vertices and 316 polygons
+PolyMesh: 558 vertices, 316 polygons
+PolyMeshDetail: 316 meshes, 1251 verts, 628 tris
+
+
+=== Pathfinding Tests: nav_test.obj ===
+Found 21 test cases
+
+[PROGRESS] buildRegions: max_distance=47, level_start=48
+[PROGRESS] buildRegions: Watershed created 46 regions (before merging)
+[PROGRESS] mergeAndFilterRegions: Region span counts:
+[PROGRESS]   Region 1: 2045 spans, 4 connections
+[PROGRESS]   Region 2: 1893 spans, 4 connections
+[PROGRESS]   Region 3: 1567 spans, 4 connections
+[PROGRESS]   Region 4: 1883 spans, 4 connections
+[PROGRESS]   Region 5: 1486 spans, 4 connections
+[PROGRESS]   Region 6: 2017 spans, 8 connections
+[PROGRESS]   Region 7: 1437 spans, 4 connections
+[PROGRESS]   Region 8: 1041 spans, 4 connections
+[PROGRESS]   Region 9: 667 spans, 2 connections
+[PROGRESS]   Region 10: 698 spans, 4 connections
+[PROGRESS]   Region 11: 434 spans, 1 connections
+[PROGRESS]   Region 12: 873 spans, 6 connections
+[PROGRESS]   Region 13: 574 spans, 6 connections
+[PROGRESS]   Region 14: 1311 spans, 8 connections
+[PROGRESS]   Region 15: 302 spans, 2 connections
+[PROGRESS]   Region 16: 493 spans, 2 connections
+[PROGRESS]   Region 17: 220 spans, 2 connections
+[PROGRESS]   Region 18: 343 spans, 4 connections
+[PROGRESS]   Region 19: 210 spans, 4 connections
+[PROGRESS]   Region 20: 212 spans, 4 connections
+[PROGRESS]   Region 21: 255 spans, 6 connections
+[PROGRESS]   Region 22: 203 spans, 4 connections
+[PROGRESS]   Region 23: 179 spans, 4 connections
+[PROGRESS]   Region 24: 254 spans, 4 connections
+[PROGRESS]   Region 25: 116 spans, 4 connections
+[PROGRESS]   Region 26: 160 spans, 4 connections
+[PROGRESS]   Region 27: 169 spans, 4 connections
+[PROGRESS]   Region 28: 257 spans, 2 connections
+[PROGRESS]   Region 29: 122 spans, 2 connections
+[PROGRESS]   Region 30: 107 spans, 6 connections
+[PROGRESS]   Region 31: 74 spans, 4 connections
+[PROGRESS]   Region 32: 25 spans, 1 connections
+[PROGRESS]   Region 33: 30 spans, 2 connections
+[PROGRESS]   Region 34: 29 spans, 2 connections
+[PROGRESS]   Region 35: 22 spans, 4 connections
+[PROGRESS]   Region 36: 56 spans, 4 connections
+[PROGRESS]   Region 37: 125 spans, 2 connections
+[PROGRESS]   Region 38: 75 spans, 4 connections
+[PROGRESS]   Region 39: 99 spans, 4 connections
+[PROGRESS]   Region 40: 75 spans, 4 connections
+[PROGRESS]   Region 41: 29 spans, 4 connections
+[PROGRESS]   Region 42: 22 spans, 2 connections
+[PROGRESS]   Region 43: 44 spans, 2 connections
+[PROGRESS]   Region 44: 127 spans, 2 connections
+[PROGRESS]   Region 45: 1 spans, 1 connections
+[PROGRESS]   Region 46: 2 spans, 1 connections
+[PROGRESS]   Removing small region group (spanCount=1 < 8): ids={ 45 }
+[PROGRESS]   Removing small region group (spanCount=2 < 8): ids={ 46 }
+[PROGRESS] mergeAndFilterRegions: Merged and filtered to 45 regions
+[PROGRESS] buildRegions: Created 44 regions
+[PROGRESS] buildContours: Finding boundaries...
+[PROGRESS] buildContours: Walking contours...
+[PROGRESS] buildContours: Checking for holes...
+[PROGRESS] buildContours: Created 44 contours
+[PROGRESS] buildPolyMesh: max_vertices=512, max_tris=424
+[PROGRESS] buildPolyMesh: Created mesh with 432 vertices and 206 polygons
+[TEST 1] Finding path from (18.14, -2.37, -21.32) to (-19.21, -2.37, 24.80)
+    [DEBUG closestPointOnPoly] ref=285, poly=29, pos_over_poly=true, height=-2.269517
+    [DEBUG closestPointOnPoly] ref=284, poly=28, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=28, dmin=1.105544, tmin=0.396078, result=(19.173038, -2.269517, -21.507208)
+    [DEBUG closestPointOnPoly] ref=283, poly=27, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=27, dmin=5.958262, tmin=0.343793, result=(17.835787, -2.269517, -18.897013)
+    [DEBUG closestPointOnPoly] ref=447, poly=191, pos_over_poly=true, height=-2.269517
+    [DEBUG closestPointOnPoly] ref=448, poly=192, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=192, dmin=8.266102, tmin=0.000000, result=(-20.189316, -2.269517, 22.099850)
+    [DEBUG closestPointOnPoly] ref=450, poly=194, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=194, dmin=2.575520, tmin=0.000000, result=(-20.789316, -2.269517, 25.099850)
+  Status: void, Path length: 3 polys
+  Waypoints: 3
+    [0] (18.14, -2.27, -21.32)
+    [1] (12.21, -2.27, -17.80)
+    [2] (10.71, -2.27, -16.90)
+
+[TEST 2] Finding path from (18.25, -2.37, -7.00) to (-19.21, -2.37, 24.80)
+    [DEBUG closestPointOnPoly] ref=314, poly=58, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=58, dmin=0.001660, tmin=1.000000, result=(16.110683, -2.269517, -6.400150)
+    [DEBUG closestPointOnPoly] ref=322, poly=66, pos_over_poly=true, height=-2.269517
+    [DEBUG closestPointOnPoly] ref=323, poly=67, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=67, dmin=0.308636, tmin=0.000000, result=(18.210686, -2.269517, -6.400150)
+    [DEBUG closestPointOnPoly] ref=321, poly=65, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=65, dmin=0.140984, tmin=0.000000, result=(19.410686, -2.269517, -5.800152)
+    [DEBUG closestPointOnPoly] ref=447, poly=191, pos_over_poly=true, height=-2.269517
+    [DEBUG closestPointOnPoly] ref=448, poly=192, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=192, dmin=8.266102, tmin=0.000000, result=(-20.189316, -2.269517, 22.099850)
+    [DEBUG closestPointOnPoly] ref=450, poly=194, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=194, dmin=2.575520, tmin=0.000000, result=(-20.789316, -2.269517, 25.099850)
+  Status: void, Path length: 33 polys
+  Waypoints: 17
+    [0] (18.25, -2.27, -7.00)
+    [1] (10.41, -2.27, -7.90)
+    [2] (7.71, -2.27, -7.90)
+    [3] (5.01, -2.27, -6.70)
+    [4] (4.41, -2.27, -5.50)
+    ... (12 more waypoints)
+
+[TEST 3] Finding path from (18.25, -2.37, -7.00) to (-22.76, -2.37, 2.00)
+    [DEBUG closestPointOnPoly] ref=314, poly=58, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=58, dmin=0.001660, tmin=1.000000, result=(16.110683, -2.269517, -6.400150)
+    [DEBUG closestPointOnPoly] ref=322, poly=66, pos_over_poly=true, height=-2.269517
+    [DEBUG closestPointOnPoly] ref=323, poly=67, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=67, dmin=0.308636, tmin=0.000000, result=(18.210686, -2.269517, -6.400150)
+    [DEBUG closestPointOnPoly] ref=321, poly=65, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=65, dmin=0.140984, tmin=0.000000, result=(19.410686, -2.269517, -5.800152)
+      [DEBUG closestPointOnDetailEdges] poly=74, dmin=0.793832, tmin=1.000000, result=(-23.789316, -2.269517, 0.799850)
+    [DEBUG closestPointOnPoly] ref=330, poly=74, pos_over_poly=true, height=-2.269517
+    [DEBUG closestPointOnPoly] ref=335, poly=79, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=79, dmin=0.332601, tmin=0.840132, result=(-22.434185, -2.269517, 2.480444)
+  Status: void, Path length: 24 polys
+  Waypoints: 13
+    [0] (18.25, -2.27, -7.00)
+    [1] (10.41, -2.27, -7.90)
+    [2] (7.71, -2.27, -7.90)
+    [3] (5.01, -2.27, -6.70)
+    [4] (4.41, -2.27, -5.50)
+    ... (8 more waypoints)
+
+[TEST 4] Finding path from (18.25, -2.37, -7.00) to (-24.48, -2.37, -6.78)
+    [DEBUG closestPointOnPoly] ref=314, poly=58, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=58, dmin=0.001660, tmin=1.000000, result=(16.110683, -2.269517, -6.400150)
+    [DEBUG closestPointOnPoly] ref=322, poly=66, pos_over_poly=true, height=-2.269517
+    [DEBUG closestPointOnPoly] ref=323, poly=67, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=67, dmin=0.308636, tmin=0.000000, result=(18.210686, -2.269517, -6.400150)
+    [DEBUG closestPointOnPoly] ref=321, poly=65, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=65, dmin=0.140984, tmin=0.000000, result=(19.410686, -2.269517, -5.800152)
+    [DEBUG closestPointOnPoly] ref=329, poly=73, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=73, dmin=0.031086, tmin=1.000000, result=(-24.689316, -2.269517, -7.000149)
+    [DEBUG closestPointOnPoly] ref=339, poly=83, pos_over_poly=true, height=-2.269517
+    [DEBUG closestPointOnPoly] ref=330, poly=74, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=74, dmin=0.021472, tmin=0.000000, result=(-24.089317, -2.269517, -1.900150)
+  Status: void, Path length: 25 polys
+  Waypoints: 14
+    [0] (18.25, -2.27, -7.00)
+    [1] (10.41, -2.27, -7.90)
+    [2] (7.71, -2.27, -7.90)
+    [3] (5.01, -2.27, -6.70)
+    [4] (4.41, -2.27, -5.50)
+    ... (9 more waypoints)
+
+[TEST 5] Finding path from (18.25, -2.37, -7.00) to (-24.07, -2.37, -18.88)
+    [DEBUG closestPointOnPoly] ref=314, poly=58, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=58, dmin=0.001660, tmin=1.000000, result=(16.110683, -2.269517, -6.400150)
+    [DEBUG closestPointOnPoly] ref=322, poly=66, pos_over_poly=true, height=-2.269517
+    [DEBUG closestPointOnPoly] ref=323, poly=67, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=67, dmin=0.308636, tmin=0.000000, result=(18.210686, -2.269517, -6.400150)
+    [DEBUG closestPointOnPoly] ref=321, poly=65, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=65, dmin=0.140984, tmin=0.000000, result=(19.410686, -2.269517, -5.800152)
+    [DEBUG closestPointOnPoly] ref=302, poly=46, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=46, dmin=3.331148, tmin=1.000000, result=(-25.589317, -2.269517, -16.900150)
+    [DEBUG closestPointOnPoly] ref=303, poly=47, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=47, dmin=0.105172, tmin=1.000000, result=(-24.989317, -2.269517, -17.500150)
+  Status: void, Path length: 27 polys
+  Waypoints: 17
+    [0] (18.25, -2.27, -7.00)
+    [1] (10.41, -2.27, -7.90)
+    [2] (7.71, -2.27, -7.90)
+    [3] (5.01, -2.27, -6.70)
+    [4] (4.41, -2.27, -5.50)
+    ... (12 more waypoints)
+
+[TEST 6] Finding path from (18.25, -2.37, -7.00) to (12.12, -2.37, -21.22)
+    [DEBUG closestPointOnPoly] ref=314, poly=58, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=58, dmin=0.001660, tmin=1.000000, result=(16.110683, -2.269517, -6.400150)
+    [DEBUG closestPointOnPoly] ref=322, poly=66, pos_over_poly=true, height=-2.269517
+    [DEBUG closestPointOnPoly] ref=323, poly=67, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=67, dmin=0.308636, tmin=0.000000, result=(18.210686, -2.269517, -6.400150)
+    [DEBUG closestPointOnPoly] ref=321, poly=65, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=65, dmin=0.140984, tmin=0.000000, result=(19.410686, -2.269517, -5.800152)
+    [DEBUG closestPointOnPoly] ref=288, poly=32, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=32, dmin=2.089963, tmin=0.000000, result=(11.310684, -2.269517, -22.600151)
+    [DEBUG closestPointOnPoly] ref=289, poly=33, pos_over_poly=true, height=-2.269517
+    [DEBUG closestPointOnPoly] ref=285, poly=29, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=29, dmin=1.713928, tmin=1.000000, result=(14.610683, -2.269517, -22.900150)
+  Status: void, Path length: 5 polys
+  Waypoints: 4
+    [0] (18.25, -2.27, -7.00)
+    [1] (12.81, -2.27, -8.50)
+    [2] (11.31, -2.27, -9.40)
+    [3] (10.71, -2.27, -11.20)
+
+[TEST 7] Finding path from (10.83, -2.37, 19.00) to (12.12, -2.37, -21.22)
+    [DEBUG closestPointOnPoly] ref=440, poly=184, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=184, dmin=0.157883, tmin=0.000000, result=(9.210686, -2.269517, 19.399853)
+    [DEBUG closestPointOnPoly] ref=454, poly=198, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=198, dmin=0.054863, tmin=0.452411, result=(10.853453, -2.269517, 19.235575)
+    [DEBUG closestPointOnPoly] ref=452, poly=196, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=196, dmin=4.922397, tmin=0.000000, result=(14.310684, -2.269517, 19.999851)
+    [DEBUG closestPointOnPoly] ref=453, poly=197, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=197, dmin=5.239397, tmin=1.000000, result=(13.410687, -2.269517, 21.499851)
+    [DEBUG closestPointOnPoly] ref=288, poly=32, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=32, dmin=2.089963, tmin=0.000000, result=(11.310684, -2.269517, -22.600151)
+    [DEBUG closestPointOnPoly] ref=289, poly=33, pos_over_poly=true, height=-2.269517
+    [DEBUG closestPointOnPoly] ref=285, poly=29, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=29, dmin=1.713928, tmin=1.000000, result=(14.610683, -2.269517, -22.900150)
+  Status: void, Path length: 19 polys
+  Waypoints: 11
+    [0] (10.85, -2.27, 19.24)
+    [1] (9.21, -2.27, 19.40)
+    [2] (6.21, -2.27, 19.40)
+    [3] (4.41, -2.27, 18.20)
+    [4] (3.81, -2.27, 17.00)
+    ... (6 more waypoints)
+
+[TEST 8] Finding path from (10.83, -2.37, 19.00) to (-7.15, -2.37, -16.03)
+    [DEBUG closestPointOnPoly] ref=440, poly=184, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=184, dmin=0.157883, tmin=0.000000, result=(9.210686, -2.269517, 19.399853)
+    [DEBUG closestPointOnPoly] ref=454, poly=198, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=198, dmin=0.054863, tmin=0.452411, result=(10.853453, -2.269517, 19.235575)
+    [DEBUG closestPointOnPoly] ref=452, poly=196, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=196, dmin=4.922397, tmin=0.000000, result=(14.310684, -2.269517, 19.999851)
+    [DEBUG closestPointOnPoly] ref=453, poly=197, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=197, dmin=5.239397, tmin=1.000000, result=(13.410687, -2.269517, 21.499851)
+    [DEBUG closestPointOnPoly] ref=299, poly=43, pos_over_poly=true, height=-2.269517
+    [DEBUG closestPointOnPoly] ref=297, poly=41, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=41, dmin=0.517610, tmin=0.000000, result=(-6.989315, -2.269517, -18.100151)
+    [DEBUG closestPointOnPoly] ref=298, poly=42, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=42, dmin=7.431245, tmin=1.000000, result=(-9.089315, -2.269517, -13.000149)
+    [DEBUG closestPointOnPoly] ref=300, poly=44, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=44, dmin=5.094804, tmin=0.675348, result=(-4.889317, -2.269517, -16.031403)
+    [DEBUG closestPointOnPoly] ref=291, poly=35, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=35, dmin=5.094804, tmin=0.324652, result=(-4.889317, -2.269517, -16.031403)
+  Status: void, Path length: 20 polys
+  Waypoints: 13
+    [0] (10.85, -2.27, 19.24)
+    [1] (9.21, -2.27, 19.40)
+    [2] (6.21, -2.27, 19.40)
+    [3] (4.41, -2.27, 18.20)
+    [4] (3.81, -2.27, 17.00)
+    ... (8 more waypoints)
+
+[TEST 9] Finding path from (10.83, -2.37, 19.00) to (-21.62, -2.37, -3.26)
+    [DEBUG closestPointOnPoly] ref=440, poly=184, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=184, dmin=0.157883, tmin=0.000000, result=(9.210686, -2.269517, 19.399853)
+    [DEBUG closestPointOnPoly] ref=454, poly=198, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=198, dmin=0.054863, tmin=0.452411, result=(10.853453, -2.269517, 19.235575)
+    [DEBUG closestPointOnPoly] ref=452, poly=196, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=196, dmin=4.922397, tmin=0.000000, result=(14.310684, -2.269517, 19.999851)
+    [DEBUG closestPointOnPoly] ref=453, poly=197, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=197, dmin=5.239397, tmin=1.000000, result=(13.410687, -2.269517, 21.499851)
+    [DEBUG closestPointOnPoly] ref=339, poly=83, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=83, dmin=0.077093, tmin=0.482630, result=(-21.772692, -2.269517, -3.492830)
+    [DEBUG closestPointOnPoly] ref=330, poly=74, pos_over_poly=true, height=-2.269517
+    [DEBUG closestPointOnPoly] ref=335, poly=79, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=79, dmin=2.595872, tmin=1.000000, result=(-16.889317, -2.269517, -1.300152)
+  Status: void, Path length: 18 polys
+  Waypoints: 14
+    [0] (10.85, -2.27, 19.24)
+    [1] (9.21, -2.27, 19.40)
+    [2] (6.21, -2.27, 19.40)
+    [3] (4.41, -2.27, 18.20)
+    [4] (3.81, -2.27, 17.00)
+    ... (9 more waypoints)
+
+[TEST 10] Finding path from (10.83, -2.37, 19.00) to (-22.65, -2.37, 1.05)
+    [DEBUG closestPointOnPoly] ref=440, poly=184, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=184, dmin=0.157883, tmin=0.000000, result=(9.210686, -2.269517, 19.399853)
+    [DEBUG closestPointOnPoly] ref=454, poly=198, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=198, dmin=0.054863, tmin=0.452411, result=(10.853453, -2.269517, 19.235575)
+    [DEBUG closestPointOnPoly] ref=452, poly=196, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=196, dmin=4.922397, tmin=0.000000, result=(14.310684, -2.269517, 19.999851)
+    [DEBUG closestPointOnPoly] ref=453, poly=197, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=197, dmin=5.239397, tmin=1.000000, result=(13.410687, -2.269517, 21.499851)
+      [DEBUG closestPointOnDetailEdges] poly=74, dmin=0.329184, tmin=0.140724, result=(-22.818321, -2.269517, 0.504330)
+    [DEBUG closestPointOnPoly] ref=330, poly=74, pos_over_poly=true, height=-2.269517
+    [DEBUG closestPointOnPoly] ref=335, poly=79, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=79, dmin=1.144859, tmin=0.000000, result=(-23.489317, -2.269517, 3.199852)
+  Status: void, Path length: 18 polys
+  Waypoints: 13
+    [0] (10.85, -2.27, 19.24)
+    [1] (9.21, -2.27, 19.40)
+    [2] (6.21, -2.27, 19.40)
+    [3] (4.41, -2.27, 18.20)
+    [4] (3.81, -2.27, 17.00)
+    ... (8 more waypoints)
+
+[TEST 11] Finding path from (10.83, -2.37, 19.00) to (19.18, -2.37, 3.01)
+    [DEBUG closestPointOnPoly] ref=440, poly=184, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=184, dmin=0.157883, tmin=0.000000, result=(9.210686, -2.269517, 19.399853)
+    [DEBUG closestPointOnPoly] ref=454, poly=198, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=198, dmin=0.054863, tmin=0.452411, result=(10.853453, -2.269517, 19.235575)
+    [DEBUG closestPointOnPoly] ref=452, poly=196, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=196, dmin=4.922397, tmin=0.000000, result=(14.310684, -2.269517, 19.999851)
+    [DEBUG closestPointOnPoly] ref=453, poly=197, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=197, dmin=5.239397, tmin=1.000000, result=(13.410687, -2.269517, 21.499851)
+    [DEBUG closestPointOnPoly] ref=376, poly=120, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=120, dmin=6.836510, tmin=1.000000, result=(16.110683, -2.269517, 4.399849)
+    [DEBUG closestPointOnPoly] ref=380, poly=124, pos_over_poly=true, height=-2.269517
+    [DEBUG closestPointOnPoly] ref=381, poly=125, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=125, dmin=3.937841, tmin=1.000000, result=(18.510685, -2.269517, 1.099850)
+    [DEBUG closestPointOnPoly] ref=377, poly=121, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=121, dmin=0.015079, tmin=1.000000, result=(20.010685, -2.269517, 0.199848)
+  Status: void, Path length: 8 polys
+  Waypoints: 6
+    [0] (10.85, -2.27, 19.24)
+    [1] (12.21, -2.27, 19.10)
+    [2] (15.21, -2.27, 18.50)
+    [3] (17.31, -2.27, 17.90)
+    [4] (18.51, -2.27, 16.10)
+    ... (1 more waypoints)
+
+[TEST 12] Finding path from (10.83, -2.37, 19.00) to (19.04, -2.37, -7.40)
+    [DEBUG closestPointOnPoly] ref=440, poly=184, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=184, dmin=0.157883, tmin=0.000000, result=(9.210686, -2.269517, 19.399853)
+    [DEBUG closestPointOnPoly] ref=454, poly=198, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=198, dmin=0.054863, tmin=0.452411, result=(10.853453, -2.269517, 19.235575)
+    [DEBUG closestPointOnPoly] ref=452, poly=196, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=196, dmin=4.922397, tmin=0.000000, result=(14.310684, -2.269517, 19.999851)
+    [DEBUG closestPointOnPoly] ref=453, poly=197, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=197, dmin=5.239397, tmin=1.000000, result=(13.410687, -2.269517, 21.499851)
+    [DEBUG closestPointOnPoly] ref=322, poly=66, pos_over_poly=true, height=-2.269517
+    [DEBUG closestPointOnPoly] ref=323, poly=67, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=67, dmin=1.612869, tmin=0.219126, result=(18.473637, -2.269517, -6.268675)
+    [DEBUG closestPointOnPoly] ref=321, poly=65, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=65, dmin=0.259058, tmin=0.000000, result=(19.410686, -2.269517, -5.800152)
+  Status: void, Path length: 14 polys
+  Waypoints: 8
+    [0] (10.85, -2.27, 19.24)
+    [1] (12.21, -2.27, 19.10)
+    [2] (15.21, -2.27, 18.50)
+    [3] (17.31, -2.27, 17.90)
+    [4] (18.51, -2.27, 16.10)
+    ... (3 more waypoints)
+
+[TEST 13] Finding path from (6.05, -2.37, 3.33) to (19.04, -2.37, -7.40)
+    [DEBUG closestPointOnPoly] ref=368, poly=112, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=112, dmin=2.150667, tmin=0.000000, result=(5.910687, -2.269517, 1.399849)
+    [DEBUG closestPointOnPoly] ref=367, poly=111, pos_over_poly=false
+      [Zig tri0] tris=[0, 1, 2, 5]
+        [Zig SKIP] tri=0, j=2, k=0, tris_j=2, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig edge] tri=0, j=0, k=1, tris_j=0, tris_k=1, d=3.761370, t=0.021829
+        [Zig edge] tri=0, j=1, k=2, tris_j=1, tris_k=2, d=0.220364, t=1.000000
+      [Zig tri1] tris=[0, 0, 1, 4]
+        [Zig SKIP] tri=1, j=2, k=0, tris_j=1, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig SKIP] tri=1, j=0, k=1, tris_j=0, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig edge] tri=1, j=1, k=2, tris_j=0, tris_k=1, d=3.761370, t=0.021829
+      [DEBUG closestPointOnDetailEdges] poly=111, dmin=0.220364, tmin=1.000000, result=(5.310684, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=366, poly=110, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=110, dmin=3.207269, tmin=0.000000, result=(5.910687, -2.269517, 1.399849)
+    [DEBUG closestPointOnPoly] ref=403, poly=147, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=147, dmin=0.026066, tmin=0.000000, result=(3.510685, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=400, poly=144, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=144, dmin=0.697319, tmin=1.000000, result=(5.310684, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=322, poly=66, pos_over_poly=true, height=-2.269517
+    [DEBUG closestPointOnPoly] ref=323, poly=67, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=67, dmin=1.612869, tmin=0.219126, result=(18.473637, -2.269517, -6.268675)
+    [DEBUG closestPointOnPoly] ref=321, poly=65, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=65, dmin=0.259058, tmin=0.000000, result=(19.410686, -2.269517, -5.800152)
+  [DEBUG] Input start: (6.054083, -2.365402, 3.330421)
+  [DEBUG] queryPolygons returned 5 candidates
+  [DEBUG] Contains poly 367 (C++ result): true
+  [DEBUG] Contains poly 623 (Zig result): false
+  [DEBUG] Found start_pos: (5.310684, -2.269517, 3.799851)
+  [DEBUG] start_ref: 367
+  Status: void, Path length: 12 polys
+  Waypoints: 6
+    [0] (5.31, -2.27, 3.80)
+    [1] (4.41, -2.27, -5.50)
+    [2] (5.01, -2.27, -6.70)
+    [3] (7.71, -2.27, -7.90)
+    [4] (10.41, -2.27, -7.90)
+    ... (1 more waypoints)
+
+[TEST 14] Finding path from (6.05, -2.37, 3.33) to (21.85, -2.37, 17.92)
+    [DEBUG closestPointOnPoly] ref=368, poly=112, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=112, dmin=2.150667, tmin=0.000000, result=(5.910687, -2.269517, 1.399849)
+    [DEBUG closestPointOnPoly] ref=367, poly=111, pos_over_poly=false
+      [Zig tri0] tris=[0, 1, 2, 5]
+        [Zig SKIP] tri=0, j=2, k=0, tris_j=2, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig edge] tri=0, j=0, k=1, tris_j=0, tris_k=1, d=3.761370, t=0.021829
+        [Zig edge] tri=0, j=1, k=2, tris_j=1, tris_k=2, d=0.220364, t=1.000000
+      [Zig tri1] tris=[0, 0, 1, 4]
+        [Zig SKIP] tri=1, j=2, k=0, tris_j=1, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig SKIP] tri=1, j=0, k=1, tris_j=0, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig edge] tri=1, j=1, k=2, tris_j=0, tris_k=1, d=3.761370, t=0.021829
+      [DEBUG closestPointOnDetailEdges] poly=111, dmin=0.220364, tmin=1.000000, result=(5.310684, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=366, poly=110, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=110, dmin=3.207269, tmin=0.000000, result=(5.910687, -2.269517, 1.399849)
+    [DEBUG closestPointOnPoly] ref=403, poly=147, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=147, dmin=0.026066, tmin=0.000000, result=(3.510685, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=400, poly=144, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=144, dmin=0.697319, tmin=1.000000, result=(5.310684, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=379, poly=123, pos_over_poly=true, height=-2.269517
+    [DEBUG closestPointOnPoly] ref=371, poly=115, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=115, dmin=7.943357, tmin=1.000000, result=(18.810684, -2.269517, 19.099850)
+    [DEBUG closestPointOnPoly] ref=374, poly=118, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=118, dmin=0.004529, tmin=0.000000, result=(22.410686, -2.269517, 19.399853)
+  Status: void, Path length: 13 polys
+  Waypoints: 8
+    [0] (5.31, -2.27, 3.80)
+    [1] (5.91, -2.27, 1.40)
+    [2] (7.11, -2.27, 0.80)
+    [3] (9.21, -2.27, 0.20)
+    [4] (12.51, -2.27, 0.80)
+    ... (3 more waypoints)
+
+[TEST 15] Finding path from (6.05, -2.37, 3.33) to (0.97, -2.37, 25.77)
+    [DEBUG closestPointOnPoly] ref=368, poly=112, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=112, dmin=2.150667, tmin=0.000000, result=(5.910687, -2.269517, 1.399849)
+    [DEBUG closestPointOnPoly] ref=367, poly=111, pos_over_poly=false
+      [Zig tri0] tris=[0, 1, 2, 5]
+        [Zig SKIP] tri=0, j=2, k=0, tris_j=2, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig edge] tri=0, j=0, k=1, tris_j=0, tris_k=1, d=3.761370, t=0.021829
+        [Zig edge] tri=0, j=1, k=2, tris_j=1, tris_k=2, d=0.220364, t=1.000000
+      [Zig tri1] tris=[0, 0, 1, 4]
+        [Zig SKIP] tri=1, j=2, k=0, tris_j=1, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig SKIP] tri=1, j=0, k=1, tris_j=0, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig edge] tri=1, j=1, k=2, tris_j=0, tris_k=1, d=3.761370, t=0.021829
+      [DEBUG closestPointOnDetailEdges] poly=111, dmin=0.220364, tmin=1.000000, result=(5.310684, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=366, poly=110, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=110, dmin=3.207269, tmin=0.000000, result=(5.910687, -2.269517, 1.399849)
+    [DEBUG closestPointOnPoly] ref=403, poly=147, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=147, dmin=0.026066, tmin=0.000000, result=(3.510685, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=400, poly=144, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=144, dmin=0.697319, tmin=1.000000, result=(5.310684, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=461, poly=205, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=205, dmin=0.118305, tmin=1.000000, result=(-0.989315, -2.269517, 25.699848)
+    [DEBUG closestPointOnPoly] ref=459, poly=203, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=203, dmin=0.004611, tmin=0.815318, result=(0.967449, -2.269517, 25.699848)
+    [DEBUG closestPointOnPoly] ref=457, poly=201, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=201, dmin=0.199337, tmin=0.966352, result=(1.400590, -2.269517, 25.659470)
+  Status: void, Path length: 27 polys
+  Waypoints: 14
+    [0] (5.31, -2.27, 3.80)
+    [1] (1.11, -2.27, 4.40)
+    [2] (-1.29, -2.27, 4.70)
+    [3] (-3.09, -2.27, 4.70)
+    [4] (-6.99, -2.27, 3.80)
+    ... (9 more waypoints)
+
+[TEST 16] Finding path from (6.05, -2.37, 3.33) to (-17.52, -2.37, 26.57)
+    [DEBUG closestPointOnPoly] ref=368, poly=112, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=112, dmin=2.150667, tmin=0.000000, result=(5.910687, -2.269517, 1.399849)
+    [DEBUG closestPointOnPoly] ref=367, poly=111, pos_over_poly=false
+      [Zig tri0] tris=[0, 1, 2, 5]
+        [Zig SKIP] tri=0, j=2, k=0, tris_j=2, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig edge] tri=0, j=0, k=1, tris_j=0, tris_k=1, d=3.761370, t=0.021829
+        [Zig edge] tri=0, j=1, k=2, tris_j=1, tris_k=2, d=0.220364, t=1.000000
+      [Zig tri1] tris=[0, 0, 1, 4]
+        [Zig SKIP] tri=1, j=2, k=0, tris_j=1, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig SKIP] tri=1, j=0, k=1, tris_j=0, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig edge] tri=1, j=1, k=2, tris_j=0, tris_k=1, d=3.761370, t=0.021829
+      [DEBUG closestPointOnDetailEdges] poly=111, dmin=0.220364, tmin=1.000000, result=(5.310684, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=366, poly=110, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=110, dmin=3.207269, tmin=0.000000, result=(5.910687, -2.269517, 1.399849)
+    [DEBUG closestPointOnPoly] ref=403, poly=147, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=147, dmin=0.026066, tmin=0.000000, result=(3.510685, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=400, poly=144, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=144, dmin=0.697319, tmin=1.000000, result=(5.310684, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=447, poly=191, pos_over_poly=true, height=-2.114241
+    [DEBUG closestPointOnPoly] ref=450, poly=194, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=194, dmin=9.664369, tmin=0.593039, result=(-20.611404, -2.269517, 26.878967)
+    [DEBUG closestPointOnPoly] ref=444, poly=188, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=188, dmin=3.525170, tmin=0.847024, result=(-15.643423, -2.269517, 26.673780)
+  Status: void, Path length: 22 polys
+  Waypoints: 11
+    [0] (5.31, -2.27, 3.80)
+    [1] (1.11, -2.27, 4.40)
+    [2] (-1.29, -2.27, 4.70)
+    [3] (-3.09, -2.27, 4.70)
+    [4] (-6.99, -2.27, 3.80)
+    ... (6 more waypoints)
+
+[TEST 17] Finding path from (6.05, -2.37, 3.33) to (-22.14, -2.37, 2.44)
+    [DEBUG closestPointOnPoly] ref=368, poly=112, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=112, dmin=2.150667, tmin=0.000000, result=(5.910687, -2.269517, 1.399849)
+    [DEBUG closestPointOnPoly] ref=367, poly=111, pos_over_poly=false
+      [Zig tri0] tris=[0, 1, 2, 5]
+        [Zig SKIP] tri=0, j=2, k=0, tris_j=2, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig edge] tri=0, j=0, k=1, tris_j=0, tris_k=1, d=3.761370, t=0.021829
+        [Zig edge] tri=0, j=1, k=2, tris_j=1, tris_k=2, d=0.220364, t=1.000000
+      [Zig tri1] tris=[0, 0, 1, 4]
+        [Zig SKIP] tri=1, j=2, k=0, tris_j=1, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig SKIP] tri=1, j=0, k=1, tris_j=0, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig edge] tri=1, j=1, k=2, tris_j=0, tris_k=1, d=3.761370, t=0.021829
+      [DEBUG closestPointOnDetailEdges] poly=111, dmin=0.220364, tmin=1.000000, result=(5.310684, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=366, poly=110, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=110, dmin=3.207269, tmin=0.000000, result=(5.910687, -2.269517, 1.399849)
+    [DEBUG closestPointOnPoly] ref=403, poly=147, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=147, dmin=0.026066, tmin=0.000000, result=(3.510685, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=400, poly=144, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=144, dmin=0.697319, tmin=1.000000, result=(5.310684, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=330, poly=74, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=74, dmin=2.120879, tmin=1.000000, result=(-23.789316, -2.269517, 0.799850)
+    [DEBUG closestPointOnPoly] ref=335, poly=79, pos_over_poly=true, height=-2.269517
+  Status: void, Path length: 12 polys
+  Waypoints: 6
+    [0] (5.31, -2.27, 3.80)
+    [1] (1.11, -2.27, 4.40)
+    [2] (-1.29, -2.27, 4.70)
+    [3] (-3.09, -2.27, 4.70)
+    [4] (-6.99, -2.27, 3.80)
+    ... (1 more waypoints)
+
+[TEST 18] Finding path from (6.05, -2.37, 3.33) to (-23.30, -2.37, -17.41)
+    [DEBUG closestPointOnPoly] ref=368, poly=112, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=112, dmin=2.150667, tmin=0.000000, result=(5.910687, -2.269517, 1.399849)
+    [DEBUG closestPointOnPoly] ref=367, poly=111, pos_over_poly=false
+      [Zig tri0] tris=[0, 1, 2, 5]
+        [Zig SKIP] tri=0, j=2, k=0, tris_j=2, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig edge] tri=0, j=0, k=1, tris_j=0, tris_k=1, d=3.761370, t=0.021829
+        [Zig edge] tri=0, j=1, k=2, tris_j=1, tris_k=2, d=0.220364, t=1.000000
+      [Zig tri1] tris=[0, 0, 1, 4]
+        [Zig SKIP] tri=1, j=2, k=0, tris_j=1, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig SKIP] tri=1, j=0, k=1, tris_j=0, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig edge] tri=1, j=1, k=2, tris_j=0, tris_k=1, d=3.761370, t=0.021829
+      [DEBUG closestPointOnDetailEdges] poly=111, dmin=0.220364, tmin=1.000000, result=(5.310684, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=366, poly=110, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=110, dmin=3.207269, tmin=0.000000, result=(5.910687, -2.269517, 1.399849)
+    [DEBUG closestPointOnPoly] ref=403, poly=147, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=147, dmin=0.026066, tmin=0.000000, result=(3.510685, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=400, poly=144, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=144, dmin=0.697319, tmin=1.000000, result=(5.310684, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=302, poly=46, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=46, dmin=5.499704, tmin=1.000000, result=(-25.589317, -2.269517, -16.900150)
+    [DEBUG closestPointOnPoly] ref=303, poly=47, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=47, dmin=1.586786, tmin=1.000000, result=(-24.989317, -2.269517, -17.500150)
+    [DEBUG closestPointOnPoly] ref=301, poly=45, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=45, dmin=7.647572, tmin=0.000000, result=(-25.889317, -2.269517, -15.700151)
+  Status: void, Path length: 16 polys
+  Waypoints: 11
+    [0] (5.31, -2.27, 3.80)
+    [1] (1.11, -2.27, 4.40)
+    [2] (-1.29, -2.27, 4.70)
+    [3] (-3.09, -2.27, 4.70)
+    [4] (-6.99, -2.27, 3.80)
+    ... (6 more waypoints)
+
+[TEST 19] Finding path from (6.05, -2.37, 3.33) to (-1.56, -2.37, -20.45)
+    [DEBUG closestPointOnPoly] ref=368, poly=112, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=112, dmin=2.150667, tmin=0.000000, result=(5.910687, -2.269517, 1.399849)
+    [DEBUG closestPointOnPoly] ref=367, poly=111, pos_over_poly=false
+      [Zig tri0] tris=[0, 1, 2, 5]
+        [Zig SKIP] tri=0, j=2, k=0, tris_j=2, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig edge] tri=0, j=0, k=1, tris_j=0, tris_k=1, d=3.761370, t=0.021829
+        [Zig edge] tri=0, j=1, k=2, tris_j=1, tris_k=2, d=0.220364, t=1.000000
+      [Zig tri1] tris=[0, 0, 1, 4]
+        [Zig SKIP] tri=1, j=2, k=0, tris_j=1, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig SKIP] tri=1, j=0, k=1, tris_j=0, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig edge] tri=1, j=1, k=2, tris_j=0, tris_k=1, d=3.761370, t=0.021829
+      [DEBUG closestPointOnDetailEdges] poly=111, dmin=0.220364, tmin=1.000000, result=(5.310684, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=366, poly=110, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=110, dmin=3.207269, tmin=0.000000, result=(5.910687, -2.269517, 1.399849)
+    [DEBUG closestPointOnPoly] ref=403, poly=147, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=147, dmin=0.026066, tmin=0.000000, result=(3.510685, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=400, poly=144, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=144, dmin=0.697319, tmin=1.000000, result=(5.310684, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=293, poly=37, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=37, dmin=0.877140, tmin=0.579740, result=(-1.306770, -2.269517, -19.552305)
+      [DEBUG closestPointOnDetailEdges] poly=34, dmin=0.000000, tmin=0.385570, result=(-1.563946, -2.269517, -20.453136)
+    [DEBUG closestPointOnPoly] ref=290, poly=34, pos_over_poly=true, height=-2.269517
+  Status: void, Path length: 11 polys
+  Waypoints: 3
+    [0] (5.31, -2.27, 3.80)
+    [1] (4.11, -2.27, -2.20)
+    [2] (-1.56, -2.27, -20.45)
+
+[TEST 20] Finding path from (6.05, -2.37, 3.33) to (16.91, -2.37, -21.81)
+    [DEBUG closestPointOnPoly] ref=368, poly=112, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=112, dmin=2.150667, tmin=0.000000, result=(5.910687, -2.269517, 1.399849)
+    [DEBUG closestPointOnPoly] ref=367, poly=111, pos_over_poly=false
+      [Zig tri0] tris=[0, 1, 2, 5]
+        [Zig SKIP] tri=0, j=2, k=0, tris_j=2, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig edge] tri=0, j=0, k=1, tris_j=0, tris_k=1, d=3.761370, t=0.021829
+        [Zig edge] tri=0, j=1, k=2, tris_j=1, tris_k=2, d=0.220364, t=1.000000
+      [Zig tri1] tris=[0, 0, 1, 4]
+        [Zig SKIP] tri=1, j=2, k=0, tris_j=1, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig SKIP] tri=1, j=0, k=1, tris_j=0, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig edge] tri=1, j=1, k=2, tris_j=0, tris_k=1, d=3.761370, t=0.021829
+      [DEBUG closestPointOnDetailEdges] poly=111, dmin=0.220364, tmin=1.000000, result=(5.310684, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=366, poly=110, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=110, dmin=3.207269, tmin=0.000000, result=(5.910687, -2.269517, 1.399849)
+    [DEBUG closestPointOnPoly] ref=403, poly=147, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=147, dmin=0.026066, tmin=0.000000, result=(3.510685, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=400, poly=144, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=144, dmin=0.697319, tmin=1.000000, result=(5.310684, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=289, poly=33, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=33, dmin=4.441871, tmin=1.000000, result=(14.610683, -2.269517, -18.700151)
+    [DEBUG closestPointOnPoly] ref=285, poly=29, pos_over_poly=true, height=-2.269517
+    [DEBUG closestPointOnPoly] ref=284, poly=28, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=28, dmin=4.736541, tmin=0.606311, result=(19.046898, -2.269517, -22.200975)
+    [DEBUG closestPointOnPoly] ref=283, poly=27, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=27, dmin=7.710428, tmin=0.000000, result=(17.010685, -2.269517, -19.000150)
+  Status: void, Path length: 10 polys
+  Waypoints: 4
+    [0] (5.31, -2.27, 3.80)
+    [1] (4.41, -2.27, -5.50)
+    [2] (5.01, -2.27, -6.70)
+    [3] (10.71, -2.27, -11.20)
+
+[TEST 21] Finding path from (6.05, -2.37, 3.33) to (19.29, -2.37, -6.95)
+    [DEBUG closestPointOnPoly] ref=368, poly=112, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=112, dmin=2.150667, tmin=0.000000, result=(5.910687, -2.269517, 1.399849)
+    [DEBUG closestPointOnPoly] ref=367, poly=111, pos_over_poly=false
+      [Zig tri0] tris=[0, 1, 2, 5]
+        [Zig SKIP] tri=0, j=2, k=0, tris_j=2, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig edge] tri=0, j=0, k=1, tris_j=0, tris_k=1, d=3.761370, t=0.021829
+        [Zig edge] tri=0, j=1, k=2, tris_j=1, tris_k=2, d=0.220364, t=1.000000
+      [Zig tri1] tris=[0, 0, 1, 4]
+        [Zig SKIP] tri=1, j=2, k=0, tris_j=1, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig SKIP] tri=1, j=0, k=1, tris_j=0, tris_k=0, edge_flags=0, is_boundary=false, only_boundary=true
+        [Zig edge] tri=1, j=1, k=2, tris_j=0, tris_k=1, d=3.761370, t=0.021829
+      [DEBUG closestPointOnDetailEdges] poly=111, dmin=0.220364, tmin=1.000000, result=(5.310684, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=366, poly=110, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=110, dmin=3.207269, tmin=0.000000, result=(5.910687, -2.269517, 1.399849)
+    [DEBUG closestPointOnPoly] ref=403, poly=147, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=147, dmin=0.026066, tmin=0.000000, result=(3.510685, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=400, poly=144, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=144, dmin=0.697319, tmin=1.000000, result=(5.310684, -2.269517, 3.799851)
+    [DEBUG closestPointOnPoly] ref=322, poly=66, pos_over_poly=true, height=-2.269517
+    [DEBUG closestPointOnPoly] ref=323, poly=67, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=67, dmin=0.958002, tmin=0.534462, result=(18.852040, -2.269517, -6.079474)
+    [DEBUG closestPointOnPoly] ref=321, poly=65, pos_over_poly=false
+      [DEBUG closestPointOnDetailEdges] poly=65, dmin=0.240519, tmin=0.000000, result=(19.410686, -2.269517, -5.800152)
+  Status: void, Path length: 12 polys
+  Waypoints: 6
+    [0] (5.31, -2.27, 3.80)
+    [1] (4.41, -2.27, -5.50)
+    [2] (5.01, -2.27, -6.70)
+    [3] (7.71, -2.27, -7.90)
+    [4] (10.41, -2.27, -7.90)
+    ... (1 more waypoints)
+
+=== Completed 21 pathfinding tests ===
+Build Summary: 13/13 steps succeeded; 163/163 tests passed
+test success
++- run test 110 passed 4ms MaxRSS:3M
+|  +- zig test Debug native cached 41ms MaxRSS:17M
++- run test 8 passed 17ms MaxRSS:4M
+|  +- zig test Debug native cached 41ms MaxRSS:17M
++- run test 12 passed 17ms MaxRSS:3M
+|  +- zig test Debug native cached 41ms MaxRSS:17M
++- run test 13 passed 5ms MaxRSS:3M
+|  +- zig test Debug native cached 41ms MaxRSS:17M
++- run test 2 passed 17ms MaxRSS:4M
+|  +- zig test Debug native cached 41ms MaxRSS:17M
++- run test 18 passed 967ms MaxRSS:12M
+   +- zig test Debug native cached 40ms MaxRSS:17M

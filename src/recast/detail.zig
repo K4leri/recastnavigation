@@ -608,39 +608,81 @@ fn triangulateHull(
     verts: [*]const f32,
     nhull: i32,
     hull: []const i32,
-    _: i32,
+    nin: i32,
     tris: *std.ArrayList(i32),
 ) !void {
+    // Helper functions for circular indexing
+    const prev = struct {
+        fn f(i: i32, n: i32) i32 {
+            return if (i - 1 >= 0) i - 1 else n - 1;
+        }
+    }.f;
+
+    const next = struct {
+        fn f(i: i32, n: i32) i32 {
+            return if (i + 1 < n) i + 1 else 0;
+        }
+    }.f;
+
+    // Start from an ear with shortest perimeter.
+    // This tends to favor well formed triangles as starting point.
+    var start: i32 = 0;
     var left: i32 = 1;
     var right: i32 = nhull - 1;
+    var dmin: f32 = std.math.floatMax(f32);
 
-    while (left < right) {
-        const nleft = @mod(left + 1, nhull);
-        const nright = if (right - 1 < 0) nhull - 1 else right - 1;
+    var i: i32 = 0;
+    while (i < nhull) : (i += 1) {
+        // Ears are triangles with original vertices as middle vertex while others are actually line segments on edges
+        if (hull[@intCast(i)] >= nin) continue;
 
-        const cvleft_idx = @as(usize, @intCast(hull[@as(usize, @intCast(left))] * 3));
-        const nvleft_idx = @as(usize, @intCast(hull[@as(usize, @intCast(nleft))] * 3));
-        const cvright_idx = @as(usize, @intCast(hull[@as(usize, @intCast(right))] * 3));
-        const nvright_idx = @as(usize, @intCast(hull[@as(usize, @intCast(nright))] * 3));
+        const pi = prev(i, nhull);
+        const ni = next(i, nhull);
+        const pv = verts + @as(usize, @intCast(hull[@intCast(pi)] * 3));
+        const cv = verts + @as(usize, @intCast(hull[@intCast(i)] * 3));
+        const nv = verts + @as(usize, @intCast(hull[@intCast(ni)] * 3));
+        const d = vdist2(pv, cv) + vdist2(cv, nv) + vdist2(nv, pv);
 
-        const cvleft = verts + cvleft_idx;
-        const nvleft = verts + nvleft_idx;
-        const cvright = verts + cvright_idx;
-        const nvright = verts + nvright_idx;
+        if (d < dmin) {
+            start = i;
+            left = ni;
+            right = pi;
+            dmin = d;
+        }
+    }
+
+    // Add first triangle
+    try tris.append(hull[@intCast(start)]);
+    try tris.append(hull[@intCast(left)]);
+    try tris.append(hull[@intCast(right)]);
+    try tris.append(0);
+
+    // Triangulate the polygon by moving left or right,
+    // depending on which triangle has shorter perimeter.
+    // This heuristic was chosen empirically, since it seems
+    // to handle tessellated straight edges well.
+    while (next(left, nhull) != right) {
+        const nleft = next(left, nhull);
+        const nright = prev(right, nhull);
+
+        const cvleft = verts + @as(usize, @intCast(hull[@intCast(left)] * 3));
+        const nvleft = verts + @as(usize, @intCast(hull[@intCast(nleft)] * 3));
+        const cvright = verts + @as(usize, @intCast(hull[@intCast(right)] * 3));
+        const nvright = verts + @as(usize, @intCast(hull[@intCast(nright)] * 3));
 
         const dleft = vdist2(cvleft, nvleft) + vdist2(nvleft, cvright);
         const dright = vdist2(cvright, nvright) + vdist2(cvleft, nvright);
 
         if (dleft < dright) {
-            try tris.append(hull[@as(usize, @intCast(left))]);
-            try tris.append(hull[@as(usize, @intCast(nleft))]);
-            try tris.append(hull[@as(usize, @intCast(right))]);
+            try tris.append(hull[@intCast(left)]);
+            try tris.append(hull[@intCast(nleft)]);
+            try tris.append(hull[@intCast(right)]);
             try tris.append(0);
             left = nleft;
         } else {
-            try tris.append(hull[@as(usize, @intCast(left))]);
-            try tris.append(hull[@as(usize, @intCast(nright))]);
-            try tris.append(hull[@as(usize, @intCast(right))]);
+            try tris.append(hull[@intCast(left)]);
+            try tris.append(hull[@intCast(nright)]);
+            try tris.append(hull[@intCast(right)]);
             try tris.append(0);
             right = nright;
         }

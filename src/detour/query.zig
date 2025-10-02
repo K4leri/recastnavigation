@@ -631,50 +631,139 @@ pub const NavMeshQuery = struct {
                 for (0..nneis) |j| {
                     // Query polygons in this tile
                     const tile = @as(*const MeshTile, @ptrCast(temp_tiles[j]));
-                    const base = nav.getPolyRefBase(tile);
-
-                    for (0..@as(usize, @intCast(tile.header.?.poly_count))) |i| {
-                        const poly = &tile.polys[i];
-
-                        // Check if poly passes filter
-                        const ref = base | @as(PolyRef, @intCast(i));
-                        if (!filter.passFilter(ref, tile, poly)) continue;
-
-                        // Calculate poly bounding box
-                        var poly_bmin = [3]f32{ std.math.floatMax(f32), std.math.floatMax(f32), std.math.floatMax(f32) };
-                        var poly_bmax = [3]f32{ -std.math.floatMax(f32), -std.math.floatMax(f32), -std.math.floatMax(f32) };
-
-                        for (0..poly.vert_count) |v| {
-                            const idx = poly.verts[v] * 3;
-                            poly_bmin[0] = @min(poly_bmin[0], tile.verts[idx + 0]);
-                            poly_bmin[1] = @min(poly_bmin[1], tile.verts[idx + 1]);
-                            poly_bmin[2] = @min(poly_bmin[2], tile.verts[idx + 2]);
-                            poly_bmax[0] = @max(poly_bmax[0], tile.verts[idx + 0]);
-                            poly_bmax[1] = @max(poly_bmax[1], tile.verts[idx + 1]);
-                            poly_bmax[2] = @max(poly_bmax[2], tile.verts[idx + 2]);
-                        }
-
-                        // Check if poly bbox overlaps query bbox
-                        var overlap = true;
-                        for (0..3) |axis| {
-                            if (poly_bmin[axis] > bmax[axis] or poly_bmax[axis] < bmin[axis]) {
-                                overlap = false;
-                                break;
-                            }
-                        }
-
-                        if (overlap) {
-                            if (n < polys.len) {
-                                polys[n] = ref;
-                                n += 1;
-                            }
-                        }
-                    }
+                    n = try self.queryPolygonsInTile(tile, &bmin, &bmax, filter, polys, n);
                 }
             }
         }
 
         poly_count.* = n;
+    }
+
+    /// Query polygons within a single tile using BVH tree or linear search
+    fn queryPolygonsInTile(
+        self: *const Self,
+        tile: *const MeshTile,
+        qmin: *const [3]f32,
+        qmax: *const [3]f32,
+        filter: *const QueryFilter,
+        polys: []PolyRef,
+        start_n: usize,
+    ) !usize {
+        const nav = self.nav orelse return error.NoNavMesh;
+        var n = start_n;
+
+        if (tile.bv_tree.len > 0) {
+            // Use BVH tree for efficient spatial query
+            const header = tile.header.?;
+            const base = nav.getPolyRefBase(tile);
+            const qfac = header.bv_quant_factor;
+
+            // Calculate quantized box
+            var qbmin: [3]u16 = undefined;
+            var qbmax: [3]u16 = undefined;
+
+            // Clamp query box to tile bounds
+            const minx = std.math.clamp(qmin[0], header.bmin.x, header.bmax.x) - header.bmin.x;
+            const miny = std.math.clamp(qmin[1], header.bmin.y, header.bmax.y) - header.bmin.y;
+            const minz = std.math.clamp(qmin[2], header.bmin.z, header.bmax.z) - header.bmin.z;
+            const maxx = std.math.clamp(qmax[0], header.bmin.x, header.bmax.x) - header.bmin.x;
+            const maxy = std.math.clamp(qmax[1], header.bmin.y, header.bmax.y) - header.bmin.y;
+            const maxz = std.math.clamp(qmax[2], header.bmin.z, header.bmax.z) - header.bmin.z;
+
+            // Quantize
+            qbmin[0] = @as(u16, @intFromFloat(qfac * minx)) & 0xfffe;
+            qbmin[1] = @as(u16, @intFromFloat(qfac * miny)) & 0xfffe;
+            qbmin[2] = @as(u16, @intFromFloat(qfac * minz)) & 0xfffe;
+            qbmax[0] = (@as(u16, @intFromFloat(qfac * maxx)) + 1) | 1;
+            qbmax[1] = (@as(u16, @intFromFloat(qfac * maxy)) + 1) | 1;
+            qbmax[2] = (@as(u16, @intFromFloat(qfac * maxz)) + 1) | 1;
+
+            // Traverse BVH tree
+            var node_idx: usize = 0;
+            const end_idx = tile.bv_tree.len;
+
+            while (node_idx < end_idx) {
+                const node = &tile.bv_tree[node_idx];
+                const overlap = overlapQuantBounds(&qbmin, &qbmax, &node.bmin, &node.bmax);
+                const is_leaf_node = node.i >= 0;
+
+                if (is_leaf_node and overlap) {
+                    const poly_idx = @as(usize, @intCast(node.i));
+                    const ref = base | @as(PolyRef, @intCast(poly_idx));
+
+                    if (filter.passFilter(ref, tile, &tile.polys[poly_idx])) {
+                        if (n < polys.len) {
+                            polys[n] = ref;
+                            n += 1;
+                        }
+                    }
+                }
+
+                if (overlap or is_leaf_node) {
+                    node_idx += 1;
+                } else {
+                    const escape_index = @as(usize, @intCast(-node.i));
+                    node_idx += escape_index;
+                }
+            }
+        } else {
+            // Fallback to linear search
+            const base = nav.getPolyRefBase(tile);
+
+            for (0..@as(usize, @intCast(tile.header.?.poly_count))) |i| {
+                const poly = &tile.polys[i];
+
+                // Check if poly passes filter
+                const ref = base | @as(PolyRef, @intCast(i));
+                if (!filter.passFilter(ref, tile, poly)) continue;
+
+                // Calculate poly bounding box
+                var poly_bmin = [3]f32{ std.math.floatMax(f32), std.math.floatMax(f32), std.math.floatMax(f32) };
+                var poly_bmax = [3]f32{ -std.math.floatMax(f32), -std.math.floatMax(f32), -std.math.floatMax(f32) };
+
+                for (0..poly.vert_count) |v| {
+                    const idx = poly.verts[v] * 3;
+                    poly_bmin[0] = @min(poly_bmin[0], tile.verts[idx + 0]);
+                    poly_bmin[1] = @min(poly_bmin[1], tile.verts[idx + 1]);
+                    poly_bmin[2] = @min(poly_bmin[2], tile.verts[idx + 2]);
+                    poly_bmax[0] = @max(poly_bmax[0], tile.verts[idx + 0]);
+                    poly_bmax[1] = @max(poly_bmax[1], tile.verts[idx + 1]);
+                    poly_bmax[2] = @max(poly_bmax[2], tile.verts[idx + 2]);
+                }
+
+                // Check if poly bbox overlaps query bbox
+                var overlap = true;
+                for (0..3) |axis| {
+                    if (poly_bmin[axis] > qmax[axis] or poly_bmax[axis] < qmin[axis]) {
+                        overlap = false;
+                        break;
+                    }
+                }
+
+                if (overlap) {
+                    if (n < polys.len) {
+                        polys[n] = ref;
+                        n += 1;
+                    }
+                }
+            }
+        }
+
+        return n;
+    }
+
+    /// Check if two quantized bounding boxes overlap
+    inline fn overlapQuantBounds(
+        amin: *const [3]u16,
+        amax: *const [3]u16,
+        bmin: *const [3]u16,
+        bmax: *const [3]u16,
+    ) bool {
+        var overlap = true;
+        overlap = if (amin[0] > bmax[0] or amax[0] < bmin[0]) false else overlap;
+        overlap = if (amin[1] > bmax[1] or amax[1] < bmin[1]) false else overlap;
+        overlap = if (amin[2] > bmax[2] or amax[2] < bmin[2]) false else overlap;
+        return overlap;
     }
 
     /// A* pathfinding: find polygon path from start to end
@@ -988,6 +1077,7 @@ pub const NavMeshQuery = struct {
                 d = diff[0] * diff[0] + diff[1] * diff[1] + diff[2] * diff[2];
             }
 
+            // Changed from < to <= for consistency with C++ (keeps first found poly at equal distance)
             if (d < nearest_dist_sqr) {
                 temp_nearest_pt = closest_pt;
                 nearest_dist_sqr = d;

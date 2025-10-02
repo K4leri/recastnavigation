@@ -8,4 +8,5 @@ comptime {
     _ = @import("tilecache_pipeline_test.zig");
     _ = @import("real_mesh_test.zig");
     _ = @import("dungeon_undulating_test.zig");
+    _ = @import("pathfinding_test.zig");
 }
