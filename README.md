@@ -71,13 +71,14 @@ zig build test-integration
 ```
 
 **Current Test Status:**
-- ✅ **160/160 tests passing**
+- ✅ **191/191 tests passing** (169 unit + 22 integration)
 - ✅ **100% accuracy** with C++ reference implementation
 - ✅ No memory leaks detected
 - ✅ Recast pipeline fully tested (Heightfield → PolyMesh → PolyMeshDetail)
-- ✅ Detour pipeline fully tested (NavMesh creation, pathfinding)
+- ✅ Detour pipeline fully tested (NavMesh creation, pathfinding, raycast)
 - ✅ Crowd simulation tested (agent movement and steering)
 - ✅ TileCache fully tested (all obstacle types, NavMesh verification)
+- ✅ Raycast integration tests (4/4 identical to C++)
 
 **🎉 Achievement: Perfect Navigation Mesh Generation**
 
@@ -195,17 +196,21 @@ const unsigned char RC_WALKABLE_AREA = 63;
 - [x] Detail mesh building
 - [x] **100% accuracy verified** with C++ reference implementation
 
-### Phase 3: Detour Queries
-- [ ] NavMesh queries
-- [ ] Pathfinding (A*)
-- [ ] Ray casting
-- [ ] Distance queries
+### Phase 3: Detour Queries ✅
+- [x] NavMesh queries
+- [x] Pathfinding (A*)
+- [x] Ray casting
+- [x] Distance queries
+- [x] Nearest polygon search
+- [x] **100% accuracy verified** with C++ reference implementation
 
-### Phase 4: Advanced Features
-- [ ] Crowd simulation (DetourCrowd)
-- [ ] Dynamic obstacles (DetourTileCache)
-- [ ] Off-mesh connections
-- [ ] Area costs
+### Phase 4: Advanced Features ✅
+- [x] Crowd simulation (DetourCrowd)
+- [x] Dynamic obstacles (DetourTileCache)
+- [x] Off-mesh connections
+- [x] Area costs
+- [x] Local steering
+- [x] Obstacle avoidance
 
 ### Phase 5: Optimization & Polish
 - [ ] SIMD optimizations
@@ -222,17 +227,55 @@ const unsigned char RC_WALKABLE_AREA = 63;
 
 ## Known Issues
 
-None currently. All 160 integration tests pass without memory leaks.
+None currently. All 191 tests pass without memory leaks.
 
 **Recent Achievements:**
 - ✅ Fixed watershed partitioning to achieve 100% accuracy (see [watershed-100-percent-fix docs](docs/watershed-100-percent-fix/INDEX.md))
+- ✅ Fixed raycast bugs: area initialization, erodeWalkableArea, perp2D formula (see [raycast-fix docs](docs/bug-fixes/raycast-fix/INDEX.md))
 - ✅ Implemented multi-stack system for deterministic region building
 - ✅ Complete `mergeAndFilterRegions` implementation
 - ✅ Verified byte-for-byte identical output with C++ RecastNavigation
+- ✅ All raycast tests pass with identical results to C++
+
+## Documentation
+
+📚 **[Full Documentation](docs/README.md)**
+
+- **Getting Started**
+  - [Installation & Setup](docs/01-getting-started/installation.md)
+  - [Quick Start Guide](docs/01-getting-started/quick-start.md)
+  - [Building & Testing](docs/01-getting-started/building.md)
+
+- **Architecture**
+  - [System Overview](docs/02-architecture/overview.md)
+  - [Recast Pipeline](docs/02-architecture/recast-pipeline.md)
+  - [Detour Pipeline](docs/02-architecture/detour-pipeline.md)
+
+- **API Reference**
+  - [Recast API](docs/03-api-reference/recast/)
+  - [Detour API](docs/03-api-reference/detour/)
+  - [DetourCrowd API](docs/03-api-reference/detour-crowd/)
+  - [TileCache API](docs/03-api-reference/tile-cache/)
+
+- **Guides & Examples**
+  - [Creating NavMesh](docs/04-guides/creating-navmesh.md)
+  - [Pathfinding](docs/04-guides/pathfinding.md)
+  - [Raycast Queries](docs/04-guides/raycast.md)
+  - [Crowd Simulation](docs/04-guides/crowd-simulation.md)
+
+- **Bug Fixes & History**
+  - [Watershed Fix (100% accuracy)](docs/watershed-100-percent-fix/INDEX.md)
+  - [Raycast Fix (3 critical bugs)](docs/bug-fixes/raycast-fix/INDEX.md)
+
+- **Testing**
+  - [Test Coverage Analysis](TEST_COVERAGE_ANALYSIS.md)
+  - [Running Tests](docs/06-testing/running-tests.md)
 
 ## Contributing
 
 This is a work in progress. Contributions are welcome!
+
+See [Contributing Guide](docs/10-contributing/development.md) for development setup and guidelines.
 
 ## License
 

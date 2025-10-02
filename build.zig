@@ -154,4 +154,57 @@ pub fn build(b: *std.Build) void {
     const install_raycast_test = b.addInstallArtifact(raycast_test_exe, .{});
     const raycast_test_step = b.step("raycast-test", "Build raycast test executable");
     raycast_test_step.dependOn(&install_raycast_test.step);
+
+    // Performance Benchmarks
+    const bench_recast = b.addExecutable(.{
+        .name = "recast_bench",
+        .root_source_file = b.path("bench/recast_bench.zig"),
+        .target = target,
+        .optimize = .ReleaseFast,
+    });
+    bench_recast.root_module.addImport("zig-recast", recast_nav);
+
+    const bench_detour = b.addExecutable(.{
+        .name = "detour_bench",
+        .root_source_file = b.path("bench/detour_bench.zig"),
+        .target = target,
+        .optimize = .ReleaseFast,
+    });
+    bench_detour.root_module.addImport("zig-recast", recast_nav);
+
+    const bench_crowd = b.addExecutable(.{
+        .name = "crowd_bench",
+        .root_source_file = b.path("bench/crowd_bench.zig"),
+        .target = target,
+        .optimize = .ReleaseFast,
+    });
+    bench_crowd.root_module.addImport("zig-recast", recast_nav);
+
+    const install_bench_recast = b.addInstallArtifact(bench_recast, .{});
+    const install_bench_detour = b.addInstallArtifact(bench_detour, .{});
+    const install_bench_crowd = b.addInstallArtifact(bench_crowd, .{});
+
+    const bench_step = b.step("bench", "Build all benchmarks");
+    bench_step.dependOn(&install_bench_recast.step);
+    bench_step.dependOn(&install_bench_detour.step);
+    bench_step.dependOn(&install_bench_crowd.step);
+
+    // Run benchmark steps
+    const run_bench_recast = b.addRunArtifact(bench_recast);
+    const run_bench_detour = b.addRunArtifact(bench_detour);
+    const run_bench_crowd = b.addRunArtifact(bench_crowd);
+
+    const run_bench_recast_step = b.step("bench-recast", "Run Recast performance benchmarks");
+    run_bench_recast_step.dependOn(&run_bench_recast.step);
+
+    const run_bench_detour_step = b.step("bench-detour", "Run Detour performance benchmarks");
+    run_bench_detour_step.dependOn(&run_bench_detour.step);
+
+    const run_bench_crowd_step = b.step("bench-crowd", "Run Crowd performance benchmarks");
+    run_bench_crowd_step.dependOn(&run_bench_crowd.step);
+
+    const run_all_bench_step = b.step("bench-run", "Run all performance benchmarks");
+    run_all_bench_step.dependOn(&run_bench_recast.step);
+    run_all_bench_step.dependOn(&run_bench_detour.step);
+    run_all_bench_step.dependOn(&run_bench_crowd.step);
 }
