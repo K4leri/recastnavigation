@@ -691,7 +691,9 @@ pub const NavMeshQuery = struct {
                     const poly_idx = @as(usize, @intCast(node.i));
                     const ref = base | @as(PolyRef, @intCast(poly_idx));
 
-                    if (filter.passFilter(ref, tile, &tile.polys[poly_idx])) {
+                    const passes = filter.passFilter(ref, tile, &tile.polys[poly_idx]);
+
+                    if (passes) {
                         if (n < polys.len) {
                             polys[n] = ref;
                             n += 1;
@@ -1550,11 +1552,12 @@ pub const NavMeshQuery = struct {
         hit.path_cost = 0;
 
         // Validate input
-        if (!self.isValidPolyRef(start_ref, filter) or
-            !math.Vec3.fromArray(start_pos).isFinite() or
-            !math.Vec3.fromArray(end_pos).isFinite() or
-            (prev_ref != 0 and !self.isValidPolyRef(prev_ref, filter)))
-        {
+        const valid_start = self.isValidPolyRef(start_ref, filter);
+        const finite_start = math.Vec3.fromArray(start_pos).isFinite();
+        const finite_end = math.Vec3.fromArray(end_pos).isFinite();
+        const valid_prev = (prev_ref == 0 or self.isValidPolyRef(prev_ref, filter));
+
+        if (!valid_start or !finite_start or !finite_end or !valid_prev) {
             return common.Status{ .failure = true, .invalid_param = true };
         }
 
@@ -1606,7 +1609,9 @@ pub const NavMeshQuery = struct {
             var seg_min: i32 = undefined;
             var seg_max: i32 = undefined;
 
-            if (!math.intersectSegmentPoly2D(start_pos, end_pos, verts[0 .. nv * 3], nv, &tmin, &tmax, &seg_min, &seg_max)) {
+            const intersect = math.intersectSegmentPoly2D(start_pos, end_pos, verts[0 .. nv * 3], nv, &tmin, &tmax, &seg_min, &seg_max);
+
+            if (!intersect) {
                 // Could not hit the polygon, keep the old t and report hit
                 hit.path_count = n;
                 return status;
