@@ -156,8 +156,8 @@ pub const Vec3 = struct {
     /// Check if all components are finite
     pub inline fn isFinite(self: Vec3) bool {
         return std.math.isFinite(self.x) and
-               std.math.isFinite(self.y) and
-               std.math.isFinite(self.z);
+            std.math.isFinite(self.y) and
+            std.math.isFinite(self.z);
     }
 
     /// Check if 2D components are finite
@@ -677,8 +677,9 @@ pub fn intersectSegmentPoly2D(
         diff[1] = p0[1] - vj[1];
         diff[2] = p0[2] - vj[2];
 
-        const n = edge[0] * diff[2] - edge[2] * diff[0]; // perp2D(edge, diff)
-        const d = dir[0] * edge[2] - dir[2] * edge[0]; // perp2D(dir, edge)
+        // perp2D(u, v) = u[2]*v[0] - u[0]*v[2]
+        const n = edge[2] * diff[0] - edge[0] * diff[2]; // perp2D(edge, diff)
+        const d = dir[2] * edge[0] - dir[0] * edge[2]; // perp2D(dir, edge)
 
         if (@abs(d) < EPS) {
             // Segment is nearly parallel to this edge
@@ -1014,7 +1015,10 @@ pub fn overlapPolyPoly2D(polya: []const f32, npolya: usize, polyb: []const f32, 
     // Test edges of polygon A as separating axes
     var j: usize = npolya - 1;
     var i: usize = 0;
-    while (i < npolya) : ({j = i; i += 1;}) {
+    while (i < npolya) : ({
+        j = i;
+        i += 1;
+    }) {
         const va = polya[j * 3 .. j * 3 + 3];
         const vb = polya[i * 3 .. i * 3 + 3];
         const n = [3]f32{ vb[2] - va[2], 0, -(vb[0] - va[0]) };
@@ -1036,7 +1040,10 @@ pub fn overlapPolyPoly2D(polya: []const f32, npolya: usize, polyb: []const f32, 
     // Test edges of polygon B as separating axes
     j = npolyb - 1;
     i = 0;
-    while (i < npolyb) : ({j = i; i += 1;}) {
+    while (i < npolyb) : ({
+        j = i;
+        i += 1;
+    }) {
         const va = polyb[j * 3 .. j * 3 + 3];
         const vb = polyb[i * 3 .. i * 3 + 3];
         const n = [3]f32{ vb[2] - va[2], 0, -(vb[0] - va[0]) };

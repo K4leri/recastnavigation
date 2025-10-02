@@ -221,8 +221,12 @@ fn calculateDistanceField(
 
     // Find max distance
     max_dist.* = 0;
-    for (src) |d| {
-        max_dist.* = @max(max_dist.*, d);
+    var max_span_idx: usize = 0;
+    for (src, 0..) |d, idx| {
+        if (d > max_dist.*) {
+            max_dist.* = d;
+            max_span_idx = idx;
+        }
     }
 }
 

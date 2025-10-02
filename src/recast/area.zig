@@ -34,7 +34,10 @@ fn pointInPoly(num_verts: usize, verts: []const f32, point: Vec3) bool {
     var i: usize = 0;
     var j: usize = num_verts - 1;
 
-    while (i < num_verts) : ({i += 1; j = i - 1;}) {
+    while (i < num_verts) : ({
+        i += 1;
+        j = i - 1;
+    }) {
         const vi_idx = i * 3;
         const vj_idx = j * 3;
 
@@ -212,7 +215,7 @@ pub fn erodeWalkableArea(
             while (span_idx < max_span_idx) : (span_idx += 1) {
                 const span = chf.spans[span_idx];
 
-                // (1, 0)
+                // (1, 0) - East
                 if (span.getCon(2) != NOT_CONNECTED) {
                     const ax = x + heightfield_mod.getDirOffsetX(2);
                     const ay = z + heightfield_mod.getDirOffsetY(2);
@@ -235,11 +238,12 @@ pub fn erodeWalkableArea(
                     }
                 }
 
-                // (0, 1)
+                // (0, 1) - North
                 if (span.getCon(1) != NOT_CONNECTED) {
                     const ax = x + heightfield_mod.getDirOffsetX(1);
                     const ay = z + heightfield_mod.getDirOffsetY(1);
-                    const ai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax + ay * x_size))].index + span.getCon(1)));
+                    const cell_idx_north = @as(usize, @intCast(ax + ay * x_size));
+                    const ai = @as(usize, @intCast(chf.cells[cell_idx_north].index + span.getCon(1)));
                     const a_span = chf.spans[ai];
                     var new_dist = @min(@as(u32, dist[ai]) + 2, 255);
                     if (new_dist < dist[span_idx]) {
@@ -264,6 +268,7 @@ pub fn erodeWalkableArea(
     // Mark areas with insufficient distance as NULL_AREA
     const min_boundary_dist: u8 = @intCast(erosion_radius * 2);
     for (0..@intCast(chf.span_count)) |i| {
+        // Erode spans that are too close to boundaries
         if (dist[i] < min_boundary_dist) {
             chf.areas[i] = NULL_AREA;
         }
@@ -706,10 +711,10 @@ test "insertSort" {
 test "pointInPoly - point inside" {
     // Square polygon
     const verts = [_]f32{
-        0, 0, 0,
+        0,  0, 0,
         10, 0, 0,
         10, 0, 10,
-        0, 0, 10,
+        0,  0, 10,
     };
 
     const point = Vec3.init(5, 0, 5);
@@ -718,10 +723,10 @@ test "pointInPoly - point inside" {
 
 test "pointInPoly - point outside" {
     const verts = [_]f32{
-        0, 0, 0,
+        0,  0, 0,
         10, 0, 0,
         10, 0, 10,
-        0, 0, 10,
+        0,  0, 10,
     };
 
     const point = Vec3.init(15, 0, 15);

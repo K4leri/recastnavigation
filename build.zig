@@ -140,4 +140,18 @@ pub fn build(b: *std.Build) void {
     example_step.dependOn(&install_example_pathfinding.step);
     example_step.dependOn(&install_example_crowd.step);
     example_step.dependOn(&install_example_dynamic_obstacles.step);
+
+    // Raycast test executable
+    const raycast_test_exe = b.addExecutable(.{
+        .name = "raycast_test",
+        .root_source_file = b.path("test/integration/raycast_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    raycast_test_exe.root_module.addImport("zig-recast", recast_nav);
+    raycast_test_exe.root_module.addImport("obj_loader", obj_loader);
+
+    const install_raycast_test = b.addInstallArtifact(raycast_test_exe, .{});
+    const raycast_test_step = b.step("raycast-test", "Build raycast test executable");
+    raycast_test_step.dependOn(&install_raycast_test.step);
 }

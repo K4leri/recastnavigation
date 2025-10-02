@@ -1024,7 +1024,7 @@ fn mergeRegionHoles(
             // Находим диагональ, которая не пересекает контур
             index = -1;
             for (0..ndiags) |j| {
-                const pt = outline.verts[@as(usize, @intCast(diags[j].vert)) * 4 ..@as(usize, @intCast(diags[j].vert)) * 4 + 4];
+                const pt = outline.verts[@as(usize, @intCast(diags[j].vert)) * 4 .. @as(usize, @intCast(diags[j].vert)) * 4 + 4];
                 const vert_i32: i32 = @intCast(diags[j].vert);
                 const n_outline: i32 = @intCast(outline.nverts);
                 var intersects = intersectSegContour(pt, corner, vert_i32, n_outline, outline.verts);
