@@ -107,6 +107,11 @@ fn dividePoly(
 ) struct { count1: usize, count2: usize } {
     std.debug.assert(in_verts_count <= 12);
 
+    // Handle empty polygon case to avoid integer underflow
+    if (in_verts_count == 0) {
+        return .{ .count1 = 0, .count2 = 0 };
+    }
+
     // How far positive or negative away from the separating axis is each vertex
     var in_vert_axis_delta: [12]f32 = undefined;
     for (0..in_verts_count) |i| {

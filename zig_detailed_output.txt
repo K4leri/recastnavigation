@@ -1,9 +1,5 @@
-test
+test-integration
 +- run test stderr
-[PROGRESS] buildRegions: Watershed created 1 regions (before merging)
-[PROGRESS] mergeAndFilterRegions: Region span counts:
-[PROGRESS]   Region 1: 256 spans, 1 connections
-[PROGRESS] mergeAndFilterRegions: Merged and filtered to 2 regions
 [PROGRESS] buildRegions: Created 1 regions
 [PROGRESS] buildContours: Finding boundaries...
 [PROGRESS] buildContours: Walking contours...
@@ -11,10 +7,6 @@ test
 [PROGRESS] buildContours: Created 1 contours
 [PROGRESS] buildPolyMesh: max_vertices=4, max_tris=2
 [PROGRESS] buildPolyMesh: Created mesh with 4 vertices and 1 polygons
-[PROGRESS] buildRegions: Watershed created 1 regions (before merging)
-[PROGRESS] mergeAndFilterRegions: Region span counts:
-[PROGRESS]   Region 1: 256 spans, 1 connections
-[PROGRESS] mergeAndFilterRegions: Merged and filtered to 2 regions
 [PROGRESS] buildRegions: Created 1 regions
 [PROGRESS] buildContours: Finding boundaries...
 [PROGRESS] buildContours: Walking contours...
@@ -22,10 +14,6 @@ test
 [PROGRESS] buildContours: Created 1 contours
 [PROGRESS] buildPolyMesh: max_vertices=4, max_tris=2
 [PROGRESS] buildPolyMesh: Created mesh with 4 vertices and 1 polygons
-[PROGRESS] buildRegions: Watershed created 1 regions (before merging)
-[PROGRESS] mergeAndFilterRegions: Region span counts:
-[PROGRESS]   Region 1: 256 spans, 1 connections
-[PROGRESS] mergeAndFilterRegions: Merged and filtered to 2 regions
 [PROGRESS] buildRegions: Created 1 regions
 [PROGRESS] buildContours: Finding boundaries...
 [PROGRESS] buildContours: Walking contours...
@@ -33,10 +21,6 @@ test
 [PROGRESS] buildContours: Created 1 contours
 [PROGRESS] buildPolyMesh: max_vertices=4, max_tris=2
 [PROGRESS] buildPolyMesh: Created mesh with 4 vertices and 1 polygons
-[PROGRESS] buildRegions: Watershed created 1 regions (before merging)
-[PROGRESS] mergeAndFilterRegions: Region span counts:
-[PROGRESS]   Region 1: 256 spans, 1 connections
-[PROGRESS] mergeAndFilterRegions: Merged and filtered to 2 regions
 [PROGRESS] buildRegions: Created 1 regions
 [PROGRESS] buildContours: Finding boundaries...
 [PROGRESS] buildContours: Walking contours...
@@ -44,10 +28,6 @@ test
 [PROGRESS] buildContours: Created 1 contours
 [PROGRESS] buildPolyMesh: max_vertices=4, max_tris=2
 [PROGRESS] buildPolyMesh: Created mesh with 4 vertices and 1 polygons
-[PROGRESS] buildRegions: Watershed created 1 regions (before merging)
-[PROGRESS] mergeAndFilterRegions: Region span counts:
-[PROGRESS]   Region 1: 256 spans, 1 connections
-[PROGRESS] mergeAndFilterRegions: Merged and filtered to 2 regions
 [PROGRESS] buildRegions: Created 1 regions
 [PROGRESS] buildContours: Finding boundaries...
 [PROGRESS] buildContours: Walking contours...
@@ -63,57 +43,8 @@ Bounds: min=(-28.89, -4.87, -46.30) max=(62.49, 17.01, 31.05)
 Grid size: 305x258
 Rasterized 1560 triangles
 Built compact heightfield with 55226 spans
-[PROGRESS] buildRegions: Watershed created 44 regions (before merging)
-[PROGRESS] mergeAndFilterRegions: Region span counts:
-[PROGRESS]   Region 1: 2045 spans, 4 connections
-[PROGRESS]   Region 2: 1893 spans, 4 connections
-[PROGRESS]   Region 3: 1567 spans, 4 connections
-[PROGRESS]   Region 4: 1883 spans, 4 connections
-[PROGRESS]   Region 5: 1486 spans, 4 connections
-[PROGRESS]   Region 6: 2051 spans, 8 connections
-[PROGRESS]   Region 7: 1437 spans, 4 connections
-[PROGRESS]   Region 8: 1041 spans, 4 connections
-[PROGRESS]   Region 9: 667 spans, 2 connections
-[PROGRESS]   Region 10: 698 spans, 4 connections
-[PROGRESS]   Region 11: 873 spans, 6 connections
-[PROGRESS]   Region 12: 570 spans, 6 connections
-[PROGRESS]   Region 13: 1311 spans, 8 connections
-[PROGRESS]   Region 14: 434 spans, 1 connections
-[PROGRESS]   Region 15: 302 spans, 2 connections
-[PROGRESS]   Region 16: 220 spans, 2 connections
-[PROGRESS]   Region 17: 343 spans, 4 connections
-[PROGRESS]   Region 18: 493 spans, 2 connections
-[PROGRESS]   Region 19: 210 spans, 4 connections
-[PROGRESS]   Region 20: 212 spans, 4 connections
-[PROGRESS]   Region 21: 319 spans, 6 connections
-[PROGRESS]   Region 22: 203 spans, 4 connections
-[PROGRESS]   Region 23: 179 spans, 4 connections
-[PROGRESS]   Region 24: 254 spans, 4 connections
-[PROGRESS]   Region 25: 158 spans, 4 connections
-[PROGRESS]   Region 26: 160 spans, 4 connections
-[PROGRESS]   Region 27: 169 spans, 4 connections
-[PROGRESS]   Region 28: 257 spans, 2 connections
-[PROGRESS]   Region 29: 25 spans, 1 connections
-[PROGRESS]   Region 30: 30 spans, 2 connections
-[PROGRESS]   Region 31: 29 spans, 2 connections
-[PROGRESS]   Region 32: 88 spans, 2 connections
-[PROGRESS]   Region 33: 22 spans, 4 connections
-[PROGRESS]   Region 34: 135 spans, 6 connections
-[PROGRESS]   Region 35: 125 spans, 2 connections
-[PROGRESS]   Region 36: 75 spans, 4 connections
-[PROGRESS]   Region 37: 99 spans, 4 connections
-[PROGRESS]   Region 38: 75 spans, 4 connections
-[PROGRESS]   Region 39: 29 spans, 4 connections
-[PROGRESS]   Region 40: 22 spans, 2 connections
-[PROGRESS]   Region 41: 44 spans, 2 connections
-[PROGRESS]   Region 42: 127 spans, 2 connections
-[PROGRESS]   Region 43: 1 spans, 1 connections
-[PROGRESS]   Region 44: 2 spans, 1 connections
-[PROGRESS]   Removing small region group (spanCount=1 < 8): ids={ 43 }
-[PROGRESS]   Removing small region group (spanCount=2 < 8): ids={ 44 }
-[PROGRESS] mergeAndFilterRegions: Merged and filtered to 43 regions
-[PROGRESS] buildRegions: Created 42 regions
-[REGION] Built 42 regions
+[PROGRESS] buildRegions: Created 44 regions
+[REGION] Built 44 regions
 [REGION] Region details:
 [REGION]   Region 1: 2045 spans
 [REGION]   Region 2: 1893 spans
@@ -157,6 +88,8 @@ Built compact heightfield with 55226 spans
 [REGION]   Region 40: 22 spans
 [REGION]   Region 41: 44 spans
 [REGION]   Region 42: 127 spans
+[REGION]   Region 43: 1 spans
+[REGION]   Region 44: 2 spans
 [PROGRESS] buildContours: Finding boundaries...
 [PROGRESS] buildContours: Walking contours...
 [PROGRESS] buildContours: Checking for holes...
@@ -238,17 +171,3 @@ Can remove vertex 430: true
 Can remove vertex 215: true
 
 === Real mesh test completed successfully ===
-Build Summary: 13/13 steps succeeded; 160/160 tests passed
-test success
-+- run test 110 passed 4ms MaxRSS:4M
-|  +- zig test Debug native success 1s MaxRSS:248M
-+- run test 8 passed 142ms MaxRSS:5M
-|  +- zig test Debug native success 1s MaxRSS:205M
-+- run test 12 passed 142ms MaxRSS:3M
-|  +- zig test Debug native success 1s MaxRSS:201M
-+- run test 13 passed 138ms MaxRSS:3M
-|  +- zig test Debug native success 1s MaxRSS:206M
-+- run test 2 passed 14ms MaxRSS:4M
-|  +- zig test Debug native cached 1s MaxRSS:17M
-+- run test 15 passed 177ms MaxRSS:10M
-   +- zig test Debug native cached 1s MaxRSS:17M

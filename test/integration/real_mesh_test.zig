@@ -145,6 +145,25 @@ test "Real Mesh: nav_test.obj full pipeline" {
     try nav.recast.region.buildDistanceField(&ctx, &chf, allocator);
     try nav.recast.region.buildRegions(&ctx, &chf, config.border_size, config.min_region_area, config.merge_region_area, allocator);
 
+    // Count regions
+    var max_region: u16 = 0;
+    var region_span_count = [_]u32{0} ** 256;
+    for (chf.spans) |span| {
+        if (span.reg > max_region) max_region = span.reg;
+        if (span.reg < 256 and span.reg > 0) {
+            region_span_count[span.reg] += 1;
+        }
+    }
+    std.debug.print("[REGION] Built {d} regions\n", .{max_region});
+
+    // Print region details
+    std.debug.print("[REGION] Region details:\n", .{});
+    for (1..@as(usize, max_region + 1)) |i| {
+        if (i < 256 and region_span_count[i] > 0) {
+            std.debug.print("[REGION]   Region {d}: {d} spans\n", .{ i, region_span_count[i] });
+        }
+    }
+
     // Build contours
     var cset = nav.ContourSet.init(allocator);
     defer cset.deinit();
@@ -161,11 +180,20 @@ test "Real Mesh: nav_test.obj full pipeline" {
 
     std.debug.print("Built {d} contours\n", .{cset.nconts});
 
-    // Print contour details
-    std.debug.print("Contour details:\n", .{});
+    // Print contour details with first vertex coordinates
+    std.debug.print("[CONTOUR] Contour details:\n", .{});
     for (0..@as(usize, @intCast(cset.nconts))) |i| {
         const cont = cset.conts[i];
-        std.debug.print("  Contour {d}: nverts={d}, reg={d}, area={d}\n", .{ i, cont.nverts, cont.reg, cont.area });
+        // Print first vertex for matching
+        var vx: i32 = -1;
+        var vy: i32 = -1;
+        var vz: i32 = -1;
+        if (cont.nverts > 0) {
+            vx = cont.verts[0];
+            vy = cont.verts[1];
+            vz = cont.verts[2];
+        }
+        std.debug.print("[CONTOUR]   Contour {d}: nverts={d}, reg={d}, area={d}, first_vert=({d},{d},{d})\n", .{ i, cont.nverts, cont.reg, cont.area, vx, vy, vz });
     }
 
     // Build polygon mesh
@@ -181,6 +209,43 @@ test "Real Mesh: nav_test.obj full pipeline" {
     );
 
     std.debug.print("Built PolyMesh: {d} vertices, {d} polygons\n", .{ pmesh.nverts, pmesh.npolys });
+
+    // Print polygon details (first 10 and last 10)
+    std.debug.print("[POLYMESH] Polygon details (showing first 10 and last 10):\n", .{});
+    const nvp = @as(usize, @intCast(pmesh.nvp));
+    var i: usize = 0;
+    while (i < pmesh.npolys and i < 10) : (i += 1) {
+        const poly_offset = i * nvp * 2;
+        std.debug.print("[POLYMESH]   Poly {d}: verts=[", .{i});
+        var j: usize = 0;
+        while (j < nvp) : (j += 1) {
+            const vert_idx = pmesh.polys[poly_offset + j];
+            if (vert_idx == nav.recast.config.MESH_NULL_IDX) break;
+            std.debug.print("{d}", .{vert_idx});
+            if (j < nvp - 1 and pmesh.polys[poly_offset + j + 1] != nav.recast.config.MESH_NULL_IDX) {
+                std.debug.print(",", .{});
+            }
+        }
+        std.debug.print("], reg={d}, area={d}\n", .{ pmesh.regs[i], pmesh.areas[i] });
+    }
+    if (pmesh.npolys > 20) {
+        std.debug.print("[POLYMESH]   ... ({d} polygons omitted) ...\n", .{pmesh.npolys - 20});
+    }
+    i = if (pmesh.npolys > 10) @as(usize, @intCast(pmesh.npolys - 10)) else 10;
+    while (i < @as(usize, @intCast(pmesh.npolys))) : (i += 1) {
+        const poly_offset = i * nvp * 2;
+        std.debug.print("[POLYMESH]   Poly {d}: verts=[", .{i});
+        var j: usize = 0;
+        while (j < nvp) : (j += 1) {
+            const vert_idx = pmesh.polys[poly_offset + j];
+            if (vert_idx == nav.recast.config.MESH_NULL_IDX) break;
+            std.debug.print("{d}", .{vert_idx});
+            if (j < nvp - 1 and pmesh.polys[poly_offset + j + 1] != nav.recast.config.MESH_NULL_IDX) {
+                std.debug.print(",", .{});
+            }
+        }
+        std.debug.print("], reg={d}, area={d}\n", .{ pmesh.regs[i], pmesh.areas[i] });
+    }
 
     // Verify we got meaningful results
     try testing.expect(pmesh.npolys > 0);

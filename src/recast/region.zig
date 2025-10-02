@@ -509,6 +509,74 @@ fn expandRegions(
     }
 }
 
+/// Sorts cells by their distance level and distributes them into multiple stacks.
+/// This is used by the C++ multi-stack watershed algorithm.
+fn sortCellsByLevel(
+    start_level: u16,
+    chf: *const CompactHeightfield,
+    src_reg: []const u16,
+    stacks: []std.ArrayList(LevelStackEntry),
+    log_levels_per_stack: u4,
+) void {
+    const w = chf.width;
+    const h = chf.height;
+    const start_level_shifted = start_level >> log_levels_per_stack;
+
+    // Clear all stacks
+    for (stacks) |*stack| {
+        stack.clearRetainingCapacity();
+    }
+
+    // Put all cells in the level range into the appropriate stacks
+    var y: i32 = 0;
+    while (y < h) : (y += 1) {
+        var x: i32 = 0;
+        while (x < w) : (x += 1) {
+            const cell_idx = @as(usize, @intCast(x + y * w));
+            const cell = chf.cells[cell_idx];
+
+            var i: usize = cell.index;
+            const ni = cell.index + cell.count;
+            while (i < ni) : (i += 1) {
+                if (chf.areas[i] == NULL_AREA or src_reg[i] != 0) {
+                    continue;
+                }
+
+                const level = chf.dist[i] >> log_levels_per_stack;
+                const s_id_signed = @as(i32, @intCast(start_level_shifted)) - @as(i32, @intCast(level));
+                if (s_id_signed >= @as(i32, @intCast(stacks.len))) {
+                    continue;
+                }
+                const s_id: usize = if (s_id_signed < 0) 0 else @intCast(s_id_signed);
+
+                stacks[s_id].append(.{ .x = x, .y = y, .index = @intCast(i) }) catch {
+                    // If append fails, just skip this entry
+                    continue;
+                };
+            }
+        }
+    }
+}
+
+/// Appends unprocessed entries from source stack to destination stack.
+/// Used to carry over leftover cells from previous level.
+fn appendStacks(
+    src_stack: *const std.ArrayList(LevelStackEntry),
+    dst_stack: *std.ArrayList(LevelStackEntry),
+    src_reg: []const u16,
+) void {
+    for (src_stack.items) |entry| {
+        const i = entry.index;
+        if (i < 0 or src_reg[@intCast(i)] != 0) {
+            continue;
+        }
+        dst_stack.append(entry) catch {
+            // If append fails, just skip
+            continue;
+        };
+    }
+}
+
 /// Builds the distance field for the compact heightfield.
 ///
 /// The distance field represents the distance of each span from the nearest
@@ -550,6 +618,460 @@ pub fn buildDistanceField(
     }
 }
 
+/// Remove adjacent duplicate neighbours
+fn removeAdjacentNeighbours(reg: *Region) void {
+    var i: usize = 0;
+    while (i < reg.connections.items.len and reg.connections.items.len > 1) {
+        const ni = (i + 1) % reg.connections.items.len;
+        if (reg.connections.items[i] == reg.connections.items[ni]) {
+            // Remove duplicate
+            _ = reg.connections.orderedRemove(i);
+        } else {
+            i += 1;
+        }
+    }
+}
+
+/// Replace oldId with newId in connections and floors
+fn replaceNeighbour(reg: *Region, old_id: u16, new_id: u16) void {
+    var nei_changed = false;
+    for (reg.connections.items) |*conn| {
+        if (conn.* == old_id) {
+            conn.* = new_id;
+            nei_changed = true;
+        }
+    }
+    for (reg.floors.items) |*floor| {
+        if (floor.* == old_id) {
+            floor.* = new_id;
+        }
+    }
+    if (nei_changed) {
+        removeAdjacentNeighbours(reg);
+    }
+}
+
+/// Check if two regions can be merged
+fn canMergeWithRegion(reg_a: *const Region, reg_b: *const Region) bool {
+    if (reg_a.area_type != reg_b.area_type) return false;
+
+    var n: i32 = 0;
+    for (reg_a.connections.items) |conn| {
+        if (conn == reg_b.id) n += 1;
+    }
+    if (n > 1) return false;
+
+    for (reg_a.floors.items) |floor| {
+        if (floor == reg_b.id) return false;
+    }
+    return true;
+}
+
+/// Merge region b into region a
+fn mergeRegions(reg_a: *Region, reg_b: *Region, allocator: std.mem.Allocator) !bool {
+    const aid = reg_a.id;
+    const bid = reg_b.id;
+
+    // Duplicate current neighbourhood
+    var acon = std.ArrayList(i32).init(allocator);
+    defer acon.deinit();
+    try acon.appendSlice(reg_a.connections.items);
+
+    // Find insertion point on A
+    var insa: i32 = -1;
+    for (acon.items, 0..) |conn, i| {
+        if (conn == bid) {
+            insa = @intCast(i);
+            break;
+        }
+    }
+    if (insa == -1) return false;
+
+    // Find insertion point on B
+    var insb: i32 = -1;
+    for (reg_b.connections.items, 0..) |conn, i| {
+        if (conn == aid) {
+            insb = @intCast(i);
+            break;
+        }
+    }
+    if (insb == -1) return false;
+
+    // Merge neighbours
+    reg_a.connections.clearRetainingCapacity();
+
+    const ni_a = @as(i32, @intCast(acon.items.len));
+    var i: i32 = 0;
+    while (i < ni_a - 1) : (i += 1) {
+        const idx = @mod((insa + 1 + i), ni_a);
+        try reg_a.connections.append(acon.items[@intCast(idx)]);
+    }
+
+    const ni_b = @as(i32, @intCast(reg_b.connections.items.len));
+    i = 0;
+    while (i < ni_b - 1) : (i += 1) {
+        const idx = @mod((insb + 1 + i), ni_b);
+        try reg_a.connections.append(reg_b.connections.items[@intCast(idx)]);
+    }
+
+    removeAdjacentNeighbours(reg_a);
+
+    for (reg_b.floors.items) |floor| {
+        try addUniqueFloorRegion(reg_a, floor);
+    }
+    reg_a.span_count += reg_b.span_count;
+    reg_b.span_count = 0;
+    reg_b.connections.clearRetainingCapacity();
+
+    return true;
+}
+
+/// Check if region is connected to border
+fn isRegionConnectedToBorder(reg: *const Region) bool {
+    for (reg.connections.items) |conn| {
+        if (conn == 0) return true;
+    }
+    return false;
+}
+
+/// Check if edge is solid (boundary)
+fn isSolidEdge(
+    chf: *const CompactHeightfield,
+    src_reg: []const u16,
+    x: i32,
+    y: i32,
+    i: usize,
+    dir: u2,
+) bool {
+    const s = chf.spans[i];
+    var r: u16 = 0;
+    if (s.getCon(dir) != NOT_CONNECTED) {
+        const ax = x + heightfield_mod.getDirOffsetX(dir);
+        const ay = y + heightfield_mod.getDirOffsetY(dir);
+        const ai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax + ay * chf.width))].index + s.getCon(dir)));
+        r = src_reg[ai];
+    }
+    return r != src_reg[i];
+}
+
+/// Walk contour to find all neighbours
+fn walkContour(
+    x_start: i32,
+    y_start: i32,
+    i_start: usize,
+    dir_start: u2,
+    chf: *const CompactHeightfield,
+    src_reg: []const u16,
+    cont: *std.ArrayList(i32),
+) !void {
+    var x = x_start;
+    var y = y_start;
+    var i = i_start;
+    var dir = dir_start;
+
+    const start_dir = dir_start;
+    const start_i = i_start;
+
+    const ss = chf.spans[i];
+    var cur_reg: u16 = 0;
+    if (ss.getCon(dir) != NOT_CONNECTED) {
+        const ax = x + heightfield_mod.getDirOffsetX(dir);
+        const ay = y + heightfield_mod.getDirOffsetY(dir);
+        const ai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax + ay * chf.width))].index + ss.getCon(dir)));
+        cur_reg = src_reg[ai];
+    }
+    try cont.append(@intCast(cur_reg));
+
+    var iter: i32 = 0;
+    while (iter < 40000) : (iter += 1) {
+        const s = chf.spans[i];
+
+        if (isSolidEdge(chf, src_reg, x, y, i, dir)) {
+            // Choose the edge corner
+            var r: u16 = 0;
+            if (s.getCon(dir) != NOT_CONNECTED) {
+                const ax = x + heightfield_mod.getDirOffsetX(dir);
+                const ay = y + heightfield_mod.getDirOffsetY(dir);
+                const ai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax + ay * chf.width))].index + s.getCon(dir)));
+                r = src_reg[ai];
+            }
+            if (r != cur_reg) {
+                cur_reg = r;
+                try cont.append(@intCast(cur_reg));
+            }
+
+            dir = @truncate((dir +% 1) & 0x3); // Rotate CW
+        } else {
+            var ni: i32 = -1;
+            const nx = x + heightfield_mod.getDirOffsetX(dir);
+            const ny = y + heightfield_mod.getDirOffsetY(dir);
+            if (s.getCon(dir) != NOT_CONNECTED) {
+                const nc = chf.cells[@as(usize, @intCast(nx + ny * chf.width))];
+                ni = @as(i32, @intCast(nc.index)) + @as(i32, @intCast(s.getCon(dir)));
+            }
+            if (ni == -1) {
+                // Should not happen
+                return;
+            }
+            x = nx;
+            y = ny;
+            i = @intCast(ni);
+            dir = @truncate((dir +% 3) & 0x3); // Rotate CCW
+        }
+
+        if (start_i == i and start_dir == dir) {
+            break;
+        }
+    }
+
+    // Remove adjacent duplicates
+    if (cont.items.len > 1) {
+        var j: usize = 0;
+        while (j < cont.items.len) {
+            const nj = (j + 1) % cont.items.len;
+            if (cont.items[j] == cont.items[nj]) {
+                _ = cont.orderedRemove(j);
+            } else {
+                j += 1;
+            }
+        }
+    }
+}
+
+/// Merge and filter regions based on area thresholds
+fn mergeAndFilterRegions(
+    ctx: *const Context,
+    min_region_area: i32,
+    merge_region_size: i32,
+    max_region_id: *u16,
+    chf: *CompactHeightfield,
+    src_reg: []u16,
+    overlaps: *std.ArrayList(i32),
+    allocator: std.mem.Allocator,
+) !void {
+    const w = chf.width;
+    const h = chf.height;
+
+    const nreg = @as(usize, max_region_id.*) + 1;
+    const regions = try allocator.alloc(Region, nreg);
+    defer {
+        for (regions) |*reg| {
+            reg.deinit();
+        }
+        allocator.free(regions);
+    }
+
+    // Construct regions
+    for (regions, 0..) |*reg, i| {
+        reg.* = try Region.init(allocator, @intCast(i));
+    }
+
+    // Find edge of a region and find connections around the contour
+    var y: i32 = 0;
+    while (y < h) : (y += 1) {
+        var x: i32 = 0;
+        while (x < w) : (x += 1) {
+            const cell_idx = @as(usize, @intCast(x + y * w));
+            const cell = chf.cells[cell_idx];
+
+            var i: usize = cell.index;
+            const ni = cell.index + cell.count;
+            while (i < ni) : (i += 1) {
+                const r = src_reg[i];
+                if (r == 0 or r >= nreg) continue;
+
+                var reg = &regions[r];
+                reg.span_count += 1;
+
+                // Update floors
+                var j: usize = cell.index;
+                while (j < ni) : (j += 1) {
+                    if (i == j) continue;
+                    const floor_id = src_reg[j];
+                    if (floor_id == 0 or floor_id >= nreg) continue;
+                    if (floor_id == r) {
+                        reg.overlap = true;
+                    }
+                    try addUniqueFloorRegion(reg, @intCast(floor_id));
+                }
+
+                // Have found contour
+                if (reg.connections.items.len > 0) continue;
+
+                reg.area_type = chf.areas[i];
+
+                // Check if this cell is next to a border
+                var ndir: i32 = -1;
+                var dir: u2 = 0;
+                while (dir < 4) : (dir += 1) {
+                    if (isSolidEdge(chf, src_reg, x, y, i, dir)) {
+                        ndir = dir;
+                        break;
+                    }
+                }
+
+                if (ndir != -1) {
+                    // The cell is at border - walk around the contour
+                    try walkContour(x, y, i, @intCast(ndir), chf, src_reg, &reg.connections);
+                }
+            }
+        }
+    }
+
+    // Debug: log region span counts
+    ctx.log(.progress, "mergeAndFilterRegions: Region span counts:", .{});
+    for (regions) |*reg| {
+        if (reg.id > 0 and reg.span_count > 0 and (reg.id & BORDER_REG) == 0) {
+            ctx.log(.progress, "  Region {d}: {d} spans, {d} connections", .{ reg.id, reg.span_count, reg.connections.items.len });
+        }
+    }
+
+    // Remove too small regions
+    var stack = std.ArrayList(i32).init(allocator);
+    defer stack.deinit();
+    var trace = std.ArrayList(i32).init(allocator);
+    defer trace.deinit();
+
+    for (regions, 0..) |*reg, i| {
+        if (reg.id == 0 or (reg.id & BORDER_REG) != 0) continue;
+        if (reg.span_count == 0) continue;
+        if (reg.visited) continue;
+
+        // Count the total size of all connected regions
+        var connects_to_border = false;
+        var span_count: i32 = 0;
+        stack.clearRetainingCapacity();
+        trace.clearRetainingCapacity();
+
+        reg.visited = true;
+        try stack.append(@intCast(i));
+
+        while (stack.items.len > 0) {
+            const ri = stack.pop() orelse break;
+            const creg = &regions[@intCast(ri)];
+
+            span_count += creg.span_count;
+            try trace.append(ri);
+
+            for (creg.connections.items) |conn| {
+                if ((conn & BORDER_REG) != 0) {
+                    connects_to_border = true;
+                    continue;
+                }
+                var neireg = &regions[@intCast(conn)];
+                if (neireg.visited) continue;
+                if (neireg.id == 0 or (neireg.id & BORDER_REG) != 0) continue;
+
+                try stack.append(neireg.id);
+                neireg.visited = true;
+            }
+        }
+
+        // If accumulated region is too small, remove it
+        if (span_count < min_region_area and !connects_to_border) {
+            // Debug: log which regions are being removed
+            ctx.log(.progress, "  Removing small region group (spanCount={d} < {d}): ids={any}", .{ span_count, min_region_area, trace.items });
+            for (trace.items) |ri| {
+                regions[@intCast(ri)].span_count = 0;
+                regions[@intCast(ri)].id = 0;
+            }
+        }
+    }
+
+    // Merge too small regions to neighbour regions
+    var merge_count: i32 = 0;
+    while (true) {
+        merge_count = 0;
+        for (regions) |*reg| {
+            if (reg.id == 0 or (reg.id & BORDER_REG) != 0) continue;
+            if (reg.overlap) continue;
+            if (reg.span_count == 0) continue;
+
+            // Check to see if the region should be merged
+            if (reg.span_count > merge_region_size and isRegionConnectedToBorder(reg)) continue;
+
+            // Find smallest neighbour region that connects to this one
+            var smallest: i32 = 0x0fffffff;
+            var merge_id: u16 = reg.id;
+            for (reg.connections.items) |conn| {
+                if ((conn & BORDER_REG) != 0) continue;
+                const mreg = &regions[@intCast(conn)];
+                if (mreg.id == 0 or (mreg.id & BORDER_REG) != 0 or mreg.overlap) continue;
+                if (mreg.span_count < smallest and
+                    canMergeWithRegion(reg, mreg) and
+                    canMergeWithRegion(mreg, reg))
+                {
+                    smallest = mreg.span_count;
+                    merge_id = mreg.id;
+                }
+            }
+
+            // Found new id
+            if (merge_id != reg.id) {
+                const old_id = reg.id;
+                const target = &regions[merge_id];
+
+                // Merge neighbours
+                if (try mergeRegions(target, reg, allocator)) {
+                    ctx.log(.progress, "  Merging region {d} (spanCount={d}) into {d} (spanCount={d})", .{ old_id, reg.span_count, merge_id, target.span_count });
+                    // Fixup regions pointing to current region
+                    for (regions) |*fix_reg| {
+                        if (fix_reg.id == 0 or (fix_reg.id & BORDER_REG) != 0) continue;
+                        // If another region was already merged into current region
+                        if (fix_reg.id == old_id) {
+                            fix_reg.id = merge_id;
+                        }
+                        // Replace the current region with the new one
+                        replaceNeighbour(fix_reg, old_id, merge_id);
+                    }
+                    merge_count += 1;
+                }
+            }
+        }
+        if (merge_count == 0) break;
+    }
+
+    // Compress region Ids
+    for (regions) |*reg| {
+        reg.remap = false;
+        if (reg.id == 0) continue;
+        if ((reg.id & BORDER_REG) != 0) continue;
+        reg.remap = true;
+    }
+
+    var reg_id_gen: u16 = 0;
+    for (regions, 0..) |*reg, i| {
+        if (!reg.remap) continue;
+        const old_id = reg.id;
+        reg_id_gen += 1;
+        const new_id = reg_id_gen;
+        var j: usize = i;
+        while (j < nreg) : (j += 1) {
+            if (regions[j].id == old_id) {
+                regions[j].id = new_id;
+                regions[j].remap = false;
+            }
+        }
+    }
+    max_region_id.* = reg_id_gen;
+
+    // Remap regions
+    for (0..@intCast(chf.span_count)) |i| {
+        if ((src_reg[i] & BORDER_REG) == 0) {
+            src_reg[i] = regions[src_reg[i]].id;
+        }
+    }
+
+    // Return regions that we found to be overlapping
+    for (regions) |*reg| {
+        if (reg.overlap) {
+            try overlaps.append(@intCast(reg.id));
+        }
+    }
+
+    ctx.log(.progress, "mergeAndFilterRegions: Merged and filtered to {d} regions", .{reg_id_gen});
+}
+
 /// Builds regions using watershed partitioning.
 ///
 /// This creates regions by flooding from distance field peaks, which tends to
@@ -562,9 +1084,6 @@ pub fn buildRegions(
     merge_region_area: i32,
     allocator: std.mem.Allocator,
 ) !void {
-    _ = min_region_area; // TODO: Implement region filtering
-    _ = merge_region_area; // TODO: Implement region merging
-
     const w = chf.width;
     const h = chf.height;
     const span_count = @as(usize, @intCast(chf.span_count));
@@ -601,41 +1120,52 @@ pub fn buildRegions(
 
     chf.border_size = border_size;
 
-    // Create work stacks
+    // Create multi-stack system for watershed (matching C++ algorithm)
+    const LOG_NB_STACKS: u3 = 3;
+    const NB_STACKS: usize = 1 << LOG_NB_STACKS; // 8 stacks
+
+    var lvl_stacks: [NB_STACKS]std.ArrayList(LevelStackEntry) = undefined;
+    for (&lvl_stacks) |*lvl_stack| {
+        lvl_stack.* = std.ArrayList(LevelStackEntry).init(allocator);
+    }
+    defer {
+        for (&lvl_stacks) |*lvl_stack| {
+            lvl_stack.deinit();
+        }
+    }
+
+    // Reserve capacity for each stack
+    for (&lvl_stacks) |*lvl_stack| {
+        try lvl_stack.ensureTotalCapacity(256);
+    }
+
     var stack = std.ArrayList(LevelStackEntry).init(allocator);
     defer stack.deinit();
     try stack.ensureTotalCapacity(256);
 
-    // Watershed partitioning
+    var s_id: i32 = -1;
+
+    // Watershed partitioning with multi-stack system
     while (level > 0) {
         level = if (level >= 2) level - 2 else 0;
+        s_id = (s_id + 1) & (@as(i32, NB_STACKS) - 1);
 
-        // Expand current regions
-        try expandRegions(expand_iters, level, chf, src_reg, src_dist, &stack, true, allocator);
-
-        // Mark new regions with flood fill
-        stack.clearRetainingCapacity();
-
-        // Collect cells at this level
-        var y: i32 = 0;
-        while (y < h) : (y += 1) {
-            var x: i32 = 0;
-            while (x < w) : (x += 1) {
-                const cell_idx = @as(usize, @intCast(x + y * w));
-                const cell = chf.cells[cell_idx];
-
-                var i: usize = cell.index;
-                const ni = cell.index + cell.count;
-                while (i < ni) : (i += 1) {
-                    if (chf.dist[i] >= level and src_reg[i] == 0 and chf.areas[i] != NULL_AREA) {
-                        try stack.append(.{ .x = x, .y = y, .index = @intCast(i) });
-                    }
-                }
-            }
+        // Sort cells by level or append from previous stack
+        if (s_id == 0) {
+            sortCellsByLevel(level, chf, src_reg, &lvl_stacks, 1);
+        } else {
+            const prev_id: usize = @intCast(s_id - 1);
+            const curr_id: usize = @intCast(s_id);
+            appendStacks(&lvl_stacks[prev_id], &lvl_stacks[curr_id], src_reg);
         }
 
+        const curr_stack_id: usize = @intCast(s_id);
+
+        // Expand current regions
+        try expandRegions(expand_iters, level, chf, src_reg, src_dist, &lvl_stacks[curr_stack_id], false, allocator);
+
         // Flood fill new regions
-        for (stack.items) |current| {
+        for (lvl_stacks[curr_stack_id].items) |current| {
             const x = current.x;
             const y_coord = current.y;
             const idx = current.index;
@@ -656,6 +1186,19 @@ pub fn buildRegions(
 
     // Expand current regions to fill remaining gaps
     try expandRegions(expand_iters * 8, 0, chf, src_reg, src_dist, &stack, true, allocator);
+
+    ctx.log(.progress, "buildRegions: max_distance={d}, level_start={d}", .{ chf.max_distance, (chf.max_distance + 1) & ~@as(u16, 1) });
+    ctx.log(.progress, "buildRegions: Watershed created {d} regions (before merging)", .{region_id - 1});
+
+    // Merge and filter regions
+    var overlaps = std.ArrayList(i32).init(allocator);
+    defer overlaps.deinit();
+    try mergeAndFilterRegions(ctx, min_region_area, merge_region_area, &region_id, chf, src_reg, &overlaps, allocator);
+
+    // Check for overlaps
+    if (overlaps.items.len > 0) {
+        ctx.log(.err, "buildRegions: {d} overlapping regions", .{overlaps.items.len});
+    }
 
     // Write results to compact heightfield
     chf.max_regions = region_id;
