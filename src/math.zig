@@ -235,6 +235,16 @@ pub fn triArea2D(a: Vec3, b: Vec3, c: Vec3) f32 {
     return acx * abz - abx * acz;
 }
 
+/// Calculate 2D triangle area (inline version for arrays, matching C++ dtTriArea2D)
+pub inline fn triArea2DArray(a: *const [3]f32, b: *const [3]f32, c: *const [3]f32) f32 {
+    @setRuntimeSafety(false);
+    const abx = b[0] - a[0];
+    const abz = b[2] - a[2];
+    const acx = c[0] - a[0];
+    const acz = c[2] - a[2];
+    return acx * abz - abx * acz;
+}
+
 pub fn closestPtPointTriangle(p: Vec3, a: Vec3, b: Vec3, c: Vec3) Vec3 {
     // Check if P in vertex region outside A
     const ab = b.sub(a);
@@ -549,6 +559,7 @@ pub fn distancePtPolyEdgesSqr(pt: *const [3]f32, verts: []const f32, nverts: usi
 
 /// Copy vector
 pub inline fn vcopy(dest: *[3]f32, src: *const [3]f32) void {
+    @setRuntimeSafety(false);
     dest[0] = src[0];
     dest[1] = src[1];
     dest[2] = src[2];
@@ -586,11 +597,19 @@ pub inline fn swap(comptime T: type, a: *T, b: *T) void {
 
 /// Check if two vectors are approximately equal
 pub inline fn vequal(a: *const [3]f32, b: *const [3]f32) bool {
-    const threshold = sqr(f32, 1.0 / 16384.0);
+    @setRuntimeSafety(false);
+    const threshold = comptime sqr(f32, 1.0 / 16384.0);
     const dx = b[0] - a[0];
     const dy = b[1] - a[1];
     const dz = b[2] - a[2];
     return dx * dx + dy * dy + dz * dz < threshold;
+}
+
+/// Check if vector has finite values (no NaN or Inf)
+pub inline fn visFinite(v: *const [3]f32) bool {
+    return std.math.isFinite(v[0]) and
+        std.math.isFinite(v[1]) and
+        std.math.isFinite(v[2]);
 }
 
 /// 2D dot product of two vectors (using x and z components)

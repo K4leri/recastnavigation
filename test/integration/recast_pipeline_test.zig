@@ -266,9 +266,9 @@ test "Recast Pipeline: Grid Size Calculation" {
     try testing.expect(width > 0);
     try testing.expect(height > 0);
 
-    // Grid dimensions should match expected size
-    const expected_width = @ceil(10.0 / 0.3);
-    const expected_height = @ceil(10.0 / 0.3);
+    // Grid dimensions should match expected size (using round, matching C++ behavior)
+    const expected_width = @round(10.0 / 0.3);
+    const expected_height = @round(10.0 / 0.3);
     try testing.expectEqual(@as(i32, @intFromFloat(expected_width)), width);
     try testing.expectEqual(@as(i32, @intFromFloat(expected_height)), height);
 }

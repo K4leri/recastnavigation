@@ -179,19 +179,30 @@ pub fn build(b: *std.Build) void {
     });
     bench_crowd.root_module.addImport("zig-recast", recast_nav);
 
+    const bench_findstraightpath = b.addExecutable(.{
+        .name = "findStraightPath_detailed",
+        .root_source_file = b.path("bench/findStraightPath_detailed.zig"),
+        .target = target,
+        .optimize = .ReleaseFast,
+    });
+    bench_findstraightpath.root_module.addImport("zig-recast", recast_nav);
+
     const install_bench_recast = b.addInstallArtifact(bench_recast, .{});
     const install_bench_detour = b.addInstallArtifact(bench_detour, .{});
     const install_bench_crowd = b.addInstallArtifact(bench_crowd, .{});
+    const install_bench_findstraightpath = b.addInstallArtifact(bench_findstraightpath, .{});
 
     const bench_step = b.step("bench", "Build all benchmarks");
     bench_step.dependOn(&install_bench_recast.step);
     bench_step.dependOn(&install_bench_detour.step);
     bench_step.dependOn(&install_bench_crowd.step);
+    bench_step.dependOn(&install_bench_findstraightpath.step);
 
     // Run benchmark steps
     const run_bench_recast = b.addRunArtifact(bench_recast);
     const run_bench_detour = b.addRunArtifact(bench_detour);
     const run_bench_crowd = b.addRunArtifact(bench_crowd);
+    const run_bench_findstraightpath = b.addRunArtifact(bench_findstraightpath);
 
     const run_bench_recast_step = b.step("bench-recast", "Run Recast performance benchmarks");
     run_bench_recast_step.dependOn(&run_bench_recast.step);
@@ -202,8 +213,12 @@ pub fn build(b: *std.Build) void {
     const run_bench_crowd_step = b.step("bench-crowd", "Run Crowd performance benchmarks");
     run_bench_crowd_step.dependOn(&run_bench_crowd.step);
 
+    const run_bench_findstraightpath_step = b.step("bench-findstraightpath", "Run detailed findStraightPath benchmarks");
+    run_bench_findstraightpath_step.dependOn(&run_bench_findstraightpath.step);
+
     const run_all_bench_step = b.step("bench-run", "Run all performance benchmarks");
     run_all_bench_step.dependOn(&run_bench_recast.step);
     run_all_bench_step.dependOn(&run_bench_detour.step);
     run_all_bench_step.dependOn(&run_bench_crowd.step);
+    run_all_bench_step.dependOn(&run_bench_findstraightpath.step);
 }

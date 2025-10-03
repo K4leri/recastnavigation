@@ -890,7 +890,8 @@ fn getHeightData(
             head = 0;
             if (queue.items.len > RETRACT_SIZE * 3) {
                 const old_len = queue.items.len;
-                @memcpy(
+                std.mem.copyForwards(
+                    i32,
                     queue.items[0 .. old_len - RETRACT_SIZE * 3],
                     queue.items[RETRACT_SIZE * 3 .. old_len],
                 );

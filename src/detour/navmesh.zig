@@ -110,7 +110,7 @@ pub const BVNode = struct {
 };
 
 /// Off-mesh connection
-pub const OffMeshConnection = struct {
+pub const OffMeshConnection = extern struct {
     pos: [6]f32, // Endpoints [(ax,ay,az,bx,by,bz)]
     rad: f32, // Endpoint radius
     poly: u16, // Polygon reference
@@ -1103,6 +1103,12 @@ pub const NavMesh = struct {
 
         for (0..@intCast(tile.header.?.off_mesh_con_count)) |i| {
             const con = &tile.off_mesh_cons[i];
+
+            // Bounds check to prevent crash
+            if (con.poly >= tile.header.?.poly_count) {
+                continue;
+            }
+
             var poly = &tile.polys[@intCast(con.poly)];
 
             const half_extents = [3]f32{ con.rad, tile.header.?.walkable_climb, con.rad };

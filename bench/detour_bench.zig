@@ -42,32 +42,85 @@ const NavMeshTestData = struct {
         // Create simple grid NavMesh for testing
         var ctx = nav.Context.init(allocator);
 
-        // Create grid mesh
+        // Create grid mesh with obstacles to force multiple polygons
+        // IMPORTANT: Use SHARED VERTICES (like C++) not triangle soup!
         const cell_size: f32 = 1.0;
-        const triangle_count = (grid_size - 1) * (grid_size - 1) * 2;
-        var vertices = try allocator.alloc(nav.Vec3, triangle_count * 3);
-        defer allocator.free(vertices);
 
-        var idx: usize = 0;
+        // Build indexed mesh with shared vertices
+        var temp_verts = std.ArrayList(nav.Vec3).init(allocator);
+        defer temp_verts.deinit();
+
+        var temp_indices = std.ArrayList(usize).init(allocator);
+        defer temp_indices.deinit();
+
         var z: usize = 0;
         while (z < grid_size - 1) : (z += 1) {
             var x: usize = 0;
             while (x < grid_size - 1) : (x += 1) {
+                // Skip cells to create obstacles (every 5th cell)
+                if ((x % 5 == 2 or z % 5 == 2) and (x > 5 and x < grid_size - 5 and z > 5 and z < grid_size - 5)) {
+                    continue; // Create obstacle
+                }
+
                 const fx = @as(f32, @floatFromInt(x)) * cell_size;
                 const fz = @as(f32, @floatFromInt(z)) * cell_size;
                 const fx1 = fx + cell_size;
                 const fz1 = fz + cell_size;
+                const fy = @as(f32, @floatFromInt((x + z) % 3)) * 0.01;
 
-                vertices[idx] = nav.Vec3.init(fx, 0, fz);
-                vertices[idx + 1] = nav.Vec3.init(fx1, 0, fz);
-                vertices[idx + 2] = nav.Vec3.init(fx1, 0, fz1);
-                idx += 3;
+                const base_idx = temp_verts.items.len;
 
-                vertices[idx] = nav.Vec3.init(fx, 0, fz);
-                vertices[idx + 1] = nav.Vec3.init(fx1, 0, fz1);
-                vertices[idx + 2] = nav.Vec3.init(fx, 0, fz1);
-                idx += 3;
+                // Add 4 vertices for this quad (SHARED between 2 triangles)
+                try temp_verts.append(nav.Vec3.init(fx, fy, fz));
+                try temp_verts.append(nav.Vec3.init(fx1, fy, fz));
+                try temp_verts.append(nav.Vec3.init(fx1, fy, fz1));
+                try temp_verts.append(nav.Vec3.init(fx, fy, fz1));
+
+                // Triangle 1
+                try temp_indices.append(base_idx + 0);
+                try temp_indices.append(base_idx + 1);
+                try temp_indices.append(base_idx + 2);
+
+                // Triangle 2
+                try temp_indices.append(base_idx + 0);
+                try temp_indices.append(base_idx + 2);
+                try temp_indices.append(base_idx + 3);
             }
+        }
+
+        const vertices = try temp_verts.toOwnedSlice();
+        defer allocator.free(vertices);
+
+        const indices = try temp_indices.toOwnedSlice();
+        defer allocator.free(indices);
+
+        const tri_count = indices.len / 3;
+
+        // ========== PHASE 1: INPUT GEOMETRY ==========
+        std.debug.print("\n========== PHASE 1: INPUT GEOMETRY (Zig) ==========\n", .{});
+        std.debug.print("[INPUT] gridSize={}, cellSize={d:.3}\n", .{ grid_size, cell_size });
+        std.debug.print("[INPUT] vertexCount={}, triangleCount={}\n", .{ vertices.len, tri_count });
+
+        // Print first 10 vertices
+        std.debug.print("[INPUT] First 10 vertices:\n", .{});
+        for (0..@min(10, vertices.len)) |i| {
+            std.debug.print("  v{}: ({d:.3}, {d:.3}, {d:.3})\n", .{
+                i,
+                vertices[i].x,
+                vertices[i].y,
+                vertices[i].z,
+            });
+        }
+
+        // Print first 5 triangles
+        std.debug.print("[INPUT] First 5 triangles:\n", .{});
+        for (0..@min(5, tri_count)) |i| {
+            std.debug.print("  tri{}: [{}, {}, {}]\n", .{
+                i,
+                indices[i * 3 + 0],
+                indices[i * 3 + 1],
+                indices[i * 3 + 2],
+            });
         }
 
         // Build NavMesh through Recast pipeline
@@ -77,15 +130,15 @@ const NavMeshTestData = struct {
             .walkable_slope_angle = 45.0,
             .walkable_height = 20,
             .walkable_climb = 9,
-            .walkable_radius = 8,
+            .walkable_radius = 2,  // Reduced from 8 to 2
             .max_edge_len = 12,
             .max_simplification_error = 1.3,
-            .min_region_area = 8,
-            .merge_region_area = 20,
+            .min_region_area = 8,  // Match C++ benchmark
+            .merge_region_area = 20,  // Match C++ benchmark
             .max_verts_per_poly = 6,
             .detail_sample_dist = 6.0,
             .detail_sample_max_error = 1.0,
-            .border_size = 0,
+            .border_size = 0,  // Will be set after grid size calculation
             .width = 0,
             .height = 0,
             .bmin = nav.Vec3.zero(),
@@ -98,11 +151,29 @@ const NavMeshTestData = struct {
         config.bmin = bmin;
         config.bmax = bmax;
 
+        std.debug.print("[INPUT] Bounds: bmin=({d:.3}, {d:.3}, {d:.3}), bmax=({d:.3}, {d:.3}, {d:.3})\n", .{
+            bmin.x,
+            bmin.y,
+            bmin.z,
+            bmax.x,
+            bmax.y,
+            bmax.z,
+        });
+
         var size_x: i32 = 0;
         var size_z: i32 = 0;
         nav.RecastConfig.calcGridSize(bmin, bmax, config.cs, &size_x, &size_z);
         config.width = size_x;
         config.height = size_z;
+        config.border_size = config.walkable_radius + 3;  // Reserve padding
+
+        std.debug.print("[INPUT] Heightfield grid: {}x{} (cellSize={d:.2}, borderSize={})\n", .{
+            config.width,
+            config.height,
+            config.cs,
+            config.border_size,
+        });
+        std.debug.print("=================================================\n\n", .{});
 
         // Build pipeline
         var heightfield = try nav.Heightfield.init(
@@ -116,11 +187,10 @@ const NavMeshTestData = struct {
         );
         defer heightfield.deinit();
 
-        const tri_count = vertices.len / 3;
-        var indices_i32 = try allocator.alloc(i32, vertices.len);
+        var indices_i32 = try allocator.alloc(i32, indices.len);
         defer allocator.free(indices_i32);
-        for (0..vertices.len) |i| {
-            indices_i32[i] = @intCast(i);
+        for (indices, 0..) |idx, i| {
+            indices_i32[i] = @intCast(idx);
         }
 
         var verts_f32 = try allocator.alloc(f32, vertices.len * 3);
@@ -164,10 +234,36 @@ const NavMeshTestData = struct {
         var cset = nav.ContourSet.init(allocator);
         defer cset.deinit();
         try nav.recast.contour.buildContours(&ctx, &chf, config.max_simplification_error, config.max_edge_len, &cset, 0, allocator);
+        std.debug.print("[DEBUG] After buildContours: nconts={}\n", .{cset.nconts});
+
+        // Show first 10 contours
+        std.debug.print("[DEBUG] Contour details:\n", .{});
+        for (cset.conts, 0..) |cont, i| {
+            if (i >= 10) break;
+            if (cont.nverts >= 3) {
+                std.debug.print("  Contour {}: nverts={}, expected_tris={}, reg={}, area={}\n", .{ i, cont.nverts, cont.nverts - 2, cont.reg, cont.area });
+            }
+        }
 
         var pmesh = nav.PolyMesh.init(allocator);
         defer pmesh.deinit();
         try nav.recast.mesh.buildPolyMesh(&ctx, &cset, @intCast(config.max_verts_per_poly), &pmesh, allocator);
+        std.debug.print("[DEBUG] After buildPolyMesh: npolys={}, nverts={}\n", .{ pmesh.npolys, pmesh.nverts });
+
+        // Show first 10 polygons
+        std.debug.print("[DEBUG] First 10 polygons:\n", .{});
+        for (0..@min(10, @as(usize, @intCast(pmesh.npolys)))) |i| {
+            var nverts: usize = 0;
+            for (0..@intCast(config.max_verts_per_poly)) |j| {
+                if (pmesh.polys[i * @as(usize, @intCast(config.max_verts_per_poly)) * 2 + j] != 0xffff) nverts += 1;
+            }
+            std.debug.print("  Poly {}: nverts={}, reg={}, area={}\n", .{ i, nverts, pmesh.regs[i], pmesh.areas[i] });
+        }
+
+        // Set walkable flags for all polygons
+        for (0..@intCast(pmesh.npolys)) |i| {
+            pmesh.flags[i] = 0x01;  // DT_POLYFLAGS_WALK
+        }
 
         var dmesh = nav.PolyMeshDetail.init(allocator);
         defer dmesh.deinit();
@@ -291,7 +387,7 @@ fn benchmark(
 
 /// Benchmark findNearestPoly
 fn benchmarkFindNearestPoly(query: *nav.NavMeshQuery, filter: *const nav.QueryFilter) !void {
-    const pos = [3]f32{ 5.0, 0.0, 5.0 };
+    const pos = [3]f32{ 25.0, 0.0, 25.0 };
     const extents = [3]f32{ 2.0, 4.0, 2.0 };
     var nearest_ref: u32 = 0;
     var nearest_pt: [3]f32 = undefined;
@@ -301,8 +397,8 @@ fn benchmarkFindNearestPoly(query: *nav.NavMeshQuery, filter: *const nav.QueryFi
 
 /// Benchmark findPath (short distance)
 fn benchmarkFindPathShort(query: *nav.NavMeshQuery, filter: *const nav.QueryFilter) !void {
-    const start_pos = [3]f32{ 1.0, 0.0, 1.0 };
-    const end_pos = [3]f32{ 3.0, 0.0, 3.0 };
+    const start_pos = [3]f32{ 25.0, 0.0, 25.0 };
+    const end_pos = [3]f32{ 30.0, 0.0, 25.0 };
     const extents = [3]f32{ 2.0, 4.0, 2.0 };
 
     var start_ref: u32 = 0;
@@ -320,8 +416,8 @@ fn benchmarkFindPathShort(query: *nav.NavMeshQuery, filter: *const nav.QueryFilt
 
 /// Benchmark findPath (long distance)
 fn benchmarkFindPathLong(query: *nav.NavMeshQuery, filter: *const nav.QueryFilter, grid_size: f32) !void {
-    const start_pos = [3]f32{ 0.5, 0.0, 0.5 };
-    const end_pos = [3]f32{ grid_size - 0.5, 0.0, grid_size - 0.5 };
+    const start_pos = [3]f32{ 10.0, 0.0, 10.0 };
+    const end_pos = [3]f32{ grid_size - 10.0, 0.0, grid_size - 10.0 };
     const extents = [3]f32{ 2.0, 4.0, 2.0 };
 
     var start_ref: u32 = 0;
@@ -339,8 +435,8 @@ fn benchmarkFindPathLong(query: *nav.NavMeshQuery, filter: *const nav.QueryFilte
 
 /// Benchmark raycast
 fn benchmarkRaycast(query: *nav.NavMeshQuery, filter: *const nav.QueryFilter) !void {
-    const start_pos = [3]f32{ 1.0, 0.0, 1.0 };
-    const end_pos = [3]f32{ 5.0, 0.0, 5.0 };
+    const start_pos = [3]f32{ 25.0, 0.0, 25.0 };
+    const end_pos = [3]f32{ 35.0, 0.0, 25.0 };
     const extents = [3]f32{ 2.0, 4.0, 2.0 };
 
     var start_ref: u32 = 0;
@@ -354,9 +450,11 @@ fn benchmarkRaycast(query: *nav.NavMeshQuery, filter: *const nav.QueryFilter) !v
 }
 
 /// Benchmark findStraightPath
+var debug_printed_findStraightPath = false;
+
 fn benchmarkFindStraightPath(query: *nav.NavMeshQuery, filter: *const nav.QueryFilter) !void {
-    const start_pos = [3]f32{ 1.0, 0.0, 1.0 };
-    const end_pos = [3]f32{ 5.0, 0.0, 5.0 };
+    const start_pos = [3]f32{ 25.0, 0.0, 25.0 };
+    const end_pos = [3]f32{ 30.0, 0.0, 25.0 };
     const extents = [3]f32{ 2.0, 4.0, 2.0 };
 
     var start_ref: u32 = 0;
@@ -365,10 +463,19 @@ fn benchmarkFindStraightPath(query: *nav.NavMeshQuery, filter: *const nav.QueryF
     try query.findNearestPoly(&start_pos, &extents, filter, &start_ref, null);
     try query.findNearestPoly(&end_pos, &extents, filter, &end_ref, null);
 
+    if (!debug_printed_findStraightPath) {
+        std.debug.print("[DEBUG] findNearestPoly: start_ref={}, end_ref={}\n", .{ start_ref, end_ref });
+    }
+
     if (start_ref != 0 and end_ref != 0) {
         var path: [256]u32 = undefined;
         var path_count: usize = 0;
         try query.findPath(start_ref, end_ref, &start_pos, &end_pos, filter, &path, &path_count);
+
+        if (!debug_printed_findStraightPath) {
+            std.debug.print("[DEBUG] findPath: path_count={}\n", .{path_count});
+            debug_printed_findStraightPath = true;
+        }
 
         if (path_count > 0) {
             var straight_path: [256 * 3]f32 = undefined;
@@ -392,7 +499,7 @@ fn benchmarkFindStraightPath(query: *nav.NavMeshQuery, filter: *const nav.QueryF
 
 /// Benchmark queryPolygons
 fn benchmarkQueryPolygons(query: *nav.NavMeshQuery, filter: *const nav.QueryFilter) !void {
-    const center = [3]f32{ 5.0, 0.0, 5.0 };
+    const center = [3]f32{ 25.0, 0.0, 25.0 };
     const half_extents = [3]f32{ 3.0, 4.0, 3.0 };
     var polys: [128]u32 = undefined;
     var poly_count: usize = 0;
@@ -402,7 +509,7 @@ fn benchmarkQueryPolygons(query: *nav.NavMeshQuery, filter: *const nav.QueryFilt
 
 /// Benchmark findDistanceToWall
 fn benchmarkFindDistanceToWall(query: *nav.NavMeshQuery, filter: *const nav.QueryFilter) !void {
-    const center_pos = [3]f32{ 5.0, 0.0, 5.0 };
+    const center_pos = [3]f32{ 25.0, 0.0, 25.0 };
     const extents = [3]f32{ 2.0, 4.0, 2.0 };
 
     var start_ref: u32 = 0;
