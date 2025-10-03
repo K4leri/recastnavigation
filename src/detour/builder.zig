@@ -631,8 +631,9 @@ pub fn createNavMeshData(
         const items = try allocator.alloc(BVItem, params.poly_count);
         defer allocator.free(items);
         const nodes = nav_bvtree[0 .. params.poly_count * 2];
-        const node_count = createBVTree(params, nodes, items);
-        header.bv_node_count = @intCast(node_count);
+        _ = createBVTree(params, nodes, items);
+        // Store maximum allocated node count, not actual count, to match size calculation
+        header.bv_node_count = @intCast(params.poly_count * 2);
     }
 
     // Store off-mesh connections
@@ -640,7 +641,8 @@ pub fn createNavMeshData(
     for (0..params.off_mesh_con_count) |i| {
         if (off_mesh_con_class[i * 2 + 0] == 0xff) {
             var con = &off_mesh_cons[n];
-            con.poly = @intCast(off_mesh_poly_base + n);
+            const poly_idx = off_mesh_poly_base + n;
+            con.poly = @intCast(poly_idx);
 
             // Copy connection end-points
             const end_pts = params.off_mesh_con_verts.?;
@@ -657,6 +659,7 @@ pub fn createNavMeshData(
             if (params.off_mesh_con_user_id) |user_ids| {
                 con.user_id = user_ids[i];
             }
+
             n += 1;
         }
     }
@@ -763,14 +766,14 @@ test "createNavMeshData - with off-mesh connections" {
 
     // Simple triangle
     const verts = [_]u16{
-        0, 0, 0,
+        0,   0, 0,
         100, 0, 0,
-        50, 0, 100,
+        50,  0, 100,
     };
 
     const nvp = 3;
     const polys = [_]u16{
-        0, 1, 2, MESH_NULL_IDX, MESH_NULL_IDX, MESH_NULL_IDX,
+        0,             1,             2,             MESH_NULL_IDX, MESH_NULL_IDX, MESH_NULL_IDX,
         MESH_NULL_IDX, MESH_NULL_IDX, MESH_NULL_IDX, MESH_NULL_IDX, MESH_NULL_IDX, MESH_NULL_IDX,
     };
 

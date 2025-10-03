@@ -74,8 +74,10 @@ pub const Config = struct {
     }
 
     pub fn calcGridSize(min_bounds: Vec3, max_bounds: Vec3, cell_size: f32, size_x: *i32, size_z: *i32) void {
-        size_x.* = @intFromFloat(@ceil((max_bounds.x - min_bounds.x) / cell_size));
-        size_z.* = @intFromFloat(@ceil((max_bounds.z - min_bounds.z) / cell_size));
+        // Match C++ behavior: round to nearest (not ceil!)
+        // C++: (int)((maxBounds[0] - minBounds[0]) / cellSize + 0.5f)
+        size_x.* = @intFromFloat(@round((max_bounds.x - min_bounds.x) / cell_size));
+        size_z.* = @intFromFloat(@round((max_bounds.z - min_bounds.z) / cell_size));
     }
 };
 

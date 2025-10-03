@@ -442,9 +442,9 @@ pub fn countPolyVerts(p: []const u16, nvp: usize) usize {
 /// INTERNAL: Exported for testing purposes only
 pub inline fn uleft(a: []const u16, b: []const u16, c: []const u16) bool {
     return (@as(i32, @intCast(b[0])) - @as(i32, @intCast(a[0]))) *
-           (@as(i32, @intCast(c[2])) - @as(i32, @intCast(a[2]))) -
-           (@as(i32, @intCast(c[0])) - @as(i32, @intCast(a[0]))) *
-           (@as(i32, @intCast(b[2])) - @as(i32, @intCast(a[2]))) < 0;
+        (@as(i32, @intCast(c[2])) - @as(i32, @intCast(a[2]))) -
+        (@as(i32, @intCast(c[0])) - @as(i32, @intCast(a[0]))) *
+            (@as(i32, @intCast(b[2])) - @as(i32, @intCast(a[2]))) < 0;
 }
 
 /// Returns merge value for two polygons if they can be merged (shared edge + convexity check)
@@ -708,6 +708,8 @@ fn removeVertex(
     const hole = try allocator.alloc(i32, num_removed_verts * nvp);
     defer allocator.free(hole);
     var nhole: usize = 0;
+    var nhreg: usize = 0;
+    var nharea: usize = 0;
 
     const hreg = try allocator.alloc(i32, num_removed_verts * nvp);
     defer allocator.free(hreg);
@@ -715,6 +717,7 @@ fn removeVertex(
     const harea = try allocator.alloc(i32, num_removed_verts * nvp);
     defer allocator.free(harea);
 
+    var polys_with_rem: usize = 0;
     var i: usize = 0;
     while (i < @as(usize, @intCast(mesh.npolys))) {
         const p = mesh.polys[i * nvp * 2 .. i * nvp * 2 + nvp];
@@ -728,6 +731,7 @@ fn removeVertex(
         }
 
         if (has_rem) {
+            polys_with_rem += 1;
             // Collect edges which do not touch the removed vertex
             var j: usize = 0;
             var k: usize = nv - 1;
@@ -745,14 +749,16 @@ fn removeVertex(
             }
 
             // Remove the polygon
+            const p_full = mesh.polys[i * nvp * 2 .. i * nvp * 2 + nvp * 2];
             const p2 = mesh.polys[(@as(usize, @intCast(mesh.npolys)) - 1) * nvp * 2 .. (@as(usize, @intCast(mesh.npolys)) - 1) * nvp * 2 + nvp];
             if (p.ptr != p2.ptr) {
                 @memcpy(@constCast(p), p2);
             }
-            @memset(@constCast(p[nvp..nvp * 2]), MESH_NULL_IDX);
+            @memset(@constCast(p_full[nvp .. nvp * 2]), MESH_NULL_IDX);
             mesh.regs[i] = mesh.regs[@intCast(mesh.npolys - 1)];
             mesh.areas[i] = mesh.areas[@intCast(mesh.npolys - 1)];
             mesh.npolys -= 1;
+            // Don't increment i - we need to check the polygon that was moved to this position
         } else {
             i += 1;
         }
@@ -794,8 +800,8 @@ fn removeVertex(
 
     // Start with one vertex, keep appending connected segments
     pushBack(edges[0], hole, &nhole);
-    pushBack(edges[2], hreg, &nhole);
-    pushBack(edges[3], harea, &nhole);
+    pushBack(edges[2], hreg, &nhreg);
+    pushBack(edges[3], harea, &nharea);
 
     while (nedges > 0) {
         var match = false;
@@ -810,13 +816,13 @@ fn removeVertex(
 
             if (hole[0] == eb) {
                 pushFront(ea, hole, &nhole);
-                pushFront(r, hreg, &nhole);
-                pushFront(a, harea, &nhole);
+                pushFront(r, hreg, &nhreg);
+                pushFront(a, harea, &nharea);
                 add = true;
             } else if (hole[nhole - 1] == ea) {
                 pushBack(eb, hole, &nhole);
-                pushBack(r, hreg, &nhole);
-                pushBack(a, harea, &nhole);
+                pushBack(r, hreg, &nhreg);
+                pushBack(a, harea, &nharea);
                 add = true;
             }
 
@@ -1230,7 +1236,8 @@ pub fn copyPolyMesh(
 ) !void {
     // Destination должен быть пуст
     if (dst.verts.len > 0 or dst.polys.len > 0 or dst.regs.len > 0 or
-        dst.areas.len > 0 or dst.flags.len > 0) {
+        dst.areas.len > 0 or dst.flags.len > 0)
+    {
         ctx.log(.err, "copyPolyMesh: Destination mesh must be empty", .{});
         return error.DestinationNotEmpty;
     }
@@ -1250,13 +1257,13 @@ pub fn copyPolyMesh(
     // Allocate и копируем verts
     const nverts_usize: usize = @intCast(src.nverts);
     dst.verts = try dst.allocator.alloc(u16, nverts_usize * 3);
-    @memcpy(dst.verts, src.verts[0..nverts_usize * 3]);
+    @memcpy(dst.verts, src.verts[0 .. nverts_usize * 3]);
 
     // Allocate и копируем polys
     const npolys_usize: usize = @intCast(src.npolys);
     const nvp_usize: usize = @intCast(src.nvp);
     dst.polys = try dst.allocator.alloc(u16, npolys_usize * 2 * nvp_usize);
-    @memcpy(dst.polys, src.polys[0..npolys_usize * 2 * nvp_usize]);
+    @memcpy(dst.polys, src.polys[0 .. npolys_usize * 2 * nvp_usize]);
 
     // Allocate и копируем regs
     dst.regs = try dst.allocator.alloc(u16, npolys_usize);

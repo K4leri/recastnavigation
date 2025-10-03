@@ -1133,12 +1133,13 @@ pub const NavMeshQuery = struct {
         straight_path_count: *usize,
         options: u32,
     ) !common.Status {
+        @setRuntimeSafety(false);
         const nav = self.nav orelse return error.NoNavMesh;
 
         straight_path_count.* = 0;
 
-        if (!math.Vec3.fromArray(start_pos).isFinite() or
-            !math.Vec3.fromArray(end_pos).isFinite() or
+        if (!math.visFinite(start_pos) or
+            !math.visFinite(end_pos) or
             path.len == 0 or
             path[0] == 0 or
             straight_path.len < 3)
@@ -1225,9 +1226,9 @@ pub const NavMeshQuery = struct {
                 }
 
                 // Right vertex
-                if (math.triArea2D(math.Vec3.fromArray(&portal_apex), math.Vec3.fromArray(&portal_right), math.Vec3.fromArray(&right)) <= 0.0) {
-                    if (math.Vec3.fromArray(&portal_apex).equal(math.Vec3.fromArray(&portal_right)) or
-                        math.triArea2D(math.Vec3.fromArray(&portal_apex), math.Vec3.fromArray(&portal_left), math.Vec3.fromArray(&right)) > 0.0)
+                if (math.triArea2DArray(&portal_apex, &portal_right, &right) <= 0.0) {
+                    if (math.vequal(&portal_apex, &portal_right) or
+                        math.triArea2DArray(&portal_apex, &portal_left, &right) > 0.0)
                     {
                         math.vcopy(&portal_right, &right);
                         right_poly_ref = if (i + 1 < path.len) path[i + 1] else 0;
@@ -1270,9 +1271,9 @@ pub const NavMeshQuery = struct {
                 }
 
                 // Left vertex
-                if (math.triArea2D(math.Vec3.fromArray(&portal_apex), math.Vec3.fromArray(&portal_left), math.Vec3.fromArray(&left)) >= 0.0) {
-                    if (math.Vec3.fromArray(&portal_apex).equal(math.Vec3.fromArray(&portal_left)) or
-                        math.triArea2D(math.Vec3.fromArray(&portal_apex), math.Vec3.fromArray(&portal_right), math.Vec3.fromArray(&left)) < 0.0)
+                if (math.triArea2DArray(&portal_apex, &portal_left, &left) >= 0.0) {
+                    if (math.vequal(&portal_apex, &portal_left) or
+                        math.triArea2DArray(&portal_apex, &portal_right, &left) < 0.0)
                     {
                         math.vcopy(&portal_left, &left);
                         left_poly_ref = if (i + 1 < path.len) path[i + 1] else 0;

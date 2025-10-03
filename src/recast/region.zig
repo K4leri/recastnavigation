@@ -922,13 +922,13 @@ fn mergeAndFilterRegions(
         }
     }
 
-    // Debug: log region span counts
-    ctx.log(.progress, "mergeAndFilterRegions: Region span counts:", .{});
-    for (regions) |*reg| {
-        if (reg.id > 0 and reg.span_count > 0 and (reg.id & BORDER_REG) == 0) {
-            ctx.log(.progress, "  Region {d}: {d} spans, {d} connections", .{ reg.id, reg.span_count, reg.connections.items.len });
-        }
-    }
+    // Debug: log region span counts (disabled for performance)
+    // ctx.log(.progress, "mergeAndFilterRegions: Region span counts:", .{});
+    // for (regions) |*reg| {
+    //     if (reg.id > 0 and reg.span_count > 0 and (reg.id & BORDER_REG) == 0) {
+    //         ctx.log(.progress, "  Region {d}: {d} spans, {d} connections", .{ reg.id, reg.span_count, reg.connections.items.len });
+    //     }
+    // }
 
     // Remove too small regions
     var stack = std.ArrayList(i32).init(allocator);
