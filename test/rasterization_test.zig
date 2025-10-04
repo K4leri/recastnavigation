@@ -245,13 +245,13 @@ test "rasterization - large mesh performance" {
     const ctx = Context.init(allocator);
 
     // Generate a grid of triangles
-    var verts = std.ArrayList(f32).init(allocator);
+    var verts = std.array_list.Managed(f32).init(allocator);
     defer verts.deinit();
 
-    var tris = std.ArrayList(i32).init(allocator);
+    var tris = std.array_list.Managed(i32).init(allocator);
     defer tris.deinit();
 
-    var areas = std.ArrayList(u8).init(allocator);
+    var areas = std.array_list.Managed(u8).init(allocator);
     defer areas.deinit();
 
     // Create 10x10 grid

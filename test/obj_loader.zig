@@ -21,17 +21,19 @@ pub fn loadObj(file_path: []const u8, allocator: std.mem.Allocator) !ObjMesh {
     const file = try std.fs.cwd().openFile(file_path, .{});
     defer file.close();
 
-    var vertices = std.ArrayList(f32).init(allocator);
+    var vertices = std.array_list.Managed(f32).init(allocator);
     defer vertices.deinit();
 
-    var indices = std.ArrayList(i32).init(allocator);
+    var indices = std.array_list.Managed(i32).init(allocator);
     defer indices.deinit();
 
-    var buf_reader = std.io.bufferedReader(file.reader());
-    var in_stream = buf_reader.reader();
+    // New I/O API in Zig 0.15.1 - streaming mode with dynamic buffer
+    // Buffer size can be adjusted based on expected line length
+    var read_buffer: [8192]u8 = undefined; // 8KB buffer for longer lines
+    var file_reader = file.readerStreaming(&read_buffer);
+    const reader = &file_reader.interface;
 
-    var buf: [1024]u8 = undefined;
-    while (try in_stream.readUntilDelimiterOrEof(&buf, '\n')) |line| {
+    while (reader.takeDelimiterExclusive('\n')) |line| {
         var trimmed = std.mem.trim(u8, line, " \t\r");
         if (trimmed.len == 0) continue;
 
@@ -50,7 +52,7 @@ pub fn loadObj(file_path: []const u8, allocator: std.mem.Allocator) !ObjMesh {
         } else if (std.mem.startsWith(u8, trimmed, "f ")) {
             // Face: f v1/vt1/vn1 v2/vt2/vn2 v3/vt3/vn3 [v4/vt4/vn4]
             var iter = std.mem.tokenizeScalar(u8, trimmed[2..], ' ');
-            var face_verts = std.ArrayList(i32).init(allocator);
+            var face_verts = std.array_list.Managed(i32).init(allocator);
             defer face_verts.deinit();
 
             while (iter.next()) |token| {
@@ -80,6 +82,10 @@ pub fn loadObj(file_path: []const u8, allocator: std.mem.Allocator) !ObjMesh {
             }
             // Ignore faces with > 4 vertices for now
         }
+    } else |err| switch (err) {
+        error.EndOfStream => {}, // Normal end of file
+        error.StreamTooLong => return error.LineTooLong, // Line exceeds buffer size
+        error.ReadFailed => return error.ReadFailed,
     }
 
     const vertex_count = vertices.items.len / 3;

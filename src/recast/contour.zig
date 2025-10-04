@@ -107,7 +107,7 @@ fn walkContour(
     start_i: usize,
     chf: *const CompactHeightfield,
     flags: []u8,
-    points: *std.ArrayList(i32),
+    points: *std.array_list.Managed(i32),
 ) !void {
     var x = start_x;
     var y = start_y;
@@ -230,8 +230,8 @@ pub fn distancePtSeg(x: i32, z: i32, px: i32, pz: i32, qx: i32, qz: i32) f32 {
 /// Simplifies a contour using Douglas-Peucker algorithm
 /// INTERNAL: Exported for testing purposes only
 pub fn simplifyContour(
-    points: *const std.ArrayList(i32),
-    simplified: *std.ArrayList(i32),
+    points: *const std.array_list.Managed(i32),
+    simplified: *std.array_list.Managed(i32),
     max_error: f32,
     max_edge_len: i32,
     build_flags: i32,
@@ -465,7 +465,7 @@ fn vequal(a: []const i32, b: []const i32) bool {
 }
 
 /// Removes degenerate segments (adjacent equal vertices)
-fn removeDegenerateSegments(simplified: *std.ArrayList(i32)) void {
+fn removeDegenerateSegments(simplified: *std.array_list.Managed(i32)) void {
     var npts = @divTrunc(simplified.items.len, 4);
     var i: usize = 0;
     while (i < npts) {
@@ -695,15 +695,15 @@ pub fn buildContours(
 
     ctx.log(.progress, "buildContours: Walking contours...", .{});
 
-    var verts = std.ArrayList(i32).init(allocator);
+    var verts = std.array_list.Managed(i32).init(allocator);
     defer verts.deinit();
     try verts.ensureTotalCapacity(256);
 
-    var simplified = std.ArrayList(i32).init(allocator);
+    var simplified = std.array_list.Managed(i32).init(allocator);
     defer simplified.deinit();
     try simplified.ensureTotalCapacity(64);
 
-    var contours = std.ArrayList(Contour).init(allocator);
+    var contours = std.array_list.Managed(Contour).init(allocator);
     defer {
         // Clean up contours on error
         for (contours.items) |*cont| {

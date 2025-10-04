@@ -31,62 +31,61 @@ fn createTestNavMesh(allocator: std.mem.Allocator, grid_size: usize) !struct {
     query: *nav.detour.NavMeshQuery,
 } {
 
-    // Create simple flat grid
-    const vertex_count = grid_size * grid_size;
-    const triangle_count = (grid_size - 1) * (grid_size - 1) * 2;
+    // Create grid EXACTLY like C++ Bench_Detour.cpp
+    // (which is what actually runs, not Bench_Detour_Detailed.cpp)
+    // Uses 4 vertices per quad + height variation
+    const cell_size: f32 = 1.0;
+    var temp_verts = std.array_list.Managed(nav.Vec3).init(allocator);
+    defer temp_verts.deinit();
+    var temp_indices = std.array_list.Managed(i32).init(allocator);
+    defer temp_indices.deinit();
 
-    var vertices = try allocator.alloc(f32, vertex_count * 3);
-    defer allocator.free(vertices);
-
-    var triangles = try allocator.alloc(i32, triangle_count * 3);
-    defer allocator.free(triangles);
-
-    // Create vertex grid
-    var vidx: usize = 0;
-    for (0..grid_size) |z| {
-        for (0..grid_size) |x| {
-            vertices[vidx] = @as(f32, @floatFromInt(x));
-            vidx += 1;
-            vertices[vidx] = 0.0;
-            vidx += 1;
-            vertices[vidx] = @as(f32, @floatFromInt(z));
-            vidx += 1;
-        }
-    }
-
-    // Create triangle indices
-    var tidx: usize = 0;
     for (0..grid_size - 1) |z| {
         for (0..grid_size - 1) |x| {
-            const v0: i32 = @intCast(z * grid_size + x);
-            const v1 = v0 + 1;
-            const v2 = v0 + @as(i32, @intCast(grid_size));
-            const v3 = v2 + 1;
+            // Skip cells to create obstacles (every 5th cell) - EXACT C++ logic
+            if ((x % 5 == 2 or z % 5 == 2) and (x > 5 and x < grid_size - 5 and z > 5 and z < grid_size - 5)) {
+                continue; // Create obstacle
+            }
+
+            const fx = @as(f32, @floatFromInt(x)) * cell_size;
+            const fz = @as(f32, @floatFromInt(z)) * cell_size;
+            const fx1 = fx + cell_size;
+            const fz1 = fz + cell_size;
+            const fy = @as(f32, @floatFromInt((x + z) % 3)) * 0.01;
+
+            const base_idx: i32 = @intCast(temp_verts.items.len);
+
+            // Add 4 vertices for this cell
+            try temp_verts.append(nav.Vec3.init(fx, fy, fz));
+            try temp_verts.append(nav.Vec3.init(fx1, fy, fz));
+            try temp_verts.append(nav.Vec3.init(fx1, fy, fz1));
+            try temp_verts.append(nav.Vec3.init(fx, fy, fz1));
 
             // Triangle 1
-            triangles[tidx] = v0;
-            tidx += 1;
-            triangles[tidx] = v1;
-            tidx += 1;
-            triangles[tidx] = v3;
-            tidx += 1;
+            try temp_indices.append(base_idx + 0);
+            try temp_indices.append(base_idx + 1);
+            try temp_indices.append(base_idx + 2);
 
             // Triangle 2
-            triangles[tidx] = v0;
-            tidx += 1;
-            triangles[tidx] = v3;
-            tidx += 1;
-            triangles[tidx] = v2;
-            tidx += 1;
+            try temp_indices.append(base_idx + 0);
+            try temp_indices.append(base_idx + 2);
+            try temp_indices.append(base_idx + 3);
         }
     }
 
-    // Build NavMesh through Recast
+    const vertices = temp_verts.items;
+    const triangles = temp_indices.items;
+    const vertex_count = vertices.len;
+    const triangle_count = triangles.len / 3;
+
+    std.debug.print("[GEOM] vertexCount={}, triangleCount={}\n", .{vertex_count, triangle_count});
+
+    // Build NavMesh through Recast - match C++ exactly
     var config = nav.RecastConfig{
         .width = 0,
         .height = 0,
         .tile_size = 0,
-        .border_size = 0,
+        .border_size = 0, // C++ doesn't set this explicitly, defaults to 0
         .cs = 0.3,
         .ch = 0.2,
         .bmin = nav.math.Vec3.init(0, 0, 0),
@@ -94,7 +93,7 @@ fn createTestNavMesh(allocator: std.mem.Allocator, grid_size: usize) !struct {
         .walkable_slope_angle = 45.0,
         .walkable_height = 20,
         .walkable_climb = 9,
-        .walkable_radius = 8,
+        .walkable_radius = 2, // Match C++ Bench_Detour.cpp (NOT Detailed!)
         .max_edge_len = 12,
         .max_simplification_error = 1.3,
         .min_region_area = 8,
@@ -105,51 +104,83 @@ fn createTestNavMesh(allocator: std.mem.Allocator, grid_size: usize) !struct {
     };
 
     nav.RecastConfig.calcBounds(vertices, &config.bmin, &config.bmax);
-    nav.RecastConfig.calcGridSize(&config);
+    nav.RecastConfig.calcGridSize(config.bmin, config.bmax, config.cs, &config.width, &config.height);
 
-    const ctx = try nav.RecastContext.init(allocator);
-    defer ctx.deinit();
+    const ctx = nav.Context.init(allocator);
 
-    var hf = try nav.RecastHeightfield.init(allocator, config.width, config.height, &config.bmin, &config.bmax, config.cs, config.ch);
-    defer hf.deinit(allocator);
+    var hf = try nav.recast.Heightfield.init(allocator, config.width, config.height, config.bmin, config.bmax, config.cs, config.ch);
+    defer hf.deinit();
+
+    var verts_f32 = try allocator.alloc(f32, vertex_count * 3);
+    defer allocator.free(verts_f32);
+    for (vertices, 0..) |v, i| {
+        verts_f32[i * 3 + 0] = v.x;
+        verts_f32[i * 3 + 1] = v.y;
+        verts_f32[i * 3 + 2] = v.z;
+    }
 
     const areas = try allocator.alloc(u8, triangle_count);
     defer allocator.free(areas);
-    @memset(areas, nav.WALKABLE_AREA);
+    @memset(areas, 1);
 
-    try nav.markWalkableTriangles(ctx, config.walkable_slope_angle, vertices, triangles, areas);
-    try nav.rasterizeTriangles(ctx, vertices, triangles, areas, &hf, config.walkable_climb);
+    try nav.recast.rasterization.rasterizeTriangles(&ctx, verts_f32, triangles, areas, &hf, config.walkable_climb);
+    std.debug.print("[DEBUG] After rasterization: {} spans in heightfield\n", .{hf.getSpanCount()});
 
-    try nav.filterLowHangingWalkableObstacles(ctx, config.walkable_climb, &hf);
-    try nav.filterLedgeSpans(ctx, config.walkable_height, config.walkable_climb, &hf);
-    try nav.filterWalkableLowHeightSpans(ctx, config.walkable_height, &hf);
+    nav.recast.filter.filterLowHangingWalkableObstacles(&ctx, config.walkable_climb, &hf);
+    nav.recast.filter.filterLedgeSpans(&ctx, config.walkable_height, config.walkable_climb, &hf);
+    nav.recast.filter.filterWalkableLowHeightSpans(&ctx, config.walkable_height, &hf);
 
-    var chf = try nav.RecastCompactHeightfield.init(allocator, &hf, config.walkable_height, config.walkable_climb);
-    defer chf.deinit(allocator);
+    const span_count = nav.recast.compact.getHeightFieldSpanCount(&ctx, &hf);
+    var chf = try nav.CompactHeightfield.init(allocator, config.width, config.height, @intCast(span_count), config.walkable_height, config.walkable_climb, config.bmin, config.bmax, config.cs, config.ch, config.border_size);
+    defer chf.deinit();
 
-    try nav.erodeWalkableArea(ctx, config.walkable_radius, &chf);
-    try nav.buildDistanceField(ctx, &chf);
-    try nav.buildRegions(ctx, &chf, config.border_size, config.min_region_area, config.merge_region_area);
+    try nav.recast.compact.buildCompactHeightfield(&ctx, config.walkable_height, config.walkable_climb, &hf, &chf);
+    std.debug.print("[DEBUG] After buildCompactHeightfield: span_count={}\n", .{chf.span_count});
 
-    var cset = try nav.RecastContourSet.init(allocator);
-    defer cset.deinit(allocator);
-    try nav.buildContours(ctx, &chf, config.max_simplification_error, config.max_edge_len, &cset);
+    try nav.recast.area.erodeWalkableArea(&ctx, config.walkable_radius, &chf, allocator);
 
-    var pmesh = try nav.RecastPolyMesh.init(allocator);
-    defer pmesh.deinit(allocator);
-    try nav.buildPolyMesh(ctx, &cset, config.max_verts_per_poly, &pmesh);
+    // Count walkable spans after erosion
+    var walkable_count: usize = 0;
+    for (chf.areas) |area| {
+        if (area != 0) walkable_count += 1;
+    }
+    std.debug.print("[DEBUG] After erodeWalkableArea: walkable_radius={}, walkable_spans={}\n", .{config.walkable_radius, walkable_count});
 
-    var dmesh = try nav.RecastPolyMeshDetail.init(allocator);
-    defer dmesh.deinit(allocator);
-    try nav.buildPolyMeshDetail(ctx, &pmesh, &chf, config.detail_sample_dist, config.detail_sample_max_error, &dmesh);
+    try nav.recast.region.buildDistanceField(&ctx, &chf, allocator);
+    try nav.recast.region.buildRegions(&ctx, &chf, config.border_size, config.min_region_area, config.merge_region_area, allocator);
+    std.debug.print("[DEBUG] After buildRegions: max_regions={}\n", .{chf.max_regions});
+
+    var cset = nav.ContourSet.init(allocator);
+    defer cset.deinit();
+    try nav.recast.contour.buildContours(&ctx, &chf, config.max_simplification_error, config.max_edge_len, &cset, 0, allocator);
+
+    var pmesh = nav.PolyMesh.init(allocator);
+    defer pmesh.deinit();
+    try nav.recast.mesh.buildPolyMesh(&ctx, &cset, @intCast(config.max_verts_per_poly), &pmesh, allocator);
+
+    std.debug.print("[DEBUG] After buildPolyMesh: npolys={}, nverts={}\n", .{pmesh.npolys, pmesh.nverts});
+
+    var dmesh = nav.PolyMeshDetail.init(allocator);
+    defer dmesh.deinit();
+    try nav.recast.detail.buildPolyMeshDetail(&ctx, &pmesh, &chf, config.detail_sample_dist, config.detail_sample_max_error, &dmesh, allocator);
 
     // Create NavMesh
-    var params = nav.detour.NavMeshCreateParams{
+    const nm_params = nav.NavMeshParams{
+        .orig = config.bmin,
+        .tile_width = @as(f32, @floatFromInt(config.width)) * config.cs,
+        .tile_height = @as(f32, @floatFromInt(config.height)) * config.cs,
+        .max_tiles = 1,
+        .max_polys = 512,
+    };
+    const navmesh = try allocator.create(nav.NavMesh);
+    navmesh.* = try nav.NavMesh.init(allocator, nm_params);
+
+    var navmesh_create_params = nav.detour.NavMeshCreateParams{
         .verts = pmesh.verts,
         .vert_count = @intCast(pmesh.nverts),
         .polys = pmesh.polys,
-        .poly_areas = pmesh.areas,
         .poly_flags = pmesh.flags,
+        .poly_areas = pmesh.areas,
         .poly_count = @intCast(pmesh.npolys),
         .nvp = @intCast(pmesh.nvp),
         .detail_meshes = dmesh.meshes,
@@ -157,9 +188,9 @@ fn createTestNavMesh(allocator: std.mem.Allocator, grid_size: usize) !struct {
         .detail_verts_count = @intCast(dmesh.nverts),
         .detail_tris = dmesh.tris,
         .detail_tri_count = @intCast(dmesh.ntris),
-        .walkable_height = config.walkable_height,
-        .walkable_radius = config.walkable_radius,
-        .walkable_climb = config.walkable_climb,
+        .walkable_height = @floatFromInt(config.walkable_height),
+        .walkable_radius = @floatFromInt(config.walkable_radius),
+        .walkable_climb = @floatFromInt(config.walkable_climb),
         .bmin = config.bmin.toArray(),
         .bmax = config.bmax.toArray(),
         .cs = config.cs,
@@ -178,19 +209,17 @@ fn createTestNavMesh(allocator: std.mem.Allocator, grid_size: usize) !struct {
         .tile_layer = 0,
     };
 
-    const navmesh_data = try nav.detour.createNavMeshData(&params, allocator);
-    defer allocator.free(navmesh_data);
+    const navmesh_data = try nav.detour.createNavMeshData(&navmesh_create_params, allocator);
+    _ = try navmesh.addTile(navmesh_data, .{ .free_data = true }, 0);
 
-    const navmesh = try nav.detour.NavMesh.init(allocator);
-    _ = try navmesh.addTile(navmesh_data, .free_data, 0, allocator);
-
-    const query = try nav.detour.NavMeshQuery.init(navmesh, 2048, allocator);
+    const query = try nav.NavMeshQuery.init(allocator);
+    try query.initQuery(navmesh, 2048);
 
     return .{ .navmesh = navmesh, .query = query };
 }
 
 fn benchmarkFindStraightPath(
-    comptime name: []const u8,
+    name: []const u8,
     query: *nav.detour.NavMeshQuery,
     start_pos: [3]f32,
     end_pos: [3]f32,
@@ -279,7 +308,12 @@ fn benchmarkFindStraightPath(
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
+    defer {
+        const leaked = gpa.deinit();
+        if (leaked == .leak) {
+            std.debug.print("Memory leaked!\n", .{});
+        }
+    }
     const allocator = gpa.allocator();
 
     std.debug.print("\n", .{});
@@ -296,8 +330,9 @@ pub fn main() !void {
     std.debug.print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n", .{});
 
     const test_data = try createTestNavMesh(allocator, 50);
-    defer test_data.navmesh.deinit(allocator);
-    defer test_data.query.deinit(allocator);
+    defer allocator.destroy(test_data.navmesh);
+    defer test_data.navmesh.deinit();
+    defer test_data.query.deinit();
 
     // Test scenarios
     const scenarios = [_]struct {
