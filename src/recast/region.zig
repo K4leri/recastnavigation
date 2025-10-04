@@ -1370,7 +1370,7 @@ pub fn buildRegionsMonotone(
         chf.spans[i].reg = src_reg[i];
     }
 
-    ctx.log(.info, "buildRegionsMonotone: Created {d} regions", .{id - 1});
+    ctx.log(.progress, "buildRegionsMonotone: Created {d} regions", .{id - 1});
 }
 
 /// Структура для отслеживания регионов
