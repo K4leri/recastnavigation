@@ -489,8 +489,8 @@ fn delaunayHull(
     pts: [*]const f32,
     nhull: i32,
     hull: []const i32,
-    tris: *std.ArrayList(i32),
-    edges: *std.ArrayList(i32),
+    tris: *std.array_list.Managed(i32),
+    edges: *std.array_list.Managed(i32),
 ) !void {
     var nfaces: i32 = 0;
     var nedges: i32 = 0;
@@ -588,7 +588,7 @@ fn onHull(a: i32, b: i32, nhull: i32, hull: []const i32) bool {
 }
 
 /// Set triangle edge flags
-fn setTriFlags(tris: *std.ArrayList(i32), nhull: i32, hull: []const i32) void {
+fn setTriFlags(tris: *std.array_list.Managed(i32), nhull: i32, hull: []const i32) void {
     var i: usize = 0;
     while (i < tris.items.len) : (i += 4) {
         const a = tris.items[i + 0];
@@ -609,7 +609,7 @@ fn triangulateHull(
     nhull: i32,
     hull: []const i32,
     nin: i32,
-    tris: *std.ArrayList(i32),
+    tris: *std.array_list.Managed(i32),
 ) !void {
     // Helper functions for circular indexing
     const prev = struct {
@@ -701,7 +701,7 @@ fn seedArrayWithPolyCenter(
     verts: []const u16,
     bs: i32,
     hp: *const HeightPatch,
-    array: *std.ArrayList(i32),
+    array: *std.array_list.Managed(i32),
 ) !void {
     const offset = [_]i32{
         0, 0, -1, -1, 0, -1, 1, -1, 1, 0, 1, 1, 0, 1, -1, 1, -1, 0,
@@ -822,7 +822,7 @@ fn getHeightData(
     verts: []const u16,
     bs: i32,
     hp: *HeightPatch,
-    queue: *std.ArrayList(i32),
+    queue: *std.array_list.Managed(i32),
     region: u16,
 ) !void {
     try queue.resize(0);
@@ -937,9 +937,9 @@ fn buildPolyDetail(
     hp: *const HeightPatch,
     verts: []f32,
     nverts: *i32,
-    tris: *std.ArrayList(i32),
-    edges: *std.ArrayList(i32),
-    samples: *std.ArrayList(i32),
+    tris: *std.array_list.Managed(i32),
+    edges: *std.array_list.Managed(i32),
+    samples: *std.array_list.Managed(i32),
 ) !bool {
     var edge_verts: [MAX_VERTS_PER_EDGE + 1][3]f32 = undefined;
     var hull: [MAX_VERTS]i32 = undefined;
@@ -1188,13 +1188,13 @@ pub fn buildPolyMeshDetail(
     const border_size = mesh.border_size;
     const height_search_radius = @max(1, @as(i32, @intFromFloat(@ceil(mesh.max_edge_error))));
 
-    var edges = std.ArrayList(i32).init(allocator);
+    var edges = std.array_list.Managed(i32).init(allocator);
     defer edges.deinit();
-    var tris = std.ArrayList(i32).init(allocator);
+    var tris = std.array_list.Managed(i32).init(allocator);
     defer tris.deinit();
-    var arr = std.ArrayList(i32).init(allocator);
+    var arr = std.array_list.Managed(i32).init(allocator);
     defer arr.deinit();
-    var samples = std.ArrayList(i32).init(allocator);
+    var samples = std.array_list.Managed(i32).init(allocator);
     defer samples.deinit();
 
     var verts: [256 * 3]f32 = undefined;

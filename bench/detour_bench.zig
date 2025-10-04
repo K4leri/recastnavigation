@@ -47,10 +47,10 @@ const NavMeshTestData = struct {
         const cell_size: f32 = 1.0;
 
         // Build indexed mesh with shared vertices
-        var temp_verts = std.ArrayList(nav.Vec3).init(allocator);
+        var temp_verts = std.array_list.Managed(nav.Vec3).init(allocator);
         defer temp_verts.deinit();
 
-        var temp_indices = std.ArrayList(usize).init(allocator);
+        var temp_indices = std.array_list.Managed(usize).init(allocator);
         defer temp_indices.deinit();
 
         var z: usize = 0;

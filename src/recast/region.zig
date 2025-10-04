@@ -302,7 +302,7 @@ fn floodRegion(
     chf: *CompactHeightfield,
     src_reg: []u16,
     src_dist: []u16,
-    stack: *std.ArrayList(LevelStackEntry),
+    stack: *std.array_list.Managed(LevelStackEntry),
 ) !bool {
     const w = chf.width;
     const area = chf.areas[i];
@@ -396,7 +396,7 @@ fn expandRegions(
     chf: *CompactHeightfield,
     src_reg: []u16,
     src_dist: []u16,
-    stack: *std.ArrayList(LevelStackEntry),
+    stack: *std.array_list.Managed(LevelStackEntry),
     fill_stack: bool,
     allocator: std.mem.Allocator,
 ) !void {
@@ -432,7 +432,7 @@ fn expandRegions(
         }
     }
 
-    var dirty_entries = std.ArrayList(DirtyEntry).init(allocator);
+    var dirty_entries = std.array_list.Managed(DirtyEntry).init(allocator);
     defer dirty_entries.deinit();
 
     var iter: i32 = 0;
@@ -519,7 +519,7 @@ fn sortCellsByLevel(
     start_level: u16,
     chf: *const CompactHeightfield,
     src_reg: []const u16,
-    stacks: []std.ArrayList(LevelStackEntry),
+    stacks: []std.array_list.Managed(LevelStackEntry),
     log_levels_per_stack: u4,
 ) void {
     const w = chf.width;
@@ -565,8 +565,8 @@ fn sortCellsByLevel(
 /// Appends unprocessed entries from source stack to destination stack.
 /// Used to carry over leftover cells from previous level.
 fn appendStacks(
-    src_stack: *const std.ArrayList(LevelStackEntry),
-    dst_stack: *std.ArrayList(LevelStackEntry),
+    src_stack: *const std.array_list.Managed(LevelStackEntry),
+    dst_stack: *std.array_list.Managed(LevelStackEntry),
     src_reg: []const u16,
 ) void {
     for (src_stack.items) |entry| {
@@ -677,7 +677,7 @@ fn mergeRegions(reg_a: *Region, reg_b: *Region, allocator: std.mem.Allocator) !b
     const bid = reg_b.id;
 
     // Duplicate current neighbourhood
-    var acon = std.ArrayList(i32).init(allocator);
+    var acon = std.array_list.Managed(i32).init(allocator);
     defer acon.deinit();
     try acon.appendSlice(reg_a.connections.items);
 
@@ -766,7 +766,7 @@ fn walkContour(
     dir_start: u2,
     chf: *const CompactHeightfield,
     src_reg: []const u16,
-    cont: *std.ArrayList(i32),
+    cont: *std.array_list.Managed(i32),
 ) !void {
     var x = x_start;
     var y = y_start;
@@ -850,7 +850,7 @@ fn mergeAndFilterRegions(
     max_region_id: *u16,
     chf: *CompactHeightfield,
     src_reg: []u16,
-    overlaps: *std.ArrayList(i32),
+    overlaps: *std.array_list.Managed(i32),
     allocator: std.mem.Allocator,
 ) !void {
     const w = chf.width;
@@ -931,9 +931,9 @@ fn mergeAndFilterRegions(
     // }
 
     // Remove too small regions
-    var stack = std.ArrayList(i32).init(allocator);
+    var stack = std.array_list.Managed(i32).init(allocator);
     defer stack.deinit();
-    var trace = std.ArrayList(i32).init(allocator);
+    var trace = std.array_list.Managed(i32).init(allocator);
     defer trace.deinit();
 
     for (regions, 0..) |*reg, i| {
@@ -1128,9 +1128,9 @@ pub fn buildRegions(
     const LOG_NB_STACKS: u3 = 3;
     const NB_STACKS: usize = 1 << LOG_NB_STACKS; // 8 stacks
 
-    var lvl_stacks: [NB_STACKS]std.ArrayList(LevelStackEntry) = undefined;
+    var lvl_stacks: [NB_STACKS]std.array_list.Managed(LevelStackEntry) = undefined;
     for (&lvl_stacks) |*lvl_stack| {
-        lvl_stack.* = std.ArrayList(LevelStackEntry).init(allocator);
+        lvl_stack.* = std.array_list.Managed(LevelStackEntry).init(allocator);
     }
     defer {
         for (&lvl_stacks) |*lvl_stack| {
@@ -1143,7 +1143,7 @@ pub fn buildRegions(
         try lvl_stack.ensureTotalCapacity(256);
     }
 
-    var stack = std.ArrayList(LevelStackEntry).init(allocator);
+    var stack = std.array_list.Managed(LevelStackEntry).init(allocator);
     defer stack.deinit();
     try stack.ensureTotalCapacity(256);
 
@@ -1195,7 +1195,7 @@ pub fn buildRegions(
     ctx.log(.progress, "buildRegions: Watershed created {d} regions (before merging)", .{region_id - 1});
 
     // Merge and filter regions
-    var overlaps = std.ArrayList(i32).init(allocator);
+    var overlaps = std.array_list.Managed(i32).init(allocator);
     defer overlaps.deinit();
     try mergeAndFilterRegions(ctx, min_region_area, merge_region_area, &region_id, chf, src_reg, &overlaps, allocator);
 
@@ -1270,7 +1270,7 @@ pub fn buildRegionsMonotone(
 
     chf.border_size = border_size;
 
-    var prev = std.ArrayList(i32).init(allocator);
+    var prev = std.array_list.Managed(i32).init(allocator);
     defer prev.deinit();
     try prev.resize(256);
 
@@ -1384,8 +1384,8 @@ const Region = struct {
     connects_to_border: bool,
     ymin: u16,
     ymax: u16,
-    connections: std.ArrayList(i32),
-    floors: std.ArrayList(i32),
+    connections: std.array_list.Managed(i32),
+    floors: std.array_list.Managed(i32),
 
     fn init(allocator: std.mem.Allocator, region_id: u16) !Region {
         return Region{
@@ -1398,8 +1398,8 @@ const Region = struct {
             .connects_to_border = false,
             .ymin = 0xffff,
             .ymax = 0,
-            .connections = std.ArrayList(i32).init(allocator),
-            .floors = std.ArrayList(i32).init(allocator),
+            .connections = std.array_list.Managed(i32).init(allocator),
+            .floors = std.array_list.Managed(i32).init(allocator),
         };
     }
 
@@ -1440,7 +1440,7 @@ fn mergeAndFilterLayerRegions(
     const h = chf.height;
 
     const nreg: usize = @intCast(max_region_id.* + 1);
-    var regions = std.ArrayList(Region).init(allocator);
+    var regions = std.array_list.Managed(Region).init(allocator);
     defer {
         for (regions.items) |*reg| {
             reg.deinit();
@@ -1455,7 +1455,7 @@ fn mergeAndFilterLayerRegions(
     }
 
     // Find region neighbours and overlapping regions
-    var lregs = std.ArrayList(i32).init(allocator);
+    var lregs = std.array_list.Managed(i32).init(allocator);
     defer lregs.deinit();
 
     for (0..@intCast(h)) |y| {
@@ -1526,7 +1526,7 @@ fn mergeAndFilterLayerRegions(
     }
 
     // Merge monotone regions to create non-overlapping areas
-    var stack = std.ArrayList(i32).init(allocator);
+    var stack = std.array_list.Managed(i32).init(allocator);
     defer stack.deinit();
 
     for (1..nreg) |i| {
@@ -1664,7 +1664,7 @@ pub fn buildLayerRegions(
 
     chf.border_size = border_size;
 
-    var prev = std.ArrayList(i32).init(allocator);
+    var prev = std.array_list.Managed(i32).init(allocator);
     defer prev.deinit();
     try prev.resize(256);
 

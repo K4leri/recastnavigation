@@ -24,7 +24,7 @@ fn parseRaycastTests(allocator: std.mem.Allocator, file_path: []const u8) !struc
     const content = try file.readToEndAlloc(allocator, 1024 * 1024);
     defer allocator.free(content);
 
-    var tests = std.ArrayList(RaycastTest).init(allocator);
+    var tests = std.array_list.Managed(RaycastTest).init(allocator);
     errdefer tests.deinit();
 
     var mesh_file: ?[]const u8 = null;

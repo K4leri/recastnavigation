@@ -111,7 +111,7 @@ test "simplifyContour - simple square contour" {
 
     // Create a simple square contour: (0,0), (10,0), (10,10), (0,10)
     // Each point is stored as [x, y, z, flags] (4 i32 values)
-    var points = std.ArrayList(i32).init(allocator);
+    var points = std.array_list.Managed(i32).init(allocator);
     defer points.deinit();
 
     // Bottom-left (0, 0, 0)
@@ -138,7 +138,7 @@ test "simplifyContour - simple square contour" {
     try points.append(10);
     try points.append(0);
 
-    var simplified = std.ArrayList(i32).init(allocator);
+    var simplified = std.array_list.Managed(i32).init(allocator);
     defer simplified.deinit();
 
     // Simplify with max_error=1.0, no edge splitting
@@ -155,7 +155,7 @@ test "simplifyContour - collinear points with low threshold" {
     const allocator = testing.allocator;
 
     // Create contour with collinear points: (0,0), (5,0), (10,0)
-    var points = std.ArrayList(i32).init(allocator);
+    var points = std.array_list.Managed(i32).init(allocator);
     defer points.deinit();
 
     try points.append(0);
@@ -173,7 +173,7 @@ test "simplifyContour - collinear points with low threshold" {
     try points.append(0);
     try points.append(0);
 
-    var simplified = std.ArrayList(i32).init(allocator);
+    var simplified = std.array_list.Managed(i32).init(allocator);
     defer simplified.deinit();
 
     // With low error threshold, should keep only endpoints
@@ -189,7 +189,7 @@ test "simplifyContour - high threshold removes details" {
     const allocator = testing.allocator;
 
     // Create contour with slight deviation: (0,0), (5,1), (10,0)
-    var points = std.ArrayList(i32).init(allocator);
+    var points = std.array_list.Managed(i32).init(allocator);
     defer points.deinit();
 
     try points.append(0);
@@ -207,7 +207,7 @@ test "simplifyContour - high threshold removes details" {
     try points.append(0);
     try points.append(0);
 
-    var simplified = std.ArrayList(i32).init(allocator);
+    var simplified = std.array_list.Managed(i32).init(allocator);
     defer simplified.deinit();
 
     // With high error threshold (10.0), should remove middle point
