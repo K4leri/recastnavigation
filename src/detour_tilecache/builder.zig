@@ -16,31 +16,31 @@ const LAYER_MAX_NEIS: usize = 16;
 
 /// Tile cache layer header
 pub const TileCacheLayerHeader = struct {
-    magic: i32,                // Data magic
-    version: i32,              // Data version
-    tx: i32,                   // Tile X coordinate
-    ty: i32,                   // Tile Y coordinate
-    tlayer: i32,               // Tile layer
-    bmin: [3]f32,              // Bounding box min
-    bmax: [3]f32,              // Bounding box max
-    hmin: u16,                 // Height min range
-    hmax: u16,                 // Height max range
-    width: u8,                 // Dimension of the layer
-    height: u8,                // Dimension of the layer
-    minx: u8,                  // Usable sub-region
-    maxx: u8,                  // Usable sub-region
-    miny: u8,                  // Usable sub-region
-    maxy: u8,                  // Usable sub-region
+    magic: i32, // Data magic
+    version: i32, // Data version
+    tx: i32, // Tile X coordinate
+    ty: i32, // Tile Y coordinate
+    tlayer: i32, // Tile layer
+    bmin: [3]f32, // Bounding box min
+    bmax: [3]f32, // Bounding box max
+    hmin: u16, // Height min range
+    hmax: u16, // Height max range
+    width: u8, // Dimension of the layer
+    height: u8, // Dimension of the layer
+    minx: u8, // Usable sub-region
+    maxx: u8, // Usable sub-region
+    miny: u8, // Usable sub-region
+    maxy: u8, // Usable sub-region
 };
 
 /// Tile cache layer
 pub const TileCacheLayer = struct {
     header: *TileCacheLayerHeader,
-    reg_count: u8,             // Region count
-    heights: []u8,             // Height values
-    areas: []u8,               // Area IDs
-    cons: []u8,                // Connectivity
-    regs: []u8,                // Region IDs
+    reg_count: u8, // Region count
+    heights: []u8, // Height values
+    areas: []u8, // Area IDs
+    cons: []u8, // Connectivity
+    regs: []u8, // Region IDs
 
     pub fn deinit(self: *TileCacheLayer, allocator: std.mem.Allocator) void {
         allocator.destroy(self.header);
@@ -73,13 +73,13 @@ pub const TileCacheContourSet = struct {
 
 /// Tile cache polygon mesh
 pub const TileCachePolyMesh = struct {
-    nvp: usize,                // Max verts per polygon
-    nverts: usize,             // Number of vertices
-    npolys: usize,             // Number of polygons
-    verts: []u16,              // Vertices (3 elements per vertex)
-    polys: []u16,              // Polygons (nvp*2 elements per polygon)
-    flags: []u16,              // Per polygon flags
-    areas: []u8,               // Area ID of polygons
+    nvp: usize, // Max verts per polygon
+    nverts: usize, // Number of vertices
+    npolys: usize, // Number of polygons
+    verts: []u16, // Vertices (3 elements per vertex)
+    polys: []u16, // Polygons (nvp*2 elements per polygon)
+    flags: []u16, // Per polygon flags
+    areas: []u8, // Area ID of polygons
 
     pub fn deinit(self: *TileCachePolyMesh, allocator: std.mem.Allocator) void {
         allocator.free(self.verts);
@@ -136,9 +136,9 @@ pub const TileCacheCompressor = struct {
 // Helper structures for region building
 
 const LayerSweepSpan = struct {
-    ns: u16,        // number samples
-    id: u8,         // region id
-    nei: u8,        // neighbour id
+    ns: u16, // number samples
+    id: u8, // region id
+    nei: u8, // neighbour id
 };
 
 const LayerMonotoneRegion = struct {
@@ -1911,7 +1911,7 @@ fn removeVertex(
                     const v = getPolyMergeValue(
                         @constCast(pj[0..MAX_VERTS_PER_POLY]),
                         @constCast(pk[0..MAX_VERTS_PER_POLY]),
-                        mesh.verts[0..@as(usize, @intCast(mesh.nverts)) * 3],
+                        mesh.verts[0 .. @as(usize, @intCast(mesh.nverts)) * 3],
                         &ea,
                         &eb,
                     );
@@ -2323,7 +2323,7 @@ pub fn buildTileCachePolyMesh(
                         const v = getPolyMergeValue(
                             @constCast(pj[0..MAX_VERTS_PER_POLY]),
                             @constCast(pk[0..MAX_VERTS_PER_POLY]),
-                            mesh.verts[0..@as(usize, @intCast(mesh.nverts)) * 3],
+                            mesh.verts[0 .. @as(usize, @intCast(mesh.nverts)) * 3],
                             &ea,
                             &eb,
                         );

@@ -1008,7 +1008,7 @@ pub const NavMesh = struct {
 
         // Setup pointers to data sections
         const verts_ptr: [*]f32 = @ptrCast(@alignCast(data[offset..].ptr));
-        tile.?.verts = verts_ptr[0..@as(usize, @intCast(header.vert_count)) * 3];
+        tile.?.verts = verts_ptr[0 .. @as(usize, @intCast(header.vert_count)) * 3];
         offset += verts_size;
 
         const polys_ptr: [*]Poly = @ptrCast(@alignCast(data[offset..].ptr));
@@ -1024,11 +1024,11 @@ pub const NavMesh = struct {
         offset += detail_meshes_size;
 
         const dverts_ptr: [*]f32 = @ptrCast(@alignCast(data[offset..].ptr));
-        tile.?.detail_verts = dverts_ptr[0..@as(usize, @intCast(header.detail_vert_count)) * 3];
+        tile.?.detail_verts = dverts_ptr[0 .. @as(usize, @intCast(header.detail_vert_count)) * 3];
         offset += detail_verts_size;
 
         const dtris_ptr: [*]u8 = @ptrCast(@alignCast(data[offset..].ptr));
-        tile.?.detail_tris = dtris_ptr[0..@as(usize, @intCast(header.detail_tri_count)) * 4];
+        tile.?.detail_tris = dtris_ptr[0 .. @as(usize, @intCast(header.detail_tri_count)) * 4];
         offset += detail_tris_size;
 
         if (bvtree_size > 0) {
