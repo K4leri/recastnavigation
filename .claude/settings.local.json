@@ -18,7 +18,9 @@
       "Bash(./Tests.exe --list-tests)",
       "Bash(./Tests.exe \"Detour_findStraightPath\")",
       "Bash(./build_tests/Tests/Release/Tests.exe \"Detour_findStraightPath\")",
-      "Read(//e/Projects/CS2/navMesh/movement/fullProject/navMeshCreator/**)"
+      "Read(//e/Projects/CS2/navMesh/movement/fullProject/navMeshCreator/**)",
+      "Bash(git log:*)",
+      "Bash(git config:*)"
     ],
     "deny": [],
     "ask": []
