@@ -25,18 +25,18 @@ const MAX_UPDATE: usize = 64;
 
 /// Flags for addTile
 pub const CompressedTileFlags = packed struct(u8) {
-    free_data: bool = false,  // TileCache owns the tile memory and should free it
+    free_data: bool = false, // TileCache owns the tile memory and should free it
     _padding: u7 = 0,
 };
 
 /// Compressed tile
 pub const CompressedTile = struct {
-    salt: u32,                          // Counter describing modifications to the tile
-    header: ?*TileCacheLayerHeader,     // Tile header
-    compressed: []u8,                   // Compressed data
-    data: []u8,                         // Full data buffer (header + compressed)
-    flags: CompressedTileFlags,         // Tile flags
-    next: ?*CompressedTile,             // Next tile in freelist or hash chain
+    salt: u32, // Counter describing modifications to the tile
+    header: ?*TileCacheLayerHeader, // Tile header
+    compressed: []u8, // Compressed data
+    data: []u8, // Full data buffer (header + compressed)
+    flags: CompressedTileFlags, // Tile flags
+    next: ?*CompressedTile, // Next tile in freelist or hash chain
 };
 
 /// Obstacle state
@@ -50,8 +50,8 @@ pub const ObstacleState = enum(u8) {
 /// Obstacle type
 pub const ObstacleType = enum(u8) {
     cylinder,
-    box,           // AABB
-    oriented_box,  // OBB
+    box, // AABB
+    oriented_box, // OBB
 };
 
 /// Cylinder obstacle
@@ -71,7 +71,7 @@ pub const ObstacleBox = struct {
 pub const ObstacleOrientedBox = struct {
     center: [3]f32,
     half_extents: [3]f32,
-    rot_aux: [2]f32,  // {cos(0.5*angle)*sin(-0.5*angle), cos(0.5*angle)*cos(0.5*angle) - 0.5}
+    rot_aux: [2]f32, // {cos(0.5*angle)*sin(-0.5*angle), cos(0.5*angle)*cos(0.5*angle) - 0.5}
 };
 
 /// Tile cache obstacle
@@ -83,28 +83,28 @@ pub const TileCacheObstacle = struct {
         oriented_box: ObstacleOrientedBox,
     },
 
-    touched: [MAX_TOUCHED_TILES]CompressedTileRef,  // Tiles touched by obstacle
-    pending: [MAX_TOUCHED_TILES]CompressedTileRef,  // Tiles pending rebuild
-    salt: u16,                                       // Salt for ref versioning
-    state: ObstacleState,                           // Current state
-    ntouched: u8,                                    // Number of touched tiles
-    npending: u8,                                    // Number of pending tiles
-    next: ?*TileCacheObstacle,                      // Next in freelist
+    touched: [MAX_TOUCHED_TILES]CompressedTileRef, // Tiles touched by obstacle
+    pending: [MAX_TOUCHED_TILES]CompressedTileRef, // Tiles pending rebuild
+    salt: u16, // Salt for ref versioning
+    state: ObstacleState, // Current state
+    ntouched: u8, // Number of touched tiles
+    npending: u8, // Number of pending tiles
+    next: ?*TileCacheObstacle, // Next in freelist
 };
 
 /// Tile cache parameters
 pub const TileCacheParams = struct {
-    orig: [3]f32,            // Origin of the tile cache
-    cs: f32,                 // Cell size
-    ch: f32,                 // Cell height
-    width: i32,              // Tile width
-    height: i32,             // Tile height
-    walkable_height: f32,    // Agent height
-    walkable_radius: f32,    // Agent radius
-    walkable_climb: f32,     // Agent max climb
-    max_simplification_error: f32,  // Max contour simplification error
-    max_tiles: i32,          // Max number of tiles
-    max_obstacles: i32,      // Max number of obstacles
+    orig: [3]f32, // Origin of the tile cache
+    cs: f32, // Cell size
+    ch: f32, // Cell height
+    width: i32, // Tile width
+    height: i32, // Tile height
+    walkable_height: f32, // Agent height
+    walkable_radius: f32, // Agent radius
+    walkable_climb: f32, // Agent max climb
+    max_simplification_error: f32, // Max contour simplification error
+    max_tiles: i32, // Max number of tiles
+    max_obstacles: i32, // Max number of obstacles
 };
 
 /// Mesh process callback interface
@@ -115,7 +115,7 @@ pub const TileCacheMeshProcess = struct {
     pub const VTable = struct {
         process: *const fn (
             ptr: *anyopaque,
-            params: *anyopaque,  // NavMeshCreateParams
+            params: *anyopaque, // NavMeshCreateParams
             poly_areas: []u8,
             poly_flags: []u16,
         ) void,
@@ -146,17 +146,17 @@ const ObstacleRequest = struct {
 /// Tile cache manager
 pub const TileCache = struct {
     // Hash lookup
-    tile_lut_size: usize,                         // Tile hash lookup size (must be pot)
-    tile_lut_mask: usize,                         // Tile hash lookup mask
-    pos_lookup: []?*CompressedTile,               // Tile hash lookup
+    tile_lut_size: usize, // Tile hash lookup size (must be pot)
+    tile_lut_mask: usize, // Tile hash lookup mask
+    pos_lookup: []?*CompressedTile, // Tile hash lookup
 
     // Tile storage
-    tiles: []CompressedTile,                      // Tile array
-    next_free_tile: ?*CompressedTile,             // Freelist of tiles
+    tiles: []CompressedTile, // Tile array
+    next_free_tile: ?*CompressedTile, // Freelist of tiles
 
     // ID generation
-    salt_bits: u32,                               // Number of salt bits in tile ID
-    tile_bits: u32,                               // Number of tile bits in tile ID
+    salt_bits: u32, // Number of salt bits in tile ID
+    tile_bits: u32, // Number of tile bits in tile ID
 
     // Parameters and callbacks
     params: TileCacheParams,
@@ -164,16 +164,16 @@ pub const TileCache = struct {
     tmproc: ?*TileCacheMeshProcess,
 
     // Obstacle storage
-    obstacles: []TileCacheObstacle,               // Obstacle array
-    next_free_obstacle: ?*TileCacheObstacle,      // Freelist of obstacles
+    obstacles: []TileCacheObstacle, // Obstacle array
+    next_free_obstacle: ?*TileCacheObstacle, // Freelist of obstacles
 
     // Request queue
-    reqs: [MAX_REQUESTS]ObstacleRequest,          // Obstacle requests
-    nreqs: usize,                                 // Number of requests
+    reqs: [MAX_REQUESTS]ObstacleRequest, // Obstacle requests
+    nreqs: usize, // Number of requests
 
     // Update queue
-    update_queue: [MAX_UPDATE]CompressedTileRef,  // Tiles to update
-    nupdate: usize,                               // Number of tiles to update
+    update_queue: [MAX_UPDATE]CompressedTileRef, // Tiles to update
+    nupdate: usize, // Number of tiles to update
 
     // Memory
     allocator: std.mem.Allocator,

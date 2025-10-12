@@ -501,10 +501,10 @@ test "overlapBounds" {
 
 test "dividePoly simple" {
     var in_verts = [_]f32{
-        0, 0, 0,
+        0,  0, 0,
         10, 0, 0,
         10, 0, 10,
-        0, 0, 10,
+        0,  0, 10,
     };
     var out1: [7 * 3]f32 = undefined;
     var out2: [7 * 3]f32 = undefined;
