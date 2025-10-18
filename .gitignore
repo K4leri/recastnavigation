@@ -3,6 +3,8 @@ zig-cache/
 .zig-cache/
 zig-out/
 .claude
+MULTILINGUAL_SETUP_COMPLETE.md
+DOCUMENTATION_STRUCTURE.md
 
 # IDE
 .vscode/

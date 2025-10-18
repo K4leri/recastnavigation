@@ -1,135 +1,135 @@
 # Recast Navigation - Zig Implementation
 
-Полная Zig реализация библиотеки [RecastNavigation](https://github.com/recastnavigation/recastnavigation) для создания навигационных мешей и поиска пути.
+**English** | [Русский](README.ru.md)
 
-## ✨ Особенности
+Complete Zig implementation of the [RecastNavigation](https://github.com/recastnavigation/recastnavigation) library for navigation mesh creation and pathfinding.
 
-- **Безопасность памяти**: Явные аллокаторы, никаких скрытых выделений памяти
-- **Типобезопасность**: Использование строгой системы типов Zig и comptime
-- **Обработка ошибок**: Настоящие типы ошибок вместо boolean returns
-- **Современный дизайн**: Чистый API следующий идиомам Zig
-- **Производительность**: Оптимизация через inline функции и comptime генерацию
-- **Нулевые зависимости**: Чистая Zig реализация
-- **100% точность**: Byte-for-byte идентичность с C++ reference implementation
+## ✨ Features
 
-## 📁 Структура проекта
+- **Memory Safety**: Explicit allocators, no hidden memory allocations
+- **Type Safety**: Leveraging Zig's strong type system and comptime
+- **Error Handling**: Proper error types instead of boolean returns
+- **Modern Design**: Clean API following Zig idioms
+- **Performance**: Optimization through inline functions and comptime generation
+- **Zero Dependencies**: Pure Zig implementation
+- **100% Accuracy**: Byte-for-byte identical with C++ reference implementation
+
+## 📁 Project Structure
 
 ```
 zig-recast/
-├── src/                      # Исходный код библиотеки
-│   ├── root.zig              # Главная точка входа
-│   ├── math.zig              # Математические типы (Vec3, AABB, etc.)
-│   ├── context.zig           # Build context и логирование
-│   ├── recast.zig            # Recast модуль (построение NavMesh)
-│   ├── detour.zig            # Detour модуль (pathfinding)
-│   ├── detour_crowd.zig      # DetourCrowd (multi-agent симуляция)
-│   └── detour_tilecache.zig  # TileCache (динамические препятствия)
+├── src/                      # Library source code
+│   ├── root.zig              # Main entry point
+│   ├── math.zig              # Math types (Vec3, AABB, etc.)
+│   ├── context.zig           # Build context and logging
+│   ├── recast.zig            # Recast module (NavMesh building)
+│   ├── detour.zig            # Detour module (pathfinding)
+│   ├── detour_crowd.zig      # DetourCrowd (multi-agent simulation)
+│   └── detour_tilecache.zig  # TileCache (dynamic obstacles)
 │
-├── examples/                 # Примеры использования
-│   ├── simple_navmesh.zig    # Базовый пример создания NavMesh
-│   ├── pathfinding_demo.zig  # Демо поиска пути
-│   ├── crowd_simulation.zig  # Симуляция толпы агентов
-│   ├── dynamic_obstacles.zig # Динамические препятствия
+├── examples/                 # Usage examples
+│   ├── simple_navmesh.zig    # Basic NavMesh creation example
+│   ├── pathfinding_demo.zig  # Pathfinding demo
+│   ├── crowd_simulation.zig  # Crowd agent simulation
+│   ├── dynamic_obstacles.zig # Dynamic obstacles
 │   ├── 02_tiled_navmesh.zig  # Tiled NavMesh
-│   ├── 03_full_pathfinding.zig # Полный pathfinding
-│   └── 06_offmesh_connections.zig # Off-mesh соединения
+│   ├── 03_full_pathfinding.zig # Full pathfinding
+│   └── 06_offmesh_connections.zig # Off-mesh connections
 │
-├── bench/                    # Бенчмарки производительности
+├── bench/                    # Performance benchmarks
 │   ├── recast_bench.zig      # Recast pipeline benchmark
 │   ├── detour_bench.zig      # Detour queries benchmark
 │   ├── crowd_bench.zig       # Crowd simulation benchmark
 │   └── findStraightPath_detailed.zig
 │
-├── test/                     # Тесты (169 unit + 22 integration)
-│   ├── integration/          # Интеграционные тесты
-│   └── ...                   # Unit тесты
+├── test/                     # Tests (169 unit + 22 integration)
+│   ├── integration/          # Integration tests
+│   └── ...                   # Unit tests
 │
-├── docs/                     # 📚 Полная документация
-│   ├── README.md             # Навигация по документации
-│   ├── 01-getting-started/   # Руководство для начинающих
-│   ├── 02-architecture/      # Архитектура системы
-│   ├── 03-api-reference/     # Справочник по API
-│   ├── 04-guides/            # Практические руководства
-│   └── bug-fixes/            # История исправлений багов
+├── docs/                     # 📚 Complete documentation
+│   ├── README.md             # Documentation navigation
+│   ├── en/                   # English documentation
+│   ├── ru/                   # Russian documentation
+│   └── bug-fixes/            # Bug fix history
 │
-└── build.zig                 # Конфигурация сборки
+└── build.zig                 # Build configuration
 ```
 
-## 🧩 Модули
+## 🧩 Modules
 
-### Recast - Построение NavMesh
-Создание навигационных мешей из треугольных мешей:
-- ✅ `Heightfield` - Voxel-based представление высотного поля
-- ✅ `CompactHeightfield` - Компактное представление для обработки
-- ✅ `Region Building` - Watershed partitioning с multi-stack системой
-- ✅ `ContourSet` - Экстракция контуров регионов
-- ✅ `PolyMesh` - Финальный полигональный меш
-- ✅ `PolyMeshDetail` - Детальный меш для точных запросов высоты
+### Recast - NavMesh Building
+Creating navigation meshes from triangle meshes:
+- ✅ `Heightfield` - Voxel-based heightfield representation
+- ✅ `CompactHeightfield` - Compact representation for processing
+- ✅ `Region Building` - Watershed partitioning with multi-stack system
+- ✅ `ContourSet` - Region contour extraction
+- ✅ `PolyMesh` - Final polygon mesh
+- ✅ `PolyMeshDetail` - Detailed mesh for precise height queries
 
-### Detour - Pathfinding и запросы
-Навигационные запросы и поиск пути:
-- ✅ `NavMesh` - Runtime навигационный меш
-- ✅ `NavMeshQuery` - Запросы поиска пути и spatial queries
-- ✅ `A* Pathfinding` - Поиск оптимального пути
-- ✅ `Raycast` - Проверка видимости и raycast запросы
-- ✅ `Distance Queries` - Запросы расстояний
+### Detour - Pathfinding and Queries
+Navigation queries and pathfinding:
+- ✅ `NavMesh` - Runtime navigation mesh
+- ✅ `NavMeshQuery` - Pathfinding and spatial queries
+- ✅ `A* Pathfinding` - Optimal path search
+- ✅ `Raycast` - Visibility checks and raycast queries
+- ✅ `Distance Queries` - Distance queries
 
-### DetourCrowd - Multi-Agent симуляция
-Управление множеством агентов:
-- ✅ `Crowd Manager` - Менеджер толпы
-- ✅ `Agent Movement` - Движение агентов
-- ✅ `Local Steering` - Локальное управление
-- ✅ `Obstacle Avoidance` - Избегание препятствий
+### DetourCrowd - Multi-Agent Simulation
+Managing multiple agents:
+- ✅ `Crowd Manager` - Crowd management
+- ✅ `Agent Movement` - Agent movement
+- ✅ `Local Steering` - Local steering
+- ✅ `Obstacle Avoidance` - Obstacle avoidance
 
-### TileCache - Динамические препятствия
-Поддержка динамических препятствий:
-- ✅ `TileCache` - Кеш тайлов с динамическими изменениями
-- ✅ `Obstacle Management` - Управление препятствиями (box, cylinder, oriented box)
-- ✅ `Dynamic NavMesh Updates` - Динамическое обновление NavMesh
+### TileCache - Dynamic Obstacles
+Dynamic obstacle support:
+- ✅ `TileCache` - Tile cache with dynamic changes
+- ✅ `Obstacle Management` - Managing obstacles (box, cylinder, oriented box)
+- ✅ `Dynamic NavMesh Updates` - Dynamic NavMesh updates
 
-## 🚀 Быстрый старт
+## 🚀 Quick Start
 
-### Требования
-- Zig 0.15.0 или новее
+### Requirements
+- Zig 0.15.0 or newer
 
-### Сборка библиотеки
+### Build Library
 ```bash
 zig build
 ```
 
-### Запуск тестов
+### Run Tests
 ```bash
-# Все тесты (unit + integration)
+# All tests (unit + integration)
 zig build test
 
-# Только интеграционные тесты
+# Integration tests only
 zig build test-integration
 
-# Конкретный набор тестов
+# Specific test suite
 zig build test:filter
 zig build test:rasterization
 zig build test:contour
 ```
 
-### Запуск примеров
+### Run Examples
 ```bash
-# Сборка всех примеров
+# Build all examples
 zig build examples
 
-# Базовый пример NavMesh
+# Basic NavMesh example
 ./zig-out/bin/simple_navmesh
 
-# Демо поиска пути
+# Pathfinding demo
 ./zig-out/bin/pathfinding_demo
 
-# Симуляция толпы
+# Crowd simulation
 ./zig-out/bin/crowd_simulation
 
-# Динамические препятствия
+# Dynamic obstacles
 ./zig-out/bin/dynamic_obstacles
 ```
 
-### Запуск бенчмарков
+### Run Benchmarks
 ```bash
 # Recast pipeline benchmark
 zig build bench-recast
@@ -141,27 +141,27 @@ zig build bench-detour
 zig build bench-crowd
 ```
 
-## ✅ Статус тестирования
+## ✅ Testing Status
 
-**Текущий статус:**
-- ✅ **191/191 тестов проходят** (169 unit + 22 integration)
-- ✅ **100% точность** по сравнению с C++ reference implementation
-- ✅ **0 утечек памяти** во всех тестах
-- ✅ Recast pipeline полностью протестирован
-- ✅ Detour pipeline полностью протестирован (pathfinding, raycast, queries)
-- ✅ DetourCrowd полностью протестирован (movement, steering, avoidance)
-- ✅ TileCache полностью протестирован (все типы препятствий)
+**Current Status:**
+- ✅ **191/191 tests passing** (169 unit + 22 integration)
+- ✅ **100% accuracy** compared to C++ reference implementation
+- ✅ **0 memory leaks** in all tests
+- ✅ Recast pipeline fully tested
+- ✅ Detour pipeline fully tested (pathfinding, raycast, queries)
+- ✅ DetourCrowd fully tested (movement, steering, avoidance)
+- ✅ TileCache fully tested (all obstacle types)
 
-**🎉 Достижение: Идентичная генерация NavMesh**
+**🎉 Achievement: Identical NavMesh Generation**
 
-Zig реализация производит **byte-for-byte идентичные** навигационные меши с C++ reference:
-- 44/44 контура ✅
-- 432/432 вершины ✅
-- 206/206 полигонов ✅
+The Zig implementation produces **byte-for-byte identical** navigation meshes with the C++ reference:
+- 44/44 contours ✅
+- 432/432 vertices ✅
+- 206/206 polygons ✅
 
-См. [docs/bug-fixes/watershed-100-percent-fix](docs/bug-fixes/watershed-100-percent-fix/INDEX.md) для полной истории достижения 100% точности.
+See [docs/bug-fixes/watershed-100-percent-fix](docs/bug-fixes/watershed-100-percent-fix/INDEX.md) for the complete story of achieving 100% accuracy.
 
-## 📝 Пример использования
+## 📝 Usage Example
 
 ```zig
 const std = @import("std");
@@ -208,30 +208,30 @@ pub fn main() !void {
     defer heightfield.deinit();
 
     // Build navigation mesh...
-    // См. examples/simple_navmesh.zig для полного примера
+    // See examples/simple_navmesh.zig for complete example
 }
 ```
 
-Больше примеров в директории `examples/`:
-- `simple_navmesh.zig` - создание базового NavMesh
-- `pathfinding_demo.zig` - поиск пути
-- `crowd_simulation.zig` - симуляция толпы
-- `dynamic_obstacles.zig` - динамические препятствия
+More examples in the `examples/` directory:
+- `simple_navmesh.zig` - basic NavMesh creation
+- `pathfinding_demo.zig` - pathfinding
+- `crowd_simulation.zig` - crowd simulation
+- `dynamic_obstacles.zig` - dynamic obstacles
 
-## 🔄 Отличия от C++ версии
+## 🔄 Differences from C++ Version
 
-### Управление памятью
+### Memory Management
 ```zig
-// Zig: Явный аллокатор
+// Zig: Explicit allocator
 var heightfield = try Heightfield.init(allocator, ...);
 defer heightfield.deinit();
 
-// C++: Глобальный аллокатор
+// C++: Global allocator
 rcHeightfield* heightfield = rcAllocHeightfield();
 rcFreeHeightfield(heightfield);
 ```
 
-### Обработка ошибок
+### Error Handling
 ```zig
 // Zig: Error unions
 const result = try buildNavMesh(allocator, config);
@@ -241,42 +241,42 @@ bool success = rcBuildNavMesh(...);
 if (!success) { /* handle error */ }
 ```
 
-### Типобезопасность
+### Type Safety
 ```zig
-// Zig: Строгая типизация с enums
+// Zig: Strong typing with enums
 const area_id = recast_nav.recast.AreaId.WALKABLE_AREA;
 
-// C++: Сырые константы
+// C++: Raw constants
 const unsigned char RC_WALKABLE_AREA = 63;
 ```
 
 ## 🗺️ Roadmap
 
-### Phase 1: Базовые структуры ✅ (завершено)
-- [x] Математические типы (Vec3, AABB)
-- [x] Heightfield структуры
+### Phase 1: Basic Structures ✅ (Complete)
+- [x] Math types (Vec3, AABB)
+- [x] Heightfield structures
 - [x] Compact heightfield
-- [x] Polygon mesh структуры
-- [x] NavMesh базовые структуры
+- [x] Polygon mesh structures
+- [x] NavMesh basic structures
 
-### Phase 2: Recast Building ✅ (завершено)
+### Phase 2: Recast Building ✅ (Complete)
 - [x] Heightfield rasterization
 - [x] Filtering functions
-- [x] Region building (watershed partitioning с multi-stack системой)
+- [x] Region building (watershed partitioning with multi-stack system)
 - [x] Contour generation
 - [x] Polygon mesh building
 - [x] Detail mesh building
-- [x] **100% точность** проверена с C++ reference
+- [x] **100% accuracy** verified with C++ reference
 
-### Phase 3: Detour Queries ✅ (завершено)
+### Phase 3: Detour Queries ✅ (Complete)
 - [x] NavMesh queries
 - [x] Pathfinding (A*)
 - [x] Ray casting
 - [x] Distance queries
 - [x] Nearest polygon search
-- [x] **100% точность** проверена с C++ reference
+- [x] **100% accuracy** verified with C++ reference
 
-### Phase 4: Продвинутые функции ✅ (завершено)
+### Phase 4: Advanced Features ✅ (Complete)
 - [x] Crowd simulation (DetourCrowd)
 - [x] Dynamic obstacles (DetourTileCache)
 - [x] Off-mesh connections
@@ -284,87 +284,93 @@ const unsigned char RC_WALKABLE_AREA = 63;
 - [x] Local steering
 - [x] Obstacle avoidance
 
-### Phase 5: Оптимизация и доработка 🚧 (в процессе)
-- [ ] SIMD оптимизации
-- [x] Benchmark suite (базовые бенчмарки готовы)
-- [x] Документация (полная документация в docs/)
-- [x] Примеры использования
+### Phase 5: Optimization and Polish 🚧 (In Progress)
+- [ ] SIMD optimizations
+- [x] Benchmark suite (basic benchmarks ready)
+- [x] Documentation (complete documentation in docs/)
+- [x] Usage examples
 
-## 🎯 Цели по производительности
+## 🎯 Performance Goals
 
-- Соответствовать или превосходить производительность C++
-- Ноль аллокаций в горячих путях (pathfinding)
-- Использование Zig comptime для специализации кода
-- Опциональные SIMD оптимизации для векторных операций
+- Match or exceed C++ performance
+- Zero allocations in hot paths (pathfinding)
+- Use Zig comptime for code specialization
+- Optional SIMD optimizations for vector operations
 
-## 📊 Известные ограничения
+## 📊 Known Achievements
 
-**Текущее состояние:** Все 191 тест проходят без утечек памяти.
+**Current State:** All 191 tests passing with no memory leaks.
 
-**Последние достижения:**
-- ✅ Исправлен watershed partitioning для 100% точности ([детали](docs/bug-fixes/watershed-100-percent-fix/INDEX.md))
-- ✅ Исправлены 3 критических бага в raycast ([детали](docs/bug-fixes/raycast-fix/INDEX.md)):
+**Recent Achievements:**
+- ✅ Fixed watershed partitioning for 100% accuracy ([details](docs/bug-fixes/watershed-100-percent-fix/INDEX.md))
+- ✅ Fixed 3 critical raycast bugs ([details](docs/bug-fixes/raycast-fix/INDEX.md)):
   - Area initialization bug
   - erodeWalkableArea boundary condition
   - perp2D formula sign error
-- ✅ Реализована multi-stack система для детерминированного region building
-- ✅ Полная реализация `mergeAndFilterRegions`
-- ✅ Проверена byte-for-byte идентичность с C++ RecastNavigation
+- ✅ Implemented multi-stack system for deterministic region building
+- ✅ Full implementation of `mergeAndFilterRegions`
+- ✅ Verified byte-for-byte identity with C++ RecastNavigation
 
-## 📚 Документация
+## 📚 Documentation
 
-📖 **[Полная документация](docs/README.md)** - навигация по всей документации проекта
+📖 **[Complete Documentation](docs/README.md)** - navigation for all project documentation
 
-### Основные разделы
+### Main Sections
 
-#### 🚀 Для начинающих
-- [Installation & Setup](docs/01-getting-started/installation.md) - установка и настройка
-- [Quick Start Guide](docs/01-getting-started/quick-start.md) - создайте NavMesh за 5 минут
-- [Building & Testing](docs/01-getting-started/building.md) - сборка и тестирование
+#### 🚀 For Beginners
+- [Installation & Setup](docs/en/01-getting-started/installation.md) - installation and setup
+- [Quick Start Guide](docs/en/01-getting-started/quick-start.md) - create NavMesh in 5 minutes
+- [Building & Testing](docs/en/01-getting-started/building.md) - building and testing
 
-#### 🏗️ Архитектура
-- [System Overview](docs/02-architecture/overview.md) - обзор системы
-- [Recast Pipeline](docs/02-architecture/recast-pipeline.md) - процесс построения NavMesh
-- [Detour Pipeline](docs/02-architecture/detour-pipeline.md) - система pathfinding
-- [Memory Model](docs/02-architecture/memory-model.md) - управление памятью
-- [DetourCrowd](docs/02-architecture/detour-crowd.md) - multi-agent симуляция
-- [TileCache](docs/02-architecture/tilecache.md) - динамические препятствия
+#### 🏗️ Architecture
+- [System Overview](docs/en/02-architecture/overview.md) - system overview
+- [Recast Pipeline](docs/ru/02-architecture/recast-pipeline.md) - NavMesh building process
+- [Detour Pipeline](docs/ru/02-architecture/detour-pipeline.md) - pathfinding system
+- [Memory Model](docs/ru/02-architecture/memory-model.md) - memory management
+- [DetourCrowd](docs/ru/02-architecture/detour-crowd.md) - multi-agent simulation
+- [TileCache](docs/ru/02-architecture/tilecache.md) - dynamic obstacles
 
 #### 📖 API Reference
-- [Math API](docs/03-api-reference/math-api.md) - математические типы
-- [Recast API](docs/03-api-reference/recast-api.md) - построение NavMesh
-- [Detour API](docs/03-api-reference/detour-api.md) - pathfinding и queries
+- [Math API](docs/en/03-api-reference/math-api.md) - math types
+- [Recast API](docs/en/03-api-reference/recast-api.md) - NavMesh building
+- [Detour API](docs/en/03-api-reference/detour-api.md) - pathfinding and queries
 
-#### 📝 Практические руководства
-- [Creating NavMesh](docs/04-guides/creating-navmesh.md) - пошаговое создание NavMesh
-- [Pathfinding](docs/04-guides/pathfinding.md) - поиск пути
-- [Raycast Queries](docs/04-guides/raycast.md) - raycast запросы
+#### 📝 Practical Guides
+- [Creating NavMesh](docs/en/04-guides/creating-navmesh.md) - step-by-step NavMesh creation
+- [Pathfinding](docs/ru/04-guides/pathfinding.md) - pathfinding
+- [Raycast Queries](docs/ru/04-guides/raycast.md) - raycast queries
 
-#### 🐛 История исправлений
-- [Watershed Fix](docs/bug-fixes/watershed-100-percent-fix/INDEX.md) ⭐ - достижение 100% точности
-- [Raycast Fix](docs/bug-fixes/raycast-fix/INDEX.md) ⭐ - 3 критических исправления
-- [Hole Construction Fix](docs/bug-fixes/hole-construction-fix/INDEX.md) - исправление построения отверстий
+#### 🐛 Bug Fix History
+- [Watershed Fix](docs/bug-fixes/watershed-100-percent-fix/INDEX.md) ⭐ - achieving 100% accuracy
+- [Raycast Fix](docs/bug-fixes/raycast-fix/INDEX.md) ⭐ - 3 critical fixes
+- [Hole Construction Fix](docs/bug-fixes/hole-construction-fix/INDEX.md) - fixing hole construction
 
-#### 🧪 Тестирование
-- [Test Coverage Analysis](TEST_COVERAGE_ANALYSIS.md) - анализ покрытия тестами
-- [Running Tests](docs/06-testing/running-tests.md) - запуск тестов
+#### 🧪 Testing
+- [Test Coverage Analysis](TEST_COVERAGE_ANALYSIS.md) - test coverage analysis
+- [Running Tests](docs/en/01-getting-started/building.md) - running tests
 
-## 🤝 Контрибуция
+## 🤝 Contributing
 
-Проект активно развивается. Contributions приветствуются!
+The project is actively developed. Contributions are welcome!
 
-См. [Contributing Guide](docs/10-contributing/development.md) для настройки dev окружения и guidelines.
+See [Contributing Guide](docs/en/10-contributing/development.md) for dev environment setup and guidelines.
 
-## 📄 Лицензия
+## 📄 License
 
-Эта реализация следует той же лицензии, что и оригинальная RecastNavigation (zlib license).
+This implementation follows the same license as the original RecastNavigation (zlib license).
 
-## 🙏 Благодарности
+## 🙏 Acknowledgments
 
-- **Mikko Mononen** - автор оригинальной RecastNavigation
-- **Zig Community** - за отличный язык и поддержку
+- **Mikko Mononen** - author of the original RecastNavigation
+- **Zig Community** - for the excellent language and support
 
-## 🔗 Ссылки
+## 🔗 Links
 
-- [RecastNavigation GitHub](https://github.com/recastnavigation/recastnavigation) - оригинальная C++ реализация
-- [Zig Language](https://ziglang.org/) - официальный сайт Zig
+- [RecastNavigation GitHub](https://github.com/recastnavigation/recastnavigation) - original C++ implementation
+- [Zig Language](https://ziglang.org/) - official Zig website
+- [Project Documentation](docs/README.md) - complete documentation (EN/RU)
+- [Progress Report](PROGRESS.md) - bilingual progress report
+
+---
+
+**Status:** ✅ Production Ready | **Version:** 1.0.0-beta | **Tests:** 191/191 ✅ | **Accuracy:** 100% 🎯
