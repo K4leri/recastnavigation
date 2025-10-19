@@ -1303,8 +1303,6 @@ pub const NavMesh = struct {
         const poly_idx = ip / @sizeOf(Poly);
         const pd = &tile.detail_meshes[poly_idx];
 
-        const debug_poly = (poly_idx == 111);
-
         var dmin: f32 = std.math.floatMax(f32);
         var tmin: f32 = 0;
         var pmin: ?*const f32 = null;
@@ -1318,10 +1316,6 @@ pub const NavMesh = struct {
             const tris_idx = (pd.tri_base + @as(u32, @intCast(i))) * 4;
             const tris = tile.detail_tris[tris_idx .. tris_idx + 4];
 
-            if (debug_poly) {
-                std.debug.print("      [Zig tri{}] tris=[{}, {}, {}, {}], poly.vert_count={}\n", .{ i, tris[0], tris[1], tris[2], tris[3], poly.vert_count });
-            }
-
             if (only_boundary and (tris[3] & ANY_BOUNDARY_EDGE) == 0) {
                 continue;
             }
@@ -1331,15 +1325,9 @@ pub const NavMesh = struct {
                 if (tris[j] < poly.vert_count) {
                     const vert_idx = poly.verts[tris[j]] * 3;
                     v[j] = &tile.verts[vert_idx];
-                    if (debug_poly) {
-                        std.debug.print("        v[{}]: poly.verts[{}]={}, vert=({d:.6}, {d:.6}, {d:.6})\n", .{ j, tris[j], poly.verts[tris[j]], tile.verts[vert_idx], tile.verts[vert_idx + 1], tile.verts[vert_idx + 2] });
-                    }
                 } else {
                     const detail_idx = (pd.vert_base + (tris[j] - poly.vert_count)) * 3;
                     v[j] = &tile.detail_verts[detail_idx];
-                    if (debug_poly) {
-                        std.debug.print("        v[{}]: detail vert, vert=({d:.6}, {d:.6}, {d:.6})\n", .{ j, tile.detail_verts[detail_idx], tile.detail_verts[detail_idx + 1], tile.detail_verts[detail_idx + 2] });
-                    }
                 }
             }
 
@@ -1353,17 +1341,11 @@ pub const NavMesh = struct {
                 if ((edge_flags & common.DETAIL_EDGE_BOUNDARY) == 0 and
                     (only_boundary or tris[j] < tris[k]))
                 {
-                    if (debug_poly) {
-                        std.debug.print("        [Zig SKIP] tri={}, j={}, k={}\n", .{ i, j, k });
-                    }
                     continue;
                 }
 
                 var t: f32 = undefined;
                 const d = math.distancePtSegSqr2D(pos, @ptrCast(v[j]), @ptrCast(v[k]), &t);
-                if (debug_poly) {
-                    std.debug.print("        [Zig edge] tri={}, j={}, k={}, d={d:.6}, t={d:.6}\n", .{ i, j, k, d, t });
-                }
                 if (d < dmin) {
                     dmin = d;
                     tmin = t;
