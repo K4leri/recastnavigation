@@ -3,10 +3,12 @@ const math = @import("../math.zig");
 const Vec3 = math.Vec3;
 
 /// Polygon reference type
-pub const PolyRef = u32;
-
-/// Tile reference type
-pub const TileRef = u32;
+/// For large worlds (>16×16 km), consider changing to u64 (see documentation)
+pub const PolyRef = u32; //                                               ┐
+//                                                   should be the same vallues ┤
+/// Tile reference type                                                         │
+/// For large worlds (>16×16 km), consider changing to u64 (see documentation)  │
+pub const TileRef = u32; //                                               ┘
 
 /// Status code for operations
 pub const Status = packed struct {

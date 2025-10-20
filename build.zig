@@ -90,6 +90,19 @@ pub fn build(b: *std.Build) void {
     const run_obj_loader_tests = b.addRunArtifact(obj_loader_tests);
     test_step.dependOn(&run_obj_loader_tests.step);
 
+    // PolyRef 64-bit test
+    const polyref64_test_module = b.createModule(.{
+        .root_source_file = b.path("test/polyref64_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    polyref64_test_module.addImport("recast-nav", recast_nav);
+    const polyref64_tests = b.addTest(.{
+        .root_module = polyref64_test_module,
+    });
+    const run_polyref64_tests = b.addRunArtifact(polyref64_tests);
+    test_step.dependOn(&run_polyref64_tests.step);
+
     // OBJ Loader module for tests
     const obj_loader = b.addModule("obj_loader", .{
         .root_source_file = b.path("test/obj_loader.zig"),
