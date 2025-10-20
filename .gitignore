@@ -5,6 +5,10 @@ zig-out/
 .claude
 MULTILINGUAL_SETUP_COMPLETE.md
 DOCUMENTATION_STRUCTURE.md
+CLAUDE.md
+
+# Development files (temporary testing/debugging)
+dev/
 
 # IDE
 .vscode/
