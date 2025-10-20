@@ -9,6 +9,7 @@ CLAUDE.md
 
 # Development files (temporary testing/debugging)
 dev/
+*.txt
 
 # IDE
 .vscode/
