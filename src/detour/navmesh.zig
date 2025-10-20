@@ -419,6 +419,11 @@ pub const NavMesh = struct {
     }
 
     /// Check if two slabs overlap
+    ///
+    /// NOTE: This function fixes a bug from the original C++ RecastNavigation (issue #793)
+    /// The original code incorrectly used (py*2)² as the threshold, which allowed connections
+    /// at 4x the walkableClimb distance. The corrected version uses py², which properly
+    /// limits connections to the agent's actual climbing ability.
     inline fn overlapSlabs(amin: *const [2]f32, amax: *const [2]f32, bmin: *const [2]f32, bmax: *const [2]f32, px: f32, py: f32) bool {
         // Check for horizontal overlap
         const minx = @max(amin[0] + px, bmin[0] + px);
@@ -441,7 +446,9 @@ pub const NavMesh = struct {
         if (dmin * dmax < 0) return true;
 
         // Check for overlap at endpoints
-        const thr = py * py * 4.0;
+        // FIXED: Changed from py*py*4.0 to py*py to resolve issue #793
+        // The original C++ code incorrectly used (py*2)², allowing connections at 4x walkableClimb
+        const thr = py * py;
         if (dmin * dmin <= thr or dmax * dmax <= thr) return true;
 
         return false;

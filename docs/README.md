@@ -24,6 +24,9 @@
 - [Справочник API](ru/03-api-reference/) - Полная документация API
 - [Руководства](ru/04-guides/) - Практические примеры
 
+### 🚨 Critical Bug Fixes
+- [Bug Fixes Documentation](bug_fixes/README.md) - **Important fixes for issues #788, #793 and more**
+
 ---
 
 ## Project Status
