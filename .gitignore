@@ -4,6 +4,7 @@ zig-cache/
 zig-out/
 tools/
 .claude
+.agent
 MULTILINGUAL_SETUP_COMPLETE.md
 DOCUMENTATION_STRUCTURE.md
 CLAUDE.md
