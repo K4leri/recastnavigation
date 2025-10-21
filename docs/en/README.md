@@ -105,7 +105,7 @@ Support for massive game worlds with 64-bit polygon references.
 
 | Component           | Status      | Tests                | Accuracy |
 | ------------------- | ----------- | -------------------- | -------- |
-| **Recast Pipeline** | ✅ Complete | 169 unit tests       | 100%     |
+| **Recast Pipeline** | ✅ Complete | 183 unit tests       | 100%     |
 | **Detour Queries**  | ✅ Complete | 22 integration tests | 100%     |
 | **DetourCrowd**     | ✅ Complete | Tested               | 100%     |
 | **TileCache**       | ✅ Complete | 7 integration tests  | 100%     |
@@ -155,7 +155,7 @@ pub const TileRef = u32;  // → pub const TileRef = u64;
 ## 🏆 Achievements
 
 - ✅ **100% functional equivalence with C++** - All components implemented
-- ✅ **191/191 tests passing** - 169 unit + 22 integration
+- ✅ **191/191 tests passing** - 183 unit + 22 integration
 - ✅ **0 memory leaks** - All tests pass cleanly
 - ✅ **Byte-for-byte identical** - NavMesh identical to C++ reference
 - ✅ **3 critical bugs fixed** - area init, erode, perp2D
