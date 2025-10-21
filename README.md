@@ -42,7 +42,7 @@ zig-recast/
 │   ├── crowd_bench.zig       # Crowd simulation benchmark
 │   └── findStraightPath_detailed.zig
 │
-├── test/                     # Tests (169 unit + 22 integration)
+├── test/                     # Tests (183 unit + 21 integration)
 │   ├── integration/          # Integration tests
 │   └── ...                   # Unit tests
 │
@@ -50,7 +50,7 @@ zig-recast/
 │   ├── README.md             # Documentation navigation
 │   ├── en/                   # English documentation
 │   ├── ru/                   # Russian documentation
-│   └── bug-fixes/            # Bug fix history
+│   └── bug_fixes/            # Bug fix history
 │
 └── build.zig                 # Build configuration
 ```
@@ -58,7 +58,9 @@ zig-recast/
 ## 🧩 Modules
 
 ### Recast - NavMesh Building
+
 Creating navigation meshes from triangle meshes:
+
 - ✅ `Heightfield` - Voxel-based heightfield representation
 - ✅ `CompactHeightfield` - Compact representation for processing
 - ✅ `Region Building` - Watershed partitioning with multi-stack system
@@ -67,7 +69,9 @@ Creating navigation meshes from triangle meshes:
 - ✅ `PolyMeshDetail` - Detailed mesh for precise height queries
 
 ### Detour - Pathfinding and Queries
+
 Navigation queries and pathfinding:
+
 - ✅ `NavMesh` - Runtime navigation mesh
 - ✅ `NavMeshQuery` - Pathfinding and spatial queries
 - ✅ `A* Pathfinding` - Optimal path search
@@ -75,14 +79,18 @@ Navigation queries and pathfinding:
 - ✅ `Distance Queries` - Distance queries
 
 ### DetourCrowd - Multi-Agent Simulation
+
 Managing multiple agents:
+
 - ✅ `Crowd Manager` - Crowd management
 - ✅ `Agent Movement` - Agent movement
 - ✅ `Local Steering` - Local steering
 - ✅ `Obstacle Avoidance` - Obstacle avoidance
 
 ### TileCache - Dynamic Obstacles
+
 Dynamic obstacle support:
+
 - ✅ `TileCache` - Tile cache with dynamic changes
 - ✅ `Obstacle Management` - Managing obstacles (box, cylinder, oriented box)
 - ✅ `Dynamic NavMesh Updates` - Dynamic NavMesh updates
@@ -90,14 +98,17 @@ Dynamic obstacle support:
 ## 🚀 Quick Start
 
 ### Requirements
+
 - Zig 0.15.0 or newer
 
 ### Build Library
+
 ```bash
 zig build
 ```
 
 ### Run Tests
+
 ```bash
 # All tests (unit + integration)
 zig build test
@@ -112,6 +123,7 @@ zig build test:contour
 ```
 
 ### Run Examples
+
 ```bash
 # Build all examples
 zig build examples
@@ -130,6 +142,7 @@ zig build examples
 ```
 
 ### Run Benchmarks
+
 ```bash
 # Recast pipeline benchmark
 zig build bench-recast
@@ -144,7 +157,8 @@ zig build bench-crowd
 ## ✅ Testing Status
 
 **Current Status:**
-- ✅ **191/191 tests passing** (169 unit + 22 integration)
+
+- ✅ **201/201 tests passing** (183 unit + 21 integration)
 - ✅ **100% accuracy** compared to C++ reference implementation
 - ✅ **0 memory leaks** in all tests
 - ✅ Recast pipeline fully tested
@@ -155,6 +169,7 @@ zig build bench-crowd
 **🎉 Achievement: Identical NavMesh Generation**
 
 The Zig implementation produces **byte-for-byte identical** navigation meshes with the C++ reference:
+
 - 44/44 contours ✅
 - 432/432 vertices ✅
 - 206/206 polygons ✅
@@ -213,6 +228,7 @@ pub fn main() !void {
 ```
 
 More examples in the `examples/` directory:
+
 - `simple_navmesh.zig` - basic NavMesh creation
 - `pathfinding_demo.zig` - pathfinding
 - `crowd_simulation.zig` - crowd simulation
@@ -221,6 +237,7 @@ More examples in the `examples/` directory:
 ## 🔄 Differences from C++ Version
 
 ### Memory Management
+
 ```zig
 // Zig: Explicit allocator
 var heightfield = try Heightfield.init(allocator, ...);
@@ -232,6 +249,7 @@ rcFreeHeightfield(heightfield);
 ```
 
 ### Error Handling
+
 ```zig
 // Zig: Error unions
 const result = try buildNavMesh(allocator, config);
@@ -242,6 +260,7 @@ if (!success) { /* handle error */ }
 ```
 
 ### Type Safety
+
 ```zig
 // Zig: Strong typing with enums
 const area_id = recast_nav.recast.AreaId.WALKABLE_AREA;
@@ -253,39 +272,17 @@ const unsigned char RC_WALKABLE_AREA = 63;
 ## 🗺️ Roadmap
 
 ### Phase 1: Basic Structures ✅ (Complete)
-- [x] Math types (Vec3, AABB)
-- [x] Heightfield structures
-- [x] Compact heightfield
-- [x] Polygon mesh structures
-- [x] NavMesh basic structures
 
 ### Phase 2: Recast Building ✅ (Complete)
-- [x] Heightfield rasterization
-- [x] Filtering functions
-- [x] Region building (watershed partitioning with multi-stack system)
-- [x] Contour generation
-- [x] Polygon mesh building
-- [x] Detail mesh building
-- [x] **100% accuracy** verified with C++ reference
 
 ### Phase 3: Detour Queries ✅ (Complete)
-- [x] NavMesh queries
-- [x] Pathfinding (A*)
-- [x] Ray casting
-- [x] Distance queries
-- [x] Nearest polygon search
-- [x] **100% accuracy** verified with C++ reference
 
 ### Phase 4: Advanced Features ✅ (Complete)
-- [x] Crowd simulation (DetourCrowd)
-- [x] Dynamic obstacles (DetourTileCache)
-- [x] Off-mesh connections
-- [x] Area costs
-- [x] Local steering
-- [x] Obstacle avoidance
 
 ### Phase 5: Optimization and Polish 🚧 (In Progress)
+
 - [ ] SIMD optimizations
+- [ ] influence map
 - [x] Benchmark suite (basic benchmarks ready)
 - [x] Documentation (complete documentation in docs/)
 - [x] Usage examples
@@ -299,14 +296,12 @@ const unsigned char RC_WALKABLE_AREA = 63;
 
 ## 📊 Known Achievements
 
-**Current State:** All 191 tests passing with no memory leaks.
+**Current State:** All 201 tests passing with no memory leaks.
 
 **Recent Achievements:**
+
 - ✅ Fixed watershed partitioning for 100% accuracy ([details](docs/bug-fixes/watershed-100-percent-fix/INDEX.md))
 - ✅ Fixed 3 critical raycast bugs ([details](docs/bug-fixes/raycast-fix/INDEX.md)):
-  - Area initialization bug
-  - erodeWalkableArea boundary condition
-  - perp2D formula sign error
 - ✅ Implemented multi-stack system for deterministic region building
 - ✅ Full implementation of `mergeAndFilterRegions`
 - ✅ Verified byte-for-byte identity with C++ RecastNavigation
@@ -318,11 +313,13 @@ const unsigned char RC_WALKABLE_AREA = 63;
 ### Main Sections
 
 #### 🚀 For Beginners
+
 - [Installation & Setup](docs/en/01-getting-started/installation.md) - installation and setup
 - [Quick Start Guide](docs/en/01-getting-started/quick-start.md) - create NavMesh in 5 minutes
 - [Building & Testing](docs/en/01-getting-started/building.md) - building and testing
 
 #### 🏗️ Architecture
+
 - [System Overview](docs/en/02-architecture/overview.md) - system overview
 - [Recast Pipeline](docs/ru/02-architecture/recast-pipeline.md) - NavMesh building process
 - [Detour Pipeline](docs/ru/02-architecture/detour-pipeline.md) - pathfinding system
@@ -331,21 +328,19 @@ const unsigned char RC_WALKABLE_AREA = 63;
 - [TileCache](docs/ru/02-architecture/tilecache.md) - dynamic obstacles
 
 #### 📖 API Reference
+
 - [Math API](docs/en/03-api-reference/math-api.md) - math types
 - [Recast API](docs/en/03-api-reference/recast-api.md) - NavMesh building
 - [Detour API](docs/en/03-api-reference/detour-api.md) - pathfinding and queries
 
 #### 📝 Practical Guides
+
 - [Creating NavMesh](docs/en/04-guides/creating-navmesh.md) - step-by-step NavMesh creation
 - [Pathfinding](docs/ru/04-guides/pathfinding.md) - pathfinding
 - [Raycast Queries](docs/ru/04-guides/raycast.md) - raycast queries
 
-#### 🐛 Bug Fix History
-- [Watershed Fix](docs/bug-fixes/watershed-100-percent-fix/INDEX.md) ⭐ - achieving 100% accuracy
-- [Raycast Fix](docs/bug-fixes/raycast-fix/INDEX.md) ⭐ - 3 critical fixes
-- [Hole Construction Fix](docs/bug-fixes/hole-construction-fix/INDEX.md) - fixing hole construction
-
 #### 🧪 Testing
+
 - [Test Coverage Analysis](TEST_COVERAGE_ANALYSIS.md) - test coverage analysis
 - [Running Tests](docs/en/01-getting-started/building.md) - running tests
 
@@ -373,4 +368,4 @@ This implementation follows the same license as the original RecastNavigation (z
 
 ---
 
-**Status:** ✅ Production Ready | **Version:** 1.0.0-beta | **Tests:** 191/191 ✅ | **Accuracy:** 100% 🎯
+**Status:** ✅ Production Ready | **Version:** 1.0.0-beta | **Tests:** 201/201 ✅ | **Accuracy:** 100% 🎯

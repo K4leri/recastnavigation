@@ -9,4 +9,5 @@ comptime {
     _ = @import("real_mesh_test.zig");
     _ = @import("dungeon_undulating_test.zig");
     _ = @import("pathfinding_test.zig");
+    _ = @import("raycast_test.zig");
 }
