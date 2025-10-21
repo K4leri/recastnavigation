@@ -103,6 +103,45 @@ pub fn build(b: *std.Build) void {
     const run_polyref64_tests = b.addRunArtifact(polyref64_tests);
     test_step.dependOn(&run_polyref64_tests.step);
 
+    // dividePoly simple test - reproduces and verifies GitHub issue #687 fix
+    const dividePoly_simple_test_module = b.createModule(.{
+        .root_source_file = b.path("test/dividePoly_simple_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    dividePoly_simple_test_module.addImport("recast-nav", recast_nav);
+    const dividePoly_simple_tests = b.addTest(.{
+        .root_module = dividePoly_simple_test_module,
+    });
+    const run_dividePoly_simple_tests = b.addRunArtifact(dividePoly_simple_tests);
+    test_step.dependOn(&run_dividePoly_simple_tests.step);
+
+    // Test: simple vertex duplicates analysis
+    const simple_vertex_analysis_test_module = b.createModule(.{
+        .root_source_file = b.path("test/simple_vertex_analysis.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    simple_vertex_analysis_test_module.addImport("recast-nav", recast_nav);
+    const simple_vertex_analysis_tests = b.addTest(.{
+        .root_module = simple_vertex_analysis_test_module,
+    });
+    const run_simple_vertex_analysis_tests = b.addRunArtifact(simple_vertex_analysis_tests);
+    test_step.dependOn(&run_simple_vertex_analysis_tests.step);
+
+    // dividePoly edge cases test
+    const dividePoly_edge_cases_test_module = b.createModule(.{
+        .root_source_file = b.path("test/dividePoly_edge_cases.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    dividePoly_edge_cases_test_module.addImport("recast-nav", recast_nav);
+    const dividePoly_edge_cases_tests = b.addTest(.{
+        .root_module = dividePoly_edge_cases_test_module,
+    });
+    const run_dividePoly_edge_cases_tests = b.addRunArtifact(dividePoly_edge_cases_tests);
+    test_step.dependOn(&run_dividePoly_edge_cases_tests.step);
+
     // OBJ Loader module for tests
     const obj_loader = b.addModule("obj_loader", .{
         .root_source_file = b.path("test/obj_loader.zig"),
