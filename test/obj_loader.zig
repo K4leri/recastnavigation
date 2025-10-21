@@ -27,13 +27,15 @@ pub fn loadObj(file_path: []const u8, allocator: std.mem.Allocator) !ObjMesh {
     var indices = std.array_list.Managed(i32).init(allocator);
     defer indices.deinit();
 
-    // New I/O API in Zig 0.15.1 - streaming mode with dynamic buffer
-    // Buffer size can be adjusted based on expected line length
-    var read_buffer: [8192]u8 = undefined; // 8KB buffer for longer lines
-    var file_reader = file.readerStreaming(&read_buffer);
-    const reader = &file_reader.interface;
+    // Use deprecatedReader with readUntilDelimiterOrEofAlloc to avoid hanging issues
+    // This replaces the problematic takeDelimiterExclusive that caused infinite hangs
+    const reader = file.deprecatedReader();
 
-    while (reader.takeDelimiterExclusive('\n')) |line| {
+    while (true) {
+        const line_opt = try reader.readUntilDelimiterOrEofAlloc(allocator, '\n', 8192);
+        const line = line_opt orelse break; // End of file
+        defer allocator.free(line);
+
         var trimmed = std.mem.trim(u8, line, " \t\r");
         if (trimmed.len == 0) continue;
 
@@ -82,10 +84,6 @@ pub fn loadObj(file_path: []const u8, allocator: std.mem.Allocator) !ObjMesh {
             }
             // Ignore faces with > 4 vertices for now
         }
-    } else |err| switch (err) {
-        error.EndOfStream => {}, // Normal end of file
-        error.StreamTooLong => return error.LineTooLong, // Line exceeds buffer size
-        error.ReadFailed => return error.ReadFailed,
     }
 
     const vertex_count = vertices.items.len / 3;

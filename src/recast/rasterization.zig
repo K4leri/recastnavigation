@@ -97,7 +97,7 @@ pub fn addSpan(
 
 /// Divides a convex polygon of max 12 vertices into two convex polygons
 /// across a separating axis.
-fn dividePoly(
+pub fn dividePoly(
     in_verts: []const f32,
     in_verts_count: usize,
     out_verts1: []f32,
@@ -131,14 +131,17 @@ fn dividePoly(
         if (!same_side) {
             const s = in_vert_axis_delta[in_vert_b] / (in_vert_axis_delta[in_vert_b] - in_vert_axis_delta[in_vert_a]);
 
-            // Interpolate intersection point
-            for (0..3) |j| {
-                const val = in_verts[in_vert_b * 3 + j] + (in_verts[in_vert_a * 3 + j] - in_verts[in_vert_b * 3 + j]) * s;
-                out_verts1[poly1_vert * 3 + j] = val;
-                out_verts2[poly2_vert * 3 + j] = val;
+            // Only create intersection if it's not at vertex position (avoid duplicates when delta=0)
+            if (in_vert_axis_delta[in_vert_a] != 0 and in_vert_axis_delta[in_vert_b] != 0) {
+                // Interpolate intersection point
+                for (0..3) |j| {
+                    const val = in_verts[in_vert_b * 3 + j] + (in_verts[in_vert_a * 3 + j] - in_verts[in_vert_b * 3 + j]) * s;
+                    out_verts1[poly1_vert * 3 + j] = val;
+                    out_verts2[poly2_vert * 3 + j] = val;
+                }
+                poly1_vert += 1;
+                poly2_vert += 1;
             }
-            poly1_vert += 1;
-            poly2_vert += 1;
 
             // Add the inVertA point to the right polygon. Do NOT add points that are on the dividing line
             if (in_vert_axis_delta[in_vert_a] > 0) {
@@ -153,9 +156,12 @@ fn dividePoly(
             if (in_vert_axis_delta[in_vert_a] >= 0) {
                 @memcpy(out_verts1[poly1_vert * 3 .. poly1_vert * 3 + 3], in_verts[in_vert_a * 3 .. in_vert_a * 3 + 3]);
                 poly1_vert += 1;
-                if (in_vert_axis_delta[in_vert_a] != 0) {
-                    continue;
+                // If delta = 0, vertex is on dividing line - add to polygon 2 as well
+                if (in_vert_axis_delta[in_vert_a] == 0) {
+                    @memcpy(out_verts2[poly2_vert * 3 .. poly2_vert * 3 + 3], in_verts[in_vert_a * 3 .. in_vert_a * 3 + 3]);
+                    poly2_vert += 1;
                 }
+                continue;
             }
             @memcpy(out_verts2[poly2_vert * 3 .. poly2_vert * 3 + 3], in_verts[in_vert_a * 3 .. in_vert_a * 3 + 3]);
             poly2_vert += 1;
