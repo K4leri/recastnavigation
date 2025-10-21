@@ -11,6 +11,21 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // Production library with safety checks enabled (ReleaseSafe mode)
+    // This provides performance optimizations while maintaining runtime safety
+    const recast_nav_safe = b.addModule("recast-nav-safe", .{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = .ReleaseSafe, // Optimized but with safety checks
+    });
+
+    const lib_safe = b.addLibrary(.{
+        .name = "recast-nav-safe",
+        .root_module = recast_nav_safe,
+        .linkage = .static,
+    });
+    b.installArtifact(lib_safe);
+
     // Static library
     const lib = b.addLibrary(.{
         .name = "recast-nav",
@@ -19,139 +34,48 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(lib);
 
-    // Unit Tests
-    const tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/root.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    const run_tests = b.addRunArtifact(tests);
-    const test_step = b.step("test", "Run library tests");
-    test_step.dependOn(&run_tests.step);
+    // ====================================================================
+    // OPTIMIZED TESTING ARCHITECTURE - SOLUTION TO LAZY COMPILATION
+    // ====================================================================
 
-    // Additional unit tests
-    const filter_test_module = b.createModule(.{
-        .root_source_file = b.path("test/filter_test.zig"),
+    // Instead of creating separate test modules for each test file,
+    // we use a single centralized test runner that imports all unit tests.
+    // This solves Zig's lazy compilation issue where test files are
+    // not compiled unless explicitly referenced.
+
+    // CORE UNIT TESTS - Single Module Solution with Safety Checks
+    // Tests should always run in Debug mode for maximum safety and error detection
+    const unit_test_module = b.createModule(.{
+        .root_source_file = b.path("test/all_tests.zig"),
         .target = target,
-        .optimize = optimize,
+        .optimize = .Debug, // Force Debug mode for comprehensive testing
     });
-    filter_test_module.addImport("recast-nav", recast_nav);
-    const filter_tests = b.addTest(.{
-        .root_module = filter_test_module,
-    });
-    const run_filter_tests = b.addRunArtifact(filter_tests);
-    test_step.dependOn(&run_filter_tests.step);
+    unit_test_module.addImport("recast-nav", recast_nav);
 
-    const rasterization_test_module = b.createModule(.{
-        .root_source_file = b.path("test/rasterization_test.zig"),
-        .target = target,
-        .optimize = optimize,
+    const unit_tests = b.addTest(.{
+        .root_module = unit_test_module,
     });
-    rasterization_test_module.addImport("recast-nav", recast_nav);
-    const rasterization_tests = b.addTest(.{
-        .root_module = rasterization_test_module,
-    });
-    const run_rasterization_tests = b.addRunArtifact(rasterization_tests);
-    test_step.dependOn(&run_rasterization_tests.step);
+    const run_unit_tests = b.addRunArtifact(unit_tests);
 
-    const mesh_advanced_test_module = b.createModule(.{
-        .root_source_file = b.path("test/mesh_advanced_test.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    mesh_advanced_test_module.addImport("recast-nav", recast_nav);
-    const mesh_advanced_tests = b.addTest(.{
-        .root_module = mesh_advanced_test_module,
-    });
-    const run_mesh_advanced_tests = b.addRunArtifact(mesh_advanced_tests);
-    test_step.dependOn(&run_mesh_advanced_tests.step);
+    // Main test step now includes all unit tests through centralized runner
+    const test_step = b.step("test", "Run all library tests");
+    test_step.dependOn(&run_unit_tests.step);
 
-    const contour_advanced_test_module = b.createModule(.{
-        .root_source_file = b.path("test/contour_advanced_test.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    contour_advanced_test_module.addImport("recast-nav", recast_nav);
-    const contour_advanced_tests = b.addTest(.{
-        .root_module = contour_advanced_test_module,
-    });
-    const run_contour_advanced_tests = b.addRunArtifact(contour_advanced_tests);
-    test_step.dependOn(&run_contour_advanced_tests.step);
+    // ====================================================================
+    // SPECIALIZED TEST MODULES - Only for complex integration tests
+    // ====================================================================
 
-    const obj_loader_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/obj_loader.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    const run_obj_loader_tests = b.addRunArtifact(obj_loader_tests);
-    test_step.dependOn(&run_obj_loader_tests.step);
-
-    // PolyRef 64-bit test
-    const polyref64_test_module = b.createModule(.{
-        .root_source_file = b.path("test/polyref64_test.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    polyref64_test_module.addImport("recast-nav", recast_nav);
-    const polyref64_tests = b.addTest(.{
-        .root_module = polyref64_test_module,
-    });
-    const run_polyref64_tests = b.addRunArtifact(polyref64_tests);
-    test_step.dependOn(&run_polyref64_tests.step);
-
-    // dividePoly simple test - reproduces and verifies GitHub issue #687 fix
-    const dividePoly_simple_test_module = b.createModule(.{
-        .root_source_file = b.path("test/dividePoly_simple_test.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    dividePoly_simple_test_module.addImport("recast-nav", recast_nav);
-    const dividePoly_simple_tests = b.addTest(.{
-        .root_module = dividePoly_simple_test_module,
-    });
-    const run_dividePoly_simple_tests = b.addRunArtifact(dividePoly_simple_tests);
-    test_step.dependOn(&run_dividePoly_simple_tests.step);
-
-    // Test: simple vertex duplicates analysis
-    const simple_vertex_analysis_test_module = b.createModule(.{
-        .root_source_file = b.path("test/simple_vertex_analysis.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    simple_vertex_analysis_test_module.addImport("recast-nav", recast_nav);
-    const simple_vertex_analysis_tests = b.addTest(.{
-        .root_module = simple_vertex_analysis_test_module,
-    });
-    const run_simple_vertex_analysis_tests = b.addRunArtifact(simple_vertex_analysis_tests);
-    test_step.dependOn(&run_simple_vertex_analysis_tests.step);
-
-    // dividePoly edge cases test
-    const dividePoly_edge_cases_test_module = b.createModule(.{
-        .root_source_file = b.path("test/dividePoly_edge_cases.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    dividePoly_edge_cases_test_module.addImport("recast-nav", recast_nav);
-    const dividePoly_edge_cases_tests = b.addTest(.{
-        .root_module = dividePoly_edge_cases_test_module,
-    });
-    const run_dividePoly_edge_cases_tests = b.addRunArtifact(dividePoly_edge_cases_tests);
-    test_step.dependOn(&run_dividePoly_edge_cases_tests.step);
-
-    // OBJ Loader module for tests
+    // OBJ Loader utility (used by multiple integration tests)
     const obj_loader = b.addModule("obj_loader", .{
         .root_source_file = b.path("test/obj_loader.zig"),
     });
 
-    // Integration Tests
+    // Integration Tests - Keep separate as they have different dependencies
+    // Also run in Debug mode for maximum safety during complex integration scenarios
     const integration_test_module = b.createModule(.{
         .root_source_file = b.path("test/integration/all.zig"),
         .target = target,
-        .optimize = optimize,
+        .optimize = .Debug, // Force Debug mode for comprehensive integration testing
     });
     integration_test_module.addImport("zig-recast", recast_nav);
     integration_test_module.addImport("obj_loader", obj_loader);
@@ -166,7 +90,31 @@ pub fn build(b: *std.Build) void {
     // Add integration tests to main test step
     test_step.dependOn(&run_integration_tests.step);
 
-    // Examples
+    // ====================================================================
+    // INDIVIDUAL TEST EXECUTABLES - For specific scenarios
+    // ====================================================================
+
+    // Raycast test executable (kept as standalone for specific testing scenarios)
+    const raycast_test_module = b.createModule(.{
+        .root_source_file = b.path("test/integration/raycast_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    raycast_test_module.addImport("zig-recast", recast_nav);
+    raycast_test_module.addImport("obj_loader", obj_loader);
+    const raycast_test_exe = b.addExecutable(.{
+        .name = "raycast_test",
+        .root_module = raycast_test_module,
+    });
+
+    const install_raycast_test = b.addInstallArtifact(raycast_test_exe, .{});
+    const raycast_test_step = b.step("raycast-test", "Build raycast test executable");
+    raycast_test_step.dependOn(&install_raycast_test.step);
+
+    // ====================================================================
+    // EXAMPLES - Unchanged
+    // ====================================================================
+
     const example_simple_module = b.createModule(.{
         .root_source_file = b.path("examples/simple_navmesh.zig"),
         .target = target,
@@ -222,24 +170,10 @@ pub fn build(b: *std.Build) void {
     example_step.dependOn(&install_example_crowd.step);
     example_step.dependOn(&install_example_dynamic_obstacles.step);
 
-    // Raycast test executable
-    const raycast_test_module = b.createModule(.{
-        .root_source_file = b.path("test/integration/raycast_test.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    raycast_test_module.addImport("zig-recast", recast_nav);
-    raycast_test_module.addImport("obj_loader", obj_loader);
-    const raycast_test_exe = b.addExecutable(.{
-        .name = "raycast_test",
-        .root_module = raycast_test_module,
-    });
+    // ====================================================================
+    // PERFORMANCE BENCHMARKS - Unchanged
+    // ====================================================================
 
-    const install_raycast_test = b.addInstallArtifact(raycast_test_exe, .{});
-    const raycast_test_step = b.step("raycast-test", "Build raycast test executable");
-    raycast_test_step.dependOn(&install_raycast_test.step);
-
-    // Performance Benchmarks
     const bench_recast_module = b.createModule(.{
         .root_source_file = b.path("bench/recast_bench.zig"),
         .target = target,
