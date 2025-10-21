@@ -20,6 +20,8 @@ comptime {
     _ = @import("dividePoly_simple_test.zig");
     _ = @import("dividePoly_edge_cases.zig");
     _ = @import("simple_vertex_analysis.zig");
+    _ = @import("triangulateHull_test.zig");
+    _ = @import("triangulateHull_earclip_test.zig");
 }
 
 // ====================================================================
@@ -75,6 +77,11 @@ test "Test Coverage Statistics" {
     std.debug.print("  • PolyRef Management and 64-bit Support\n", .{});
     std.debug.print("  • Edge Cases and Boundary Conditions\n", .{});
     std.debug.print("  • Vertex Duplication and Geometry Analysis\n", .{});
+    std.debug.print("  • Critical Bug Fixes (Issue #650 - Infinite Loop Prevention)\n", .{});
+    std.debug.print("  • Ear Clipping Algorithm Implementation and Verification\n", .{});
+    std.debug.print("  • Mathematical Correctness and Precision Preservation\n", .{});
+    std.debug.print("  • Performance and Memory Safety Testing\n", .{});
+    std.debug.print("  • Complex Geometric Edge Cases and Fallback Mechanisms\n", .{});
     std.debug.print("{s}\n\n", .{separator});
 }
 
