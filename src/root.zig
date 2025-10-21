@@ -34,6 +34,9 @@ pub const PolyMesh = recast.PolyMesh;
 pub const PolyMeshDetail = recast.PolyMeshDetail;
 pub const ContourSet = recast.ContourSet;
 
+// Re-export key Recast functions for direct access
+pub const triangulateHull = recast.triangulateHull;
+
 // Detour types
 pub const NavMesh = detour.NavMesh;
 pub const NavMeshParams = detour.NavMeshParams;

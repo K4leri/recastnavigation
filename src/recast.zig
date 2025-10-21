@@ -12,6 +12,9 @@ pub const mesh = @import("recast/mesh.zig");
 pub const detail = @import("recast/detail.zig");
 pub const layers = @import("recast/layers.zig");
 
+// Re-export key functions for direct access
+pub const triangulateHull = detail.triangulateHull;
+
 // Re-export commonly used types
 pub const Config = config.Config;
 pub const Heightfield = heightfield.Heightfield;
