@@ -13,6 +13,7 @@ Complete Zig implementation of the [RecastNavigation](https://github.com/recastn
 - **Performance**: Optimization through inline functions and comptime generation
 - **Zero Dependencies**: Pure Zig implementation
 - **100% Accuracy**: Byte-for-byte identical with C++ reference implementation
+- **Enhanced Triangulation**: Robust ear clipping algorithm with infinite loop protection
 
 ## 📁 Project Structure
 
