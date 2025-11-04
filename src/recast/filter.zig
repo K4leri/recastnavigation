@@ -113,8 +113,11 @@ pub fn filterLedgeSpans(
                     // The most we can step down to the neighbor is the walkableClimb distance
                     var neighbor_ceiling = if (neighbor_span) |ns| @as(i32, ns.smin) else MAX_HEIGHTFIELD_HEIGHT;
 
-                    // Skip neighbor if the gap between the spans is too small
-                    if (@min(ceiling, neighbor_ceiling) - floor >= walkable_height) {
+                    // Skip neighbor if the gap between the spans is too small.
+                    // Use strict inequality (>) to be conservative and avoid edge cases
+                    // where the agent would fit exactly (gap == walkableHeight).
+                    // See: https://github.com/recastnavigation/recastnavigation/pull/772
+                    if (@min(ceiling, neighbor_ceiling) - floor > walkable_height) {
                         lowest_neighbor_floor_diff = -walkable_climb - 1;
                         is_ledge = true;
                         break;
@@ -125,8 +128,10 @@ pub fn filterLedgeSpans(
                         const neighbor_floor = @as(i32, ns.smax);
                         neighbor_ceiling = if (ns.next) |next| @as(i32, next.smin) else MAX_HEIGHTFIELD_HEIGHT;
 
-                        // Only consider neighboring areas that have enough overlap
-                        if (@min(ceiling, neighbor_ceiling) - @max(floor, neighbor_floor) < walkable_height) {
+                        // Only consider neighboring areas that have enough overlap to be potentially traversable.
+                        // Use <= for correct logical inversion of the original (gap > h) condition.
+                        // See: https://github.com/recastnavigation/recastnavigation/pull/772
+                        if (@min(ceiling, neighbor_ceiling) - @max(floor, neighbor_floor) <= walkable_height) {
                             // No space to traverse between them
                             neighbor_span = ns.next;
                             continue;
