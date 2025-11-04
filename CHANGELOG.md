@@ -20,6 +20,17 @@
     - `docs/bug_fixes/github_issues/ISSUE_772_comparison_operators.md`
     - `dev/issue_772_comparison_operators/` (полное исследование проблемы)
 
+- **Исправлено несогласованное округление при растеризации** ([#766](https://github.com/recastnavigation/recastnavigation/issues/765))
+  - Заменена truncation (cast to int) на floor для вычисления индексов ячеек
+  - Устранена несогласованность между смежными тайлами когда координаты в диапазоне (-1.0, 0.0)
+  - Критично для multi-tile navmesh: устраняет gaps на границах тайлов
+  - Математическое обоснование: floor обладает свойством монотонности и коммутирует с трансляцией
+  - Файлы:
+    - `src/recast/rasterization.zig` (строки 208-212, 256-260)
+  - Документация:
+    - `docs/bug_fixes/github_issues/ISSUE_766_rasterization_rounding.md`
+    - `dev/issue_766_rasterization_rounding/` (математический анализ проблемы)
+
 ## История версий
 
 _История версий будет добавлена при первом релизе_
