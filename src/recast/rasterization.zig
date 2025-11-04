@@ -204,9 +204,12 @@ fn rasterizeTri(
     const h = heightfield.height;
     const by = heightfield_bb_max.y - heightfield_bb_min.y;
 
-    // Calculate the footprint of the triangle on the grid's z-axis
-    var z0 = @as(i32, @intFromFloat((tri_bb_min.z - heightfield_bb_min.z) * inverse_cell_size));
-    var z1 = @as(i32, @intFromFloat((tri_bb_max.z - heightfield_bb_min.z) * inverse_cell_size));
+    // Calculate the footprint of the triangle on the grid's z-axis.
+    // Use @floor for consistent rounding between adjacent tiles, especially when
+    // triangle vertices lie just outside the tile boundary in (-1.0, 0.0).
+    // See: https://github.com/recastnavigation/recastnavigation/pull/766
+    var z0 = @as(i32, @intFromFloat(@floor((tri_bb_min.z - heightfield_bb_min.z) * inverse_cell_size)));
+    var z1 = @as(i32, @intFromFloat(@floor((tri_bb_max.z - heightfield_bb_min.z) * inverse_cell_size)));
 
     // Use -1 rather than 0 to cut the polygon properly at the start of the tile
     z0 = math.clamp(i32, z0, -1, h - 1);
@@ -250,8 +253,11 @@ fn rasterizeTri(
             max_x = @max(max_x, in_row[vert * 3]);
         }
 
-        var x0 = @as(i32, @intFromFloat((min_x - heightfield_bb_min.x) * inverse_cell_size));
-        var x1 = @as(i32, @intFromFloat((max_x - heightfield_bb_min.x) * inverse_cell_size));
+        // Fix from PR #766: Use @floor for consistent rounding between adjacent tiles
+        // Issue #765: @intFromFloat does truncation towards zero, causing inconsistencies
+        // when coordinates are in range (-1.0, 0.0). floor() ensures proper cell indexing.
+        var x0 = @as(i32, @intFromFloat(@floor((min_x - heightfield_bb_min.x) * inverse_cell_size)));
+        var x1 = @as(i32, @intFromFloat(@floor((max_x - heightfield_bb_min.x) * inverse_cell_size)));
         if (x1 < 0 or x0 >= w) {
             continue;
         }
