@@ -131,19 +131,17 @@ pub fn dividePoly(
         if (!same_side) {
             const s = in_vert_axis_delta[in_vert_b] / (in_vert_axis_delta[in_vert_b] - in_vert_axis_delta[in_vert_a]);
 
-            // Only create intersection if it's not at vertex position (avoid duplicates when delta=0)
-            if (in_vert_axis_delta[in_vert_a] != 0 and in_vert_axis_delta[in_vert_b] != 0) {
-                // Interpolate intersection point
-                for (0..3) |j| {
-                    const val = in_verts[in_vert_b * 3 + j] + (in_verts[in_vert_a * 3 + j] - in_verts[in_vert_b * 3 + j]) * s;
-                    out_verts1[poly1_vert * 3 + j] = val;
-                    out_verts2[poly2_vert * 3 + j] = val;
-                }
-                poly1_vert += 1;
-                poly2_vert += 1;
+            // Interpolate intersection point
+            for (0..3) |j| {
+                const val = in_verts[in_vert_b * 3 + j] + (in_verts[in_vert_a * 3 + j] - in_verts[in_vert_b * 3 + j]) * s;
+                out_verts1[poly1_vert * 3 + j] = val;
+                out_verts2[poly2_vert * 3 + j] = val;
             }
+            poly1_vert += 1;
+            poly2_vert += 1;
 
             // Add the inVertA point to the right polygon. Do NOT add points that are on the dividing line
+            // since these were already added above
             if (in_vert_axis_delta[in_vert_a] > 0) {
                 @memcpy(out_verts1[poly1_vert * 3 .. poly1_vert * 3 + 3], in_verts[in_vert_a * 3 .. in_vert_a * 3 + 3]);
                 poly1_vert += 1;
@@ -152,16 +150,13 @@ pub fn dividePoly(
                 poly2_vert += 1;
             }
         } else {
-            // Add the inVertA point to the right polygon
+            // Add the inVertA point to the right polygon. Addition is done even for points on the dividing line
             if (in_vert_axis_delta[in_vert_a] >= 0) {
                 @memcpy(out_verts1[poly1_vert * 3 .. poly1_vert * 3 + 3], in_verts[in_vert_a * 3 .. in_vert_a * 3 + 3]);
                 poly1_vert += 1;
-                // If delta = 0, vertex is on dividing line - add to polygon 2 as well
-                if (in_vert_axis_delta[in_vert_a] == 0) {
-                    @memcpy(out_verts2[poly2_vert * 3 .. poly2_vert * 3 + 3], in_verts[in_vert_a * 3 .. in_vert_a * 3 + 3]);
-                    poly2_vert += 1;
+                if (in_vert_axis_delta[in_vert_a] != 0) {
+                    continue;
                 }
-                continue;
             }
             @memcpy(out_verts2[poly2_vert * 3 .. poly2_vert * 3 + 3], in_verts[in_vert_a * 3 .. in_vert_a * 3 + 3]);
             poly2_vert += 1;
@@ -222,16 +217,28 @@ fn rasterizeTri(
     var p1 = buf[7 * 3 * 2 .. 7 * 3 * 3];
     var p2 = buf[7 * 3 * 3 .. 7 * 3 * 4];
 
-    // Copy triangle vertices
-    @memcpy(in[0..3], &v0.toArray());
-    @memcpy(in[3..6], &v1.toArray());
-    @memcpy(in[6..9], &v2.toArray());
+    // Large World Support (Issue #687): Rebase coordinates to origin to maintain float32 precision.
+    // At large world coordinates (>2^22), float32 loses precision causing duplicate vertices
+    // and buffer overflow in dividePoly. By rebasing to origin, we work with small numbers.
+    const origin = heightfield_bb_min;
+
+    // Copy triangle vertices with origin rebasing
+    in[0] = v0.x - origin.x;
+    in[1] = v0.y - origin.y;
+    in[2] = v0.z - origin.z;
+    in[3] = v1.x - origin.x;
+    in[4] = v1.y - origin.y;
+    in[5] = v1.z - origin.z;
+    in[6] = v2.x - origin.x;
+    in[7] = v2.y - origin.y;
+    in[8] = v2.z - origin.z;
     var nv_in: usize = 3;
 
     var z = z0;
     while (z <= z1) : (z += 1) {
         // Clip polygon to row. Store the remaining polygon as well
-        const cell_z = heightfield_bb_min.z + @as(f32, @floatFromInt(z)) * cell_size;
+        // Note: coordinates are rebased, so cell_z starts from 0
+        const cell_z = @as(f32, @floatFromInt(z)) * cell_size;
         const result = dividePoly(in[0 .. nv_in * 3], nv_in, in_row, p1, cell_z + cell_size, .z);
         const nv_row = result.count1;
         nv_in = result.count2;
@@ -256,8 +263,9 @@ fn rasterizeTri(
         // Fix from PR #766: Use @floor for consistent rounding between adjacent tiles
         // Issue #765: @intFromFloat does truncation towards zero, causing inconsistencies
         // when coordinates are in range (-1.0, 0.0). floor() ensures proper cell indexing.
-        var x0 = @as(i32, @intFromFloat(@floor((min_x - heightfield_bb_min.x) * inverse_cell_size)));
-        var x1 = @as(i32, @intFromFloat(@floor((max_x - heightfield_bb_min.x) * inverse_cell_size)));
+        // Note: min_x/max_x are already rebased (from dividePoly output), no need to subtract origin
+        var x0 = @as(i32, @intFromFloat(@floor(min_x * inverse_cell_size)));
+        var x1 = @as(i32, @intFromFloat(@floor(max_x * inverse_cell_size)));
         if (x1 < 0 or x0 >= w) {
             continue;
         }
@@ -269,7 +277,8 @@ fn rasterizeTri(
         var x = x0;
         while (x <= x1) : (x += 1) {
             // Clip polygon to column. Store the remaining polygon as well
-            const cx = heightfield_bb_min.x + @as(f32, @floatFromInt(x)) * cell_size;
+            // Note: coordinates are rebased, so cx starts from 0
+            const cx = @as(f32, @floatFromInt(x)) * cell_size;
             const result2 = dividePoly(in_row[0 .. nv2 * 3], nv2, p1, p2, cx + cell_size, .x);
             const nv = result2.count1;
             nv2 = result2.count2;
@@ -284,14 +293,13 @@ fn rasterizeTri(
             }
 
             // Calculate min and max of the span
+            // Note: p1 Y values are already rebased, no need to subtract origin.y
             var span_min = p1[1];
             var span_max = p1[1];
             for (1..nv) |vert| {
                 span_min = @min(span_min, p1[vert * 3 + 1]);
                 span_max = @max(span_max, p1[vert * 3 + 1]);
             }
-            span_min -= heightfield_bb_min.y;
-            span_max -= heightfield_bb_min.y;
 
             // Skip the span if it's completely outside the heightfield bounding box
             if (span_max < 0.0 or span_min > by) {
