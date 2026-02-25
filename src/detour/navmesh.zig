@@ -419,11 +419,6 @@ pub const NavMesh = struct {
     }
 
     /// Check if two slabs overlap
-    ///
-    /// NOTE: This function fixes a bug from the original C++ RecastNavigation (issue #793)
-    /// The original code incorrectly used (py*2)² as the threshold, which allowed connections
-    /// at 4x the walkableClimb distance. The corrected version uses py², which properly
-    /// limits connections to the agent's actual climbing ability.
     inline fn overlapSlabs(amin: *const [2]f32, amax: *const [2]f32, bmin: *const [2]f32, bmax: *const [2]f32, px: f32, py: f32) bool {
         // Check for horizontal overlap
         const minx = @max(amin[0] + px, bmin[0] + px);
@@ -682,6 +677,13 @@ pub const NavMesh = struct {
         return .{ .tile = tile, .poly = poly };
     }
 
+    /// Check if a polygon reference is valid (tile exists, salt matches, poly index in range)
+    pub fn isValidPolyRef(self: *const Self, ref: PolyRef) bool {
+        if (ref == 0) return false;
+        _ = self.getTileAndPolyByRef(ref) catch return false;
+        return true;
+    }
+
     /// Set polygon flags
     pub fn setPolyFlags(self: *Self, ref: PolyRef, flags: u16) !void {
         const result = try self.getTileAndPolyByRef(ref);
@@ -872,6 +874,88 @@ pub const NavMesh = struct {
         }
 
         return nearest;
+    }
+
+    /// Find nearest polygon in tile with directional bias for ladder connections.
+    /// Only accepts polygons in front of the ladder (positive projection along approach dir).
+    /// Scores by perpendicular distance to approach ray. Falls back to standard search.
+    fn findNearestPolyInDirection(
+        self: *const Self,
+        tile: *const MeshTile,
+        center: *const [3]f32,
+        half_extents: *const [3]f32,
+        user_id: u32,
+        is_top: bool,
+        nearest_pt: *[3]f32,
+    ) PolyRef {
+        const dir_enc = if (is_top) (user_id >> 28) & 3 else (user_id >> 24) & 3;
+        const angle_deg: u16 = @intCast(dir_enc * 90);
+        const angle_rad = @as(f32, @floatFromInt(angle_deg)) * std.math.pi / 180.0;
+        const primary_dir_x = @cos(angle_rad);
+        const primary_dir_z = @sin(angle_rad);
+
+        const bmin = [3]f32{
+            center[0] - half_extents[0],
+            center[1] - half_extents[1],
+            center[2] - half_extents[2],
+        };
+        const bmax = [3]f32{
+            center[0] + half_extents[0],
+            center[1] + half_extents[1],
+            center[2] + half_extents[2],
+        };
+
+        var polys: [128]PolyRef = undefined;
+        const poly_count = self.queryPolygonsInTile(tile, &bmin, &bmax, &polys, 128);
+
+        // Try primary direction first, then opposite direction if all polys rejected
+        const directions = [2][2]f32{
+            .{ primary_dir_x, primary_dir_z },
+            .{ -primary_dir_x, -primary_dir_z },
+        };
+
+        for (directions) |dir_pair| {
+            const dir_x = dir_pair[0];
+            const dir_z = dir_pair[1];
+
+            var nearest: PolyRef = 0;
+            var nearest_score: f32 = std.math.floatMax(f32);
+
+            for (0..poly_count) |pi| {
+                const ref = polys[pi];
+
+                var closest_pt_poly: [3]f32 = undefined;
+                var pos_over_poly: bool = false;
+                self.closestPointOnPoly(ref, center, &closest_pt_poly, &pos_over_poly) catch continue;
+
+                const vx = closest_pt_poly[0] - center[0];
+                const vz = closest_pt_poly[2] - center[2];
+                const proj = vx * dir_x + vz * dir_z;
+
+                if (proj < 0) continue;
+
+                const perp_x = vx - proj * dir_x;
+                const perp_z = vz - proj * dir_z;
+                var score = perp_x * perp_x + perp_z * perp_z;
+
+                if (pos_over_poly) {
+                    const dy = @abs(closest_pt_poly[1] - center[1]);
+                    const walkable_climb = if (tile.header) |h| h.walkable_climb else 0.0;
+                    if (dy > walkable_climb) score += dy * dy;
+                }
+
+                if (score < nearest_score) {
+                    nearest_pt.* = closest_pt_poly;
+                    nearest_score = score;
+                    nearest = ref;
+                }
+            }
+
+            if (nearest != 0) return nearest;
+        }
+
+        // Fallback: neither direction worked, use standard search
+        return self.findNearestPolyInTile(tile, center, half_extents, nearest_pt);
     }
 
     /// Connect external links between tiles
@@ -1123,19 +1207,38 @@ pub const NavMesh = struct {
             // Find polygon to connect to (first vertex - start point)
             const p: *const [3]f32 = @ptrCast(con.pos[0..3]);
             var nearest_pt: [3]f32 = undefined;
-            const ref = self.findNearestPolyInTile(tile, p, &half_extents, &nearest_pt);
+            var ref: PolyRef = 0;
+
+            // Ladder connections (area == 2): direction-aware polygon search
+            // to avoid snapping to a polygon on the wrong side of a wall
+            if (poly.getArea() == 2) {
+                ref = self.findNearestPolyInDirection(tile, p, &half_extents, con.user_id, false, &nearest_pt);
+            } else {
+                ref = self.findNearestPolyInTile(tile, p, &half_extents, &nearest_pt);
+            }
             if (ref == 0) continue;
 
-            // Check distance
-            const dx = nearest_pt[0] - p[0];
-            const dz = nearest_pt[2] - p[2];
-            if (dx * dx + dz * dz > con.rad * con.rad) continue;
+            // Check distance — skip for ladders (area==2) since we keep original
+            // coordinates and just need a polygon to link to, not to snap to
+            if (poly.getArea() != 2) {
+                const dx = nearest_pt[0] - p[0];
+                const dz = nearest_pt[2] - p[2];
+                if (dx * dx + dz * dz > con.rad * con.rad) continue;
+            }
 
-            // Make sure the location is on current mesh
+            // Set the vertex position for this off-mesh connection endpoint.
+            // For ladders (area==2): keep original ladder position so the path
+            // routes through the exact ladder coordinates, not a polygon edge.
             const v_idx = poly.verts[0] * 3;
-            tile.verts[v_idx + 0] = nearest_pt[0];
-            tile.verts[v_idx + 1] = nearest_pt[1];
-            tile.verts[v_idx + 2] = nearest_pt[2];
+            if (poly.getArea() == 2) {
+                tile.verts[v_idx + 0] = p[0];
+                tile.verts[v_idx + 1] = p[1];
+                tile.verts[v_idx + 2] = p[2];
+            } else {
+                tile.verts[v_idx + 0] = nearest_pt[0];
+                tile.verts[v_idx + 1] = nearest_pt[1];
+                tile.verts[v_idx + 2] = nearest_pt[2];
+            }
 
             // Link off-mesh connection to target poly
             const idx = self.allocLink(tile);
@@ -1187,19 +1290,35 @@ pub const NavMesh = struct {
             // Find polygon to connect to (second vertex - end point)
             const p: *const [3]f32 = @ptrCast(target_con.pos[3..6]);
             var nearest_pt: [3]f32 = undefined;
-            const ref = self.findNearestPolyInTile(tile, p, &half_extents, &nearest_pt);
+            var ref: PolyRef = 0;
+
+            // Ladder connections (area == 2): direction-aware polygon search for top endpoint
+            if (target_poly.getArea() == 2) {
+                ref = self.findNearestPolyInDirection(tile, p, &half_extents, target_con.user_id, true, &nearest_pt);
+            } else {
+                ref = self.findNearestPolyInTile(tile, p, &half_extents, &nearest_pt);
+            }
             if (ref == 0) continue;
 
-            // Check distance
-            const dx = nearest_pt[0] - p[0];
-            const dz = nearest_pt[2] - p[2];
-            if (dx * dx + dz * dz > target_con.rad * target_con.rad) continue;
+            // Check distance — skip for ladders (area==2) since we keep original
+            // coordinates and just need a polygon to link to
+            if (target_poly.getArea() != 2) {
+                const dx = nearest_pt[0] - p[0];
+                const dz = nearest_pt[2] - p[2];
+                if (dx * dx + dz * dz > target_con.rad * target_con.rad) continue;
+            }
 
             // Make sure the location is on current mesh
             const v_idx = target_poly.verts[1] * 3;
-            target.verts[v_idx + 0] = nearest_pt[0];
-            target.verts[v_idx + 1] = nearest_pt[1];
-            target.verts[v_idx + 2] = nearest_pt[2];
+            if (target_poly.getArea() == 2) {
+                target.verts[v_idx + 0] = p[0];
+                target.verts[v_idx + 1] = p[1];
+                target.verts[v_idx + 2] = p[2];
+            } else {
+                target.verts[v_idx + 0] = nearest_pt[0];
+                target.verts[v_idx + 1] = nearest_pt[1];
+                target.verts[v_idx + 2] = nearest_pt[2];
+            }
 
             // Link off-mesh connection to target poly
             const idx = self.allocLink(target);
