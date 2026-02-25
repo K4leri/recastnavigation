@@ -413,24 +413,28 @@ pub fn align4(x: i32) i32 {
 pub fn distancePtSegSqr2D(pt: *const [3]f32, p: *const [3]f32, q: *const [3]f32, t: *f32) f32 {
     const pqx = q[0] - p[0];
     const pqz = q[2] - p[2];
-    var dx = pt[0] - p[0];
-    var dz = pt[2] - p[2];
+    const dx = pt[0] - p[0];
+    const dz = pt[2] - p[2];
     const d = pqx * pqx + pqz * pqz;
 
-    t.* = pqx * dx + pqz * dz;
-    if (d > 0) t.* /= d;
+    // TEST: temporarily using libs version (unclamped param for distance)
+    var param = pqx * dx + pqz * dz;
+    if (d > 0) param /= d;
 
-    if (t.* < 0) {
+    if (param < 0) {
         t.* = 0;
-    } else if (t.* > 1) {
+    } else if (param > 1) {
         t.* = 1;
+    } else {
+        t.* = param;
     }
 
-    // CRITICAL FIX: Recalculate dx, dz with clamped t (like C++ does)
-    dx = p[0] + t.* * pqx - pt[0];
-    dz = p[2] + t.* * pqz - pt[2];
+    const cx = p[0] + param * pqx;
+    const cz = p[2] + param * pqz;
+    const distx = pt[0] - cx;
+    const distz = pt[2] - cz;
 
-    return dx * dx + dz * dz;
+    return distx * distx + distz * distz;
 }
 
 /// Linear interpolation between two vectors

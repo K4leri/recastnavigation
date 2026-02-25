@@ -12,7 +12,7 @@ const CompactCell = heightfield.CompactCell;
 const PolyMesh = polymesh.PolyMesh;
 const PolyMeshDetail = polymesh.PolyMeshDetail;
 
-const RC_UNSET_HEIGHT = config.SPAN_MAX_HEIGHT;
+const RC_UNSET_HEIGHT: u16 = 0xffff;
 const RC_MULTIPLE_REGS = config.MULTIPLE_REGS;
 const RC_MESH_NULL_IDX = config.MESH_NULL_IDX;
 const NOT_CONNECTED = config.NOT_CONNECTED;
@@ -881,22 +881,22 @@ fn getHeightData(
     }
 
     var head: usize = 0;
-    while (head * 3 < queue.items.len) : (head += 1) {
+    while (head * 3 < queue.items.len) {
         const cx = queue.items[head * 3 + 0];
         const cy = queue.items[head * 3 + 1];
         const ci = queue.items[head * 3 + 2];
+        head += 1;
 
         if (head >= RETRACT_SIZE) {
             head = 0;
             if (queue.items.len > RETRACT_SIZE * 3) {
-                const old_len = queue.items.len;
                 std.mem.copyForwards(
                     i32,
-                    queue.items[0 .. old_len - RETRACT_SIZE * 3],
-                    queue.items[RETRACT_SIZE * 3 .. old_len],
+                    queue.items[0 .. queue.items.len - RETRACT_SIZE * 3],
+                    queue.items[RETRACT_SIZE * 3 ..],
                 );
-                try queue.resize(old_len - RETRACT_SIZE * 3);
             }
+            try queue.resize(queue.items.len - RETRACT_SIZE * 3);
         }
 
         const cs = chf.spans[@as(usize, @intCast(ci))];

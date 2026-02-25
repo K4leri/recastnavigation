@@ -122,8 +122,8 @@ fn calculateDistanceField(
                     const ay = y + heightfield_mod.getDirOffsetY(0);
                     const ai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax + ay * w))].index + s.getCon(0)));
                     const as = chf.spans[ai];
-                    if (src[ai] + 2 < src[i]) {
-                        src[i] = src[ai] + 2;
+                    if (src[ai] +| 2 < src[i]) {
+                        src[i] = src[ai] +| 2;
                     }
 
                     // (-1, -1)
@@ -131,8 +131,8 @@ fn calculateDistanceField(
                         const aax = ax + heightfield_mod.getDirOffsetX(3);
                         const aay = ay + heightfield_mod.getDirOffsetY(3);
                         const aai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(aax + aay * w))].index + as.getCon(3)));
-                        if (src[aai] + 3 < src[i]) {
-                            src[i] = src[aai] + 3;
+                        if (src[aai] +| 3 < src[i]) {
+                            src[i] = src[aai] +| 3;
                         }
                     }
                 }
@@ -143,8 +143,8 @@ fn calculateDistanceField(
                     const ay = y + heightfield_mod.getDirOffsetY(3);
                     const ai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax + ay * w))].index + s.getCon(3)));
                     const as = chf.spans[ai];
-                    if (src[ai] + 2 < src[i]) {
-                        src[i] = src[ai] + 2;
+                    if (src[ai] +| 2 < src[i]) {
+                        src[i] = src[ai] +| 2;
                     }
 
                     // (1, -1)
@@ -152,8 +152,8 @@ fn calculateDistanceField(
                         const aax = ax + heightfield_mod.getDirOffsetX(2);
                         const aay = ay + heightfield_mod.getDirOffsetY(2);
                         const aai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(aax + aay * w))].index + as.getCon(2)));
-                        if (src[aai] + 3 < src[i]) {
-                            src[i] = src[aai] + 3;
+                        if (src[aai] +| 3 < src[i]) {
+                            src[i] = src[aai] +| 3;
                         }
                     }
                 }
@@ -180,8 +180,8 @@ fn calculateDistanceField(
                     const ay = y + heightfield_mod.getDirOffsetY(2);
                     const ai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax + ay * w))].index + s.getCon(2)));
                     const as = chf.spans[ai];
-                    if (src[ai] + 2 < src[i]) {
-                        src[i] = src[ai] + 2;
+                    if (src[ai] +| 2 < src[i]) {
+                        src[i] = src[ai] +| 2;
                     }
 
                     // (1, 1)
@@ -189,8 +189,8 @@ fn calculateDistanceField(
                         const aax = ax + heightfield_mod.getDirOffsetX(1);
                         const aay = ay + heightfield_mod.getDirOffsetY(1);
                         const aai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(aax + aay * w))].index + as.getCon(1)));
-                        if (src[aai] + 3 < src[i]) {
-                            src[i] = src[aai] + 3;
+                        if (src[aai] +| 3 < src[i]) {
+                            src[i] = src[aai] +| 3;
                         }
                     }
                 }
@@ -201,8 +201,8 @@ fn calculateDistanceField(
                     const ay = y + heightfield_mod.getDirOffsetY(1);
                     const ai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax + ay * w))].index + s.getCon(1)));
                     const as = chf.spans[ai];
-                    if (src[ai] + 2 < src[i]) {
-                        src[i] = src[ai] + 2;
+                    if (src[ai] +| 2 < src[i]) {
+                        src[i] = src[ai] +| 2;
                     }
 
                     // (-1, 1)
@@ -210,8 +210,8 @@ fn calculateDistanceField(
                         const aax = ax + heightfield_mod.getDirOffsetX(0);
                         const aay = ay + heightfield_mod.getDirOffsetY(0);
                         const aai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(aax + aay * w))].index + as.getCon(0)));
-                        if (src[aai] + 3 < src[i]) {
-                            src[i] = src[aai] + 3;
+                        if (src[aai] +| 3 < src[i]) {
+                            src[i] = src[aai] +| 3;
                         }
                     }
                 }
@@ -221,11 +221,9 @@ fn calculateDistanceField(
 
     // Find max distance
     max_dist.* = 0;
-    var max_span_idx: usize = 0;
-    for (src, 0..) |d, idx| {
+    for (src) |d| {
         if (d > max_dist.*) {
             max_dist.* = d;
-            max_span_idx = idx;
         }
     }
 }
@@ -1102,7 +1100,7 @@ pub fn buildRegions(
     @memset(src_dist, 0);
 
     var region_id: u16 = 1;
-    var level: u16 = (chf.max_distance + 1) & ~@as(u16, 1);
+    var level: u16 = (chf.max_distance +| 1) & ~@as(u16, 1);
 
     const expand_iters: i32 = 8;
 
@@ -1191,7 +1189,7 @@ pub fn buildRegions(
     // Expand current regions to fill remaining gaps
     try expandRegions(expand_iters * 8, 0, chf, src_reg, src_dist, &stack, true, allocator);
 
-    ctx.log(.progress, "buildRegions: max_distance={d}, level_start={d}", .{ chf.max_distance, (chf.max_distance + 1) & ~@as(u16, 1) });
+    ctx.log(.progress, "buildRegions: max_distance={d}, level_start={d}", .{ chf.max_distance, (chf.max_distance +| 1) & ~@as(u16, 1) });
     ctx.log(.progress, "buildRegions: Watershed created {d} regions (before merging)", .{region_id - 1});
 
     // Merge and filter regions
