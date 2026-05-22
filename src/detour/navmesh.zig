@@ -936,6 +936,40 @@ pub const NavMesh = struct {
         }
     }
 
+    /// Walk `tile`'s per-poly link lists and detach every link whose `ref`
+    /// points at `target`, returning each freed slot to the tile's link
+    /// freelist. Must run before `removeTile` frees `target`'s slot — once
+    /// `target.salt` is bumped, the link refs become unreferenceable but
+    /// their Link records remain allocated in this tile's pool.
+    fn unconnectLinks(self: *Self, tile: *MeshTile, target: *MeshTile) void {
+        if (tile.header == null) return;
+        if (target.header == null) return;
+
+        const target_ref = self.getTileRef(target);
+        const target_tile_idx = self.decodePolyId(target_ref).tile;
+
+        const poly_count: usize = @intCast(tile.header.?.poly_count);
+        for (tile.polys[0..poly_count]) |*poly| {
+            var prev: u32 = common.NULL_LINK;
+            var j = poly.first_link;
+            while (j != common.NULL_LINK) {
+                const next = tile.links[j].next;
+                const ref_tile_idx = self.decodePolyId(tile.links[j].ref).tile;
+                if (ref_tile_idx == target_tile_idx) {
+                    if (prev == common.NULL_LINK) {
+                        poly.first_link = next;
+                    } else {
+                        tile.links[prev].next = next;
+                    }
+                    self.freeLink(tile, j);
+                } else {
+                    prev = j;
+                }
+                j = next;
+            }
+        }
+    }
+
     /// Add a tile to the navigation mesh
     pub fn addTile(
         self: *Self,
@@ -1244,6 +1278,28 @@ pub const NavMesh = struct {
         var tile = &self.tiles[decoded.tile];
         if (tile.salt != decoded.salt) return error.InvalidParam;
         if (tile.header == null) return error.InvalidParam;
+
+        // Disconnect neighbour tiles' portal links pointing at this tile before
+        // we release the slot. Without this, neighbour tiles leak Link records
+        // into their per-tile freelists until `allocLink` returns NULL_LINK and
+        // `connectExtLinks` for new tiles silently drops portal stitches.
+        // Matches upstream recastnavigation `dtNavMesh::removeTile`.
+        {
+            const MAX_NEIS = 32;
+            var neis: [MAX_NEIS]*MeshTile = undefined;
+
+            var nneis = self.getTilesAt(tile.header.?.x, tile.header.?.y, &neis, MAX_NEIS);
+            for (0..nneis) |j| {
+                if (neis[j] == tile) continue;
+                self.unconnectLinks(neis[j], tile);
+            }
+
+            var side: i32 = 0;
+            while (side < 8) : (side += 1) {
+                nneis = self.getNeighbourTilesAt(tile.header.?.x, tile.header.?.y, side, &neis, MAX_NEIS);
+                for (0..nneis) |j| self.unconnectLinks(neis[j], tile);
+            }
+        }
 
         // Remove tile from hash lookup
         const h = computeTileHash(tile.header.?.x, tile.header.?.y, self.tile_lut_mask);
