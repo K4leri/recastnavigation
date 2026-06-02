@@ -32,3 +32,15 @@ Thumbs.db
 *.dll
 *.exe
 *.pdb
+
+# Vendored package cache (reproducible from build.zig.zon)
+zig-pkg/
+
+# Scratch / debug artifacts (session)
+*.tracy
+*.err
+*.lib
+/*.png
+*.ps1
+query_diff/
+ref_harness.cpp
