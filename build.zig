@@ -105,11 +105,21 @@ pub fn build(b: *std.Build) void {
         if (enable_tracy) demo_exe.root_module.linkLibrary(ztracy_dep.artifact("tracy"));
         const install_demo = b.addInstallArtifact(demo_exe, .{});
 
+        // Ассеты рядом с exe (zig-out/bin/test_data) — чтобы установленный demo
+        // запускался standalone (резолвер ассетов ищет <exeDir>/test_data в первую очередь).
+        const install_assets = b.addInstallDirectory(.{
+            .source_dir = b.path("test_data"),
+            .install_dir = .bin,
+            .install_subdir = "test_data",
+        });
+
         const demo_step = b.step("demo", "Build RecastDemo GUI");
         demo_step.dependOn(&install_demo.step);
+        demo_step.dependOn(&install_assets.step);
 
         const run_demo = b.addRunArtifact(demo_exe);
         run_demo.step.dependOn(&install_demo.step);
+        run_demo.step.dependOn(&install_assets.step);
         const run_demo_step = b.step("run-demo", "Run RecastDemo GUI");
         run_demo_step.dependOn(&run_demo.step);
     };
@@ -251,21 +261,6 @@ pub fn build(b: *std.Build) void {
         .name = "dynamic_obstacles",
         .root_module = example_dynamic_obstacles_module,
     });
-
-    // Дифференциальный харнесс query (сверка find-запросов Zig vs C++).
-    const query_diff_module = b.createModule(.{
-        .root_source_file = b.path("query_diff/query_zig.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    query_diff_module.addImport("recast-nav", recast_nav);
-    const query_diff_exe = b.addExecutable(.{
-        .name = "query_diff_zig",
-        .root_module = query_diff_module,
-    });
-    const install_query_diff = b.addInstallArtifact(query_diff_exe, .{});
-    const query_diff_step = b.step("query-diff", "Build query diff harness (Zig)");
-    query_diff_step.dependOn(&install_query_diff.step);
 
     const install_example_simple = b.addInstallArtifact(example_simple, .{});
     const install_example_pathfinding = b.addInstallArtifact(example_pathfinding, .{});
