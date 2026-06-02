@@ -36,6 +36,7 @@ pub const debugDrawHeightfieldLayer = recast_debug.debugDrawHeightfieldLayer;
 pub const debugDrawHeightfieldLayers = recast_debug.debugDrawHeightfieldLayers;
 pub const debugDrawHeightfieldLayersRegions = recast_debug.debugDrawHeightfieldLayersRegions;
 pub const debugDrawRegionConnections = recast_debug.debugDrawRegionConnections;
+pub const debugDrawBoxWire = recast_debug.debugDrawBoxWire;
 pub const debugDrawRawContours = recast_debug.debugDrawRawContours;
 pub const debugDrawContours = recast_debug.debugDrawContours;
 pub const debugDrawPolyMesh = recast_debug.debugDrawPolyMesh;

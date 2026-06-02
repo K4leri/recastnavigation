@@ -320,6 +320,9 @@ pub const SampleTempObstacles = struct {
 
         // Scene overlays drawn regardless of the active tool (1:1 Sample::handleRender).
         if (self.geom) |g| {
+            // Mesh bounds wireframe (1:1 Sample::handleRender — duDebugDrawBoxWire,
+            // white 255,255,255,128). Marks the 3D object's extent.
+            dbg.debugDrawBoxWire(dd, g.bmin[0], g.bmin[1], g.bmin[2], g.bmax[0], g.bmax[1], g.bmax[2], dbg.rgba(255, 255, 255, 128), 1.0);
             g.drawConvexVolumes(dd);
             g.drawOffMeshConnections(dd);
         }

@@ -448,6 +448,9 @@ pub const SampleSolo = struct {
         // drawn regardless of the active tool (1:1 Sample::handleRender). The
         // tools only render their in-progress editing state.
         if (self.geom) |g| {
+            // Mesh bounds wireframe (1:1 Sample::handleRender — duDebugDrawBoxWire,
+            // white 255,255,255,128). Marks the 3D object's extent.
+            dbg.debugDrawBoxWire(dd, g.bmin[0], g.bmin[1], g.bmin[2], g.bmax[0], g.bmax[1], g.bmax[2], dbg.rgba(255, 255, 255, 128), 1.0);
             g.drawConvexVolumes(dd);
             g.drawOffMeshConnections(dd);
         }
@@ -469,8 +472,9 @@ pub const SampleSolo = struct {
         const v = geom.verts.items;
         const t = geom.tris.items;
         const ng = geom.normals.items;
-        // checker-текстура пола как в RecastDemo: масштаб 1/(cellSize*10), uv = мировые x,z.
-        self.dd_gl.setTexScale(1.0 / (self.settings.cell_size * 10.0));
+        // checker-текстура пола как в RecastDemo: масштаб 1/(cellSize*10).
+        const ts = 1.0 / (self.settings.cell_size * 10.0);
+        self.dd_gl.setTexScale(ts);
         dd.texture(true);
         // culling задан глобально в render() (как оригинал) — здесь не трогаем.
 
@@ -494,19 +498,29 @@ pub const SampleSolo = struct {
             const b: usize = @intCast(t[i + 1]);
             const c: usize = @intCast(t[i + 2]);
             const tri = i / 3;
-            var nx: f32 = 0;
-            var ny: f32 = 1;
+            var n = [3]f32{ 0, 1, 0 };
             if (tri * 3 + 2 < ng.len) {
-                nx = ng[tri * 3];
-                ny = ng[tri * 3 + 1];
+                n = .{ ng[tri * 3], ng[tri * 3 + 1], ng[tri * 3 + 2] };
             }
-            const lit = std.math.clamp(220.0 * (2.0 + nx + ny) / 4.0, 0.0, 255.0);
+            const lit = std.math.clamp(220.0 * (2.0 + n[0] + n[1]) / 4.0, 0.0, 255.0);
             const av: u8 = @intFromFloat(lit);
             const gray = dbg.rgba(av, av, av, 255);
-            const col = if (ny < walkable_thr) dbg.lerpCol(gray, unwalkable, 64) else gray;
-            dd.vertexXYZ(v[a * 3], v[a * 3 + 1], v[a * 3 + 2], col);
-            dd.vertexXYZ(v[b * 3], v[b * 3 + 1], v[b * 3 + 2], col);
-            dd.vertexXYZ(v[c * 3], v[c * 3 + 1], v[c * 3 + 2], col);
+            const col = if (n[1] < walkable_thr) dbg.lerpCol(gray, unwalkable, 64) else gray;
+
+            // Triplanar UV (1:1 duDebugDrawTriMesh): доминантная ось нормали → две
+            // перпендикулярные оси как uv. Иначе стены смазаны вертикально (нет
+            // горизонтальных линий сетки). ax=(dom+1)%3, ay=(ax+1)%3 == (1<<ax)&3.
+            var dom: usize = 0;
+            if (@abs(n[1]) > @abs(n[dom])) dom = 1;
+            if (@abs(n[2]) > @abs(n[dom])) dom = 2;
+            const ax: usize = (dom + 1) % 3;
+            const ay: usize = (ax + 1) % 3;
+
+            // Сырые оси: масштаб (ts) накладывает шейдер (vUV * uTexScale) — один раз,
+            // как texScale в duDebugDrawTriMesh. Здесь НЕ умножаем (иначе ts² → клетки крупнее).
+            self.dd_gl.vertexUV(v[a * 3], v[a * 3 + 1], v[a * 3 + 2], col, v[a * 3 + ax], v[a * 3 + ay]);
+            self.dd_gl.vertexUV(v[b * 3], v[b * 3 + 1], v[b * 3 + 2], col, v[b * 3 + ax], v[b * 3 + ay]);
+            self.dd_gl.vertexUV(v[c * 3], v[c * 3 + 1], v[c * 3 + 2], col, v[c * 3 + ax], v[c * 3 + ay]);
         }
         dd.end();
         dd.texture(false);

@@ -47,22 +47,6 @@ fn scrollCallback(_: *zglfw.Window, _: f64, yoffset: f64) callconv(.c) void {
     g_scroll += yoffset;
 }
 
-/// Сетка-grid на плоскости y=0 (линии).
-fn drawGrid(dd: recast.debug.DebugDraw, half: f32, step: f32) void {
-    const col = recast.debug.rgba(60, 60, 70, 255);
-    const col_axis = recast.debug.rgba(90, 90, 110, 255);
-    dd.begin(.lines, 1.0);
-    var x: f32 = -half;
-    while (x <= half + 0.001) : (x += step) {
-        const c = if (@abs(x) < 0.001) col_axis else col;
-        dd.vertexXYZ(x, 0, -half, c);
-        dd.vertexXYZ(x, 0, half, c);
-        dd.vertexXYZ(-half, 0, x, c);
-        dd.vertexXYZ(half, 0, x, c);
-    }
-    dd.end();
-}
-
 pub fn main(main_init: std.process.Init) !void {
     if (dvui.render_backend.kind != .opengl) @compileError("ожидается opengl render_backend");
 
@@ -543,7 +527,6 @@ pub fn main(main_init: std.process.Init) !void {
         dd_gl.setMvp(cam.proj(aspect).mul(cam.view()).m);
         dd_gl.setViewport(fb[0], fb[1]);
 
-        drawGrid(dd, 25.0, 1.0);
         switch (sample_kind) {
             .solo => solo.render(),
             .tile => tile.render(),

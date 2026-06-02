@@ -361,8 +361,8 @@ pub fn debugDrawHeightfieldLayersRegions(dd: DebugDraw, lset: *const Heightfield
     }
 }
 
-/// Helper: Draw box wireframe
-fn debugDrawBoxWire(dd: DebugDraw, minx: f32, miny: f32, minz: f32, maxx: f32, maxy: f32, maxz: f32, col: u32, line_width: f32) void {
+/// Draw box wireframe (1:1 `duDebugDrawBoxWire`, DebugDraw.cpp).
+pub fn debugDrawBoxWire(dd: DebugDraw, minx: f32, miny: f32, minz: f32, maxx: f32, maxy: f32, maxz: f32, col: u32, line_width: f32) void {
     dd.begin(.lines, line_width);
 
     // Bottom

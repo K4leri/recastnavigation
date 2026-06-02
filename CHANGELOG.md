@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Demo
+- Surface checker texture now matches RecastDemo: per-triangle triplanar UV
+  (1:1 `duDebugDrawTriMesh` — UV axes are the two perpendicular to the dominant
+  normal axis). Walls previously got `(x, z)` UVs for every triangle, so the
+  texture smeared vertically and only vertical grid lines showed; now floors and
+  walls both render the full square grid. Added `DebugDrawGL.vertexUV`.
+- Draw the input-mesh bounds wireframe box (1:1 `Sample::render` —
+  `duDebugDrawBoxWire`, white 255/255/255/128) in all three samples.
+- Removed the non-upstream ground grid (RecastDemo draws no floor grid).
+
 ### Tests
 - Pinned the `filterLedgeSpans` operator question (upstream [#772]) with two
   regression tests (`test/filter_test.zig`): the canonical flat-10×10 edge test

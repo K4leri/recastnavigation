@@ -242,6 +242,13 @@ pub const DebugDrawGL = struct {
         self.verts.append(.{ .x = x, .y = y, .z = z, .col = color, .u = x, .v = z }) catch {};
     }
 
+    /// Вершина с явными uv (triplanar-маппинг checker'а из duDebugDrawTriMesh:
+    /// uv = две оси, перпендикулярные доминантной оси нормали — иначе на стенах
+    /// текстура смазана вертикально и горизонтальных линий сетки нет).
+    pub fn vertexUV(self: *DebugDrawGL, x: f32, y: f32, z: f32, color: u32, u: f32, v: f32) void {
+        self.verts.append(.{ .x = x, .y = y, .z = z, .col = color, .u = u, .v = v }) catch {};
+    }
+
     fn vtEnd(ptr: *anyopaque) void {
         const self: *DebugDrawGL = @ptrCast(@alignCast(ptr));
         defer {
