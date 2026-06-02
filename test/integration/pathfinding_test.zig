@@ -463,107 +463,6 @@ test "REPRO Crowd: multi-poly stuck" {
     var tref: nav.detour.PolyRef = 0;
     var tsnap: [3]f32 = undefined;
     try crowd.navquery.findNearestPoly(&target_w, &ext, &filter, &tref, &tsnap);
-    std.debug.print("\n[RC] sref={} tref={} ssnap=({d:.2},{d:.2},{d:.2}) tsnap=({d:.2},{d:.2},{d:.2})\n", .{ sref, tref, ssnap[0], ssnap[1], ssnap[2], tsnap[0], tsnap[1], tsnap[2] });
-
-    {
-        var path512: [256]nav.detour.PolyRef = undefined;
-        var n512: usize = 0;
-        const st512 = crowd.navquery.findPath(sref, tref, &ssnap, &tsnap, &filter, path512[0..], &n512);
-        std.debug.print("[RC] findPath@512: status={any} npath={d} last={} (target={})\n", .{ st512, n512, if (n512 > 0) path512[n512 - 1] else 0, tref });
-        var q2 = try nav.detour.NavMeshQuery.init(allocator);
-        defer q2.deinit();
-        try q2.initQuery(&navmesh_result.navmesh, 2048);
-        // findNearestPoly target через q2 + разные ext
-        inline for (.{ [3]f32{ 2, 4, 2 }, [3]f32{ 4, 8, 4 }, [3]f32{ 10, 20, 10 } }) |e| {
-            var tr2: nav.detour.PolyRef = 0;
-            var ts2: [3]f32 = undefined;
-            q2.findNearestPoly(&target_w, &e, &filter, &tr2, &ts2) catch {};
-            // queryPolygons count в этом боксе
-            var qp: [256]nav.detour.PolyRef = undefined;
-            var qpc: usize = 0;
-            _ = q2.queryPolygons(&target_w, &e, &filter, &qp, &qpc) catch {};
-            std.debug.print("[RC] q2 findNearestPoly ext={d}: ref={} snap=({d:.2},{d:.2},{d:.2}) qpolys={d}\n", .{ e[0], tr2, ts2[0], ts2[1], ts2[2], qpc });
-        }
-        {
-            const r = navmesh_result.navmesh.getTileAndPolyByRef(sref) catch unreachable;
-            const h = r.tile.header.?;
-            std.debug.print("[RC] header bmin=({d:.2},{d:.2},{d:.2}) bmax=({d:.2},{d:.2},{d:.2}) qfac={d:.4} (1/cs={d:.4}) bvNodes={d}\n", .{ h.bmin.x, h.bmin.y, h.bmin.z, h.bmax.x, h.bmax.y, h.bmax.z, h.bv_quant_factor, @as(f32, 1.0 / 0.3), r.tile.bv_tree.len });
-            std.debug.print("[RC] poly_count={d} vert_count={d}\n", .{ h.poly_count, h.vert_count });
-        }
-        {
-            // БРУТФОРС: истинно ближайший полигон к target по всем полигонам тайла.
-            const r = navmesh_result.navmesh.getTileAndPolyByRef(sref) catch unreachable;
-            const base = navmesh_result.navmesh.getPolyRefBase(r.tile);
-            const pc: usize = @intCast(r.tile.header.?.poly_count);
-            var best_ref: nav.detour.PolyRef = 0;
-            var best_d: f32 = std.math.floatMax(f32);
-            var best_pt: [3]f32 = .{ 0, 0, 0 };
-            for (0..pc) |pi| {
-                const ref = base | @as(nav.detour.PolyRef, @intCast(pi));
-                var cp: [3]f32 = undefined;
-                var over: bool = false;
-                _ = q2.closestPointOnPoly(ref, &target_w, &cp, &over) catch continue;
-                const dxx = cp[0] - target_w[0];
-                const dzz = cp[2] - target_w[2];
-                const d = dxx * dxx + dzz * dzz;
-                if (d < best_d) {
-                    best_d = d;
-                    best_ref = ref;
-                    best_pt = cp;
-                }
-            }
-            std.debug.print("[RC] BRUTE nearest to target: ref={} pt=({d:.2},{d:.2},{d:.2}) dist2D={d:.3}\n", .{ best_ref, best_pt[0], best_pt[1], best_pt[2], @sqrt(best_d) });
-        }
-        var path2k: [256]nav.detour.PolyRef = undefined;
-        var n2k: usize = 0;
-        const st2k = q2.findPath(sref, tref, &ssnap, &tsnap, &filter, path2k[0..], &n2k);
-        std.debug.print("[RC] findPath@2048: status={any} npath={d} last={} (target={})\n", .{ st2k, n2k, if (n2k > 0) path2k[n2k - 1] else 0, tref });
-    }
-
-    {
-        // BFS по линкам навмеша от sref — сколько полигонов достижимо и виден ли tref.
-        const NM = &navmesh_result.navmesh;
-        var visited = std.AutoHashMap(nav.detour.PolyRef, void).init(allocator);
-        defer visited.deinit();
-        var queue: [4096]nav.detour.PolyRef = undefined;
-        var qn: usize = 0;
-        queue[qn] = sref;
-        qn += 1;
-        try visited.put(sref, {});
-        var qi: usize = 0;
-        var reached_target = false;
-        while (qi < qn) : (qi += 1) {
-            const cur = queue[qi];
-            const r = NM.getTileAndPolyByRef(cur) catch continue;
-            var li = r.poly.first_link;
-            while (li != 0xffffffff) {
-                const link = r.tile.links[li];
-                li = link.next;
-                if (link.ref == 0) continue;
-                if (link.ref == tref) reached_target = true;
-                if (visited.contains(link.ref)) continue;
-                try visited.put(link.ref, {});
-                if (qn < queue.len) {
-                    queue[qn] = link.ref;
-                    qn += 1;
-                }
-            }
-        }
-        std.debug.print("[RC] BFS from {}: reachable={d} polys, target {} reachable={}\n", .{ sref, visited.count(), tref, reached_target });
-        // степень самого sref
-        const r0 = NM.getTileAndPolyByRef(sref) catch unreachable;
-        var deg: usize = 0;
-        var l0 = r0.poly.first_link;
-        std.debug.print("[RC] poly {} neighbors:", .{sref});
-        while (l0 != 0xffffffff) {
-            const lk = r0.tile.links[l0];
-            l0 = lk.next;
-            if (lk.ref == 0) continue;
-            deg += 1;
-            std.debug.print(" {}", .{lk.ref});
-        }
-        std.debug.print("  (deg={d}, vertCount={d})\n", .{ deg, r0.poly.vert_count });
-    }
 
     const idx = try crowd.addAgent(&ssnap, &p);
     const ag = &crowd.agents[@intCast(idx)];
@@ -571,19 +470,12 @@ test "REPRO Crowd: multi-poly stuck" {
 
     const dt: f32 = 1.0 / 30.0;
     var reached = false;
-    for (0..600) |s| {
+    for (0..600) |_| {
         try crowd.update(dt);
-        const dgoal = nav.math.vdist2D(&ag.npos, &tsnap);
-        if (s % 100 == 0) {
-            std.debug.print("[RC] step {d:3}: npos=({d:.2},{d:.2}) pc={d} dist_to_goal={d:.2}\n", .{ s, ag.npos[0], ag.npos[2], ag.corridor.getPathCount(), dgoal });
-        }
-        if (dgoal < ag.params.radius * 2.0) {
+        if (nav.math.vdist2D(&ag.npos, &tsnap) < ag.params.radius * 2.0) {
             reached = true;
-            std.debug.print("[RC] REACHED goal at step {d}, dist={d:.2}\n", .{ s, dgoal });
             break;
         }
     }
-    const moved = nav.math.vdist(&ag.npos, &ssnap);
-    std.debug.print("[RC] total moved = {d:.3} reached={}\n", .{ moved, reached });
     try std.testing.expect(reached);
 }

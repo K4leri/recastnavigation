@@ -735,7 +735,7 @@ fn triangulateHull(
 }
 
 // ============================================================================
-// Placeholder functions - to be implemented
+// Height-patch sampling helpers
 // ============================================================================
 
 fn seedArrayWithPolyCenter(
