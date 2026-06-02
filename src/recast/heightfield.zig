@@ -6,8 +6,8 @@ const Vec3 = math.Vec3;
 
 /// Represents a span in a heightfield
 pub const Span = struct {
-    smin: u16, // Lower limit of span (using bit packing in original)
-    smax: u16, // Upper limit of span
+    smin: u16, // Lower limit of span. (Inclusive) [Limit: < smax] (bit packing in original)
+    smax: u16, // Upper limit of span. (Exclusive) [Limit: <= RC_SPAN_MAX_HEIGHT]
     area: u8, // Area ID
     next: ?*Span, // Next span higher up in column
 

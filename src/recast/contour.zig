@@ -45,14 +45,14 @@ fn getCornerHeight(
         const ax = x + heightfield_mod.getDirOffsetX(dir);
         const ay = y + heightfield_mod.getDirOffsetY(dir);
         const ai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax + ay * w))].index + s.getCon(dir)));
-        const as = chf.spans[ai];
-        ch = @max(ch, @as(i32, @intCast(as.y)));
+        const as_span = chf.spans[ai];
+        ch = @max(ch, @as(i32, @intCast(as_span.y)));
         regs[1] = @as(u32, chf.spans[ai].reg) | (@as(u32, chf.areas[ai]) << 16);
 
-        if (as.getCon(dirp) != NOT_CONNECTED) {
+        if (as_span.getCon(dirp) != NOT_CONNECTED) {
             const ax2 = ax + heightfield_mod.getDirOffsetX(dirp);
             const ay2 = ay + heightfield_mod.getDirOffsetY(dirp);
-            const ai2 = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax2 + ay2 * w))].index + as.getCon(dirp)));
+            const ai2 = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax2 + ay2 * w))].index + as_span.getCon(dirp)));
             const as2 = chf.spans[ai2];
             ch = @max(ch, @as(i32, @intCast(as2.y)));
             regs[2] = @as(u32, chf.spans[ai2].reg) | (@as(u32, chf.areas[ai2]) << 16);
@@ -63,14 +63,14 @@ fn getCornerHeight(
         const ax = x + heightfield_mod.getDirOffsetX(dirp);
         const ay = y + heightfield_mod.getDirOffsetY(dirp);
         const ai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax + ay * w))].index + s.getCon(dirp)));
-        const as = chf.spans[ai];
-        ch = @max(ch, @as(i32, @intCast(as.y)));
+        const as_span = chf.spans[ai];
+        ch = @max(ch, @as(i32, @intCast(as_span.y)));
         regs[3] = @as(u32, chf.spans[ai].reg) | (@as(u32, chf.areas[ai]) << 16);
 
-        if (as.getCon(dir) != NOT_CONNECTED) {
+        if (as_span.getCon(dir) != NOT_CONNECTED) {
             const ax2 = ax + heightfield_mod.getDirOffsetX(dir);
             const ay2 = ay + heightfield_mod.getDirOffsetY(dir);
-            const ai2 = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax2 + ay2 * w))].index + as.getCon(dir)));
+            const ai2 = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax2 + ay2 * w))].index + as_span.getCon(dir)));
             const as2 = chf.spans[ai2];
             ch = @max(ch, @as(i32, @intCast(as2.y)));
             regs[2] = @as(u32, chf.spans[ai2].reg) | (@as(u32, chf.areas[ai2]) << 16);
