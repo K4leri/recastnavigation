@@ -47,93 +47,12 @@ pub fn build(b: *std.Build) void {
     // ====================================================================
     // RECAST DEMO - GUI приложение (порт RecastDemo на DVUI + GLFW/OpenGL)
     // ====================================================================
-    // lazyDependency: демо-зависимости тянутся/оцениваются только когда реально
-    // собирается таргет demo/run-demo. Сборка библиотеки и тестов их не трогает.
-    if (b.lazyDependency("dvui", .{
-        .target = target,
-        .optimize = demo_optimize,
-        .backend = .glfw,
-        // подсветка синтаксиса (tree-sitter) нам не нужна — отключаем лишние C-deps.
-        .@"tree-sitter" = false,
-        // stb_truetype вместо C-freetype (минус зависимость).
-        .freetype = false,
-    })) |dvui_dep| if (b.lazyDependency("zgl", .{
-        .target = target,
-        .optimize = demo_optimize,
-    })) |zgl_dep| {
-        const demo_mod = b.createModule(.{
-            .root_source_file = b.path("demo/src/main.zig"),
-            .target = target,
-            .optimize = demo_optimize,
-        });
-        demo_mod.addImport("recast-nav", recast_nav);
-        demo_mod.addImport("dvui", dvui_dep.module("dvui_glfw"));
-        // прямой доступ к glfw-бэкенду (zglfw, Backend.init) — как в примере dvui
-        demo_mod.addImport("glfw-backend", dvui_dep.module("glfw"));
-
-        // zgl сам по себе не линкует системный GL — добавляем по платформе.
-        const zgl_mod = zgl_dep.module("zgl");
-        switch (target.result.os.tag) {
-            .windows => zgl_mod.linkSystemLibrary("opengl32", .{}),
-            .linux => zgl_mod.linkSystemLibrary("GL", .{}),
-            .macos => zgl_mod.linkFramework("OpenGL", .{}),
-            else => {},
-        }
-        demo_mod.addImport("zgl", zgl_mod);
-
-        // Tracy: опции + модуль ztracy. Только при -Dtracy тянем реальный ztracy
-        // (lazy path-dep вне репо); иначе локальный no-op stub — чтобы demo собирался
-        // без внешних зависимостей на CI / свежем clone.
-        const demo_options = b.addOptions();
-        demo_options.addOption(bool, "enable_tracy", enable_tracy);
-        demo_mod.addImport("build_options", demo_options.createModule());
-
-        var ztracy_lib: ?*std.Build.Step.Compile = null;
-        if (enable_tracy) {
-            if (b.lazyDependency("ztracy", .{
-                .target = target,
-                .optimize = demo_optimize,
-                .enable_ztracy = true,
-                .on_demand = true,
-            })) |ztracy_dep| {
-                demo_mod.addImport("ztracy", ztracy_dep.module("root"));
-                ztracy_lib = ztracy_dep.artifact("tracy");
-            }
-        } else {
-            demo_mod.addImport("ztracy", b.createModule(.{
-                .root_source_file = b.path("demo/src/ztracy_stub.zig"),
-            }));
-        }
-
-        const demo_exe = b.addExecutable(.{
-            .name = "recast_demo",
-            .root_module = demo_mod,
-            // self-hosted x86_64 backend не умеет tail calls, которые генерит zgl
-            // (см. коммент в dvui примере glfw-opengl-ontop) — нужен LLVM.
-            .use_llvm = true,
-        });
-        // C-клиент Tracy линкуем только когда профилирование включено.
-        if (ztracy_lib) |lib_t| demo_exe.root_module.linkLibrary(lib_t);
-        const install_demo = b.addInstallArtifact(demo_exe, .{});
-
-        // Ассеты рядом с exe (zig-out/bin/test_data) — чтобы установленный demo
-        // запускался standalone (резолвер ассетов ищет <exeDir>/test_data в первую очередь).
-        const install_assets = b.addInstallDirectory(.{
-            .source_dir = b.path("test_data"),
-            .install_dir = .bin,
-            .install_subdir = "test_data",
-        });
-
-        const demo_step = b.step("demo", "Build RecastDemo GUI");
-        demo_step.dependOn(&install_demo.step);
-        demo_step.dependOn(&install_assets.step);
-
-        const run_demo = b.addRunArtifact(demo_exe);
-        run_demo.step.dependOn(&install_demo.step);
-        run_demo.step.dependOn(&install_assets.step);
-        const run_demo_step = b.step("run-demo", "Run RecastDemo GUI");
-        run_demo_step.dependOn(&run_demo.step);
-    };
+    // Два варианта (см. addDemo ниже):
+    //   demo / run-demo           — demo_optimize (по умолчанию ReleaseSafe: безопасно для
+    //                                разработки, ловит latent-UB через safety + 0xAA-poison).
+    //   demo-fast / run-demo-fast — ReleaseFast (быстрее, для релизных бинарей). Используется CI.
+    addDemo(b, target, demo_optimize, enable_tracy, recast_nav, "demo", "Build RecastDemo GUI", "run-demo", "Run RecastDemo GUI");
+    addDemo(b, target, .ReleaseFast, enable_tracy, recast_nav, "demo-fast", "Build RecastDemo GUI (ReleaseFast)", "run-demo-fast", "Run RecastDemo GUI (ReleaseFast)");
 
     // Тесты математики демо (не требуют dvui/glfw — только recast-nav).
     {
@@ -366,4 +285,95 @@ pub fn build(b: *std.Build) void {
     run_all_bench_step.dependOn(&run_bench_detour.step);
     run_all_bench_step.dependOn(&run_bench_crowd.step);
     run_all_bench_step.dependOn(&run_bench_findstraightpath.step);
+}
+
+/// Создаёт build- и run-таргеты demo для заданного optimize-режима.
+/// Вызывается дважды: demo (ReleaseSafe) и demo-fast (ReleaseFast).
+/// lazyDependency: dvui/zgl/ztracy тянутся только когда соответствующий шаг реально собирается.
+fn addDemo(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    enable_tracy: bool,
+    recast_nav: *std.Build.Module,
+    build_step_name: []const u8,
+    build_step_desc: []const u8,
+    run_step_name: []const u8,
+    run_step_desc: []const u8,
+) void {
+    if (b.lazyDependency("dvui", .{
+        .target = target,
+        .optimize = optimize,
+        .backend = .glfw,
+        .@"tree-sitter" = false,
+        .freetype = false,
+    })) |dvui_dep| if (b.lazyDependency("zgl", .{
+        .target = target,
+        .optimize = optimize,
+    })) |zgl_dep| {
+        const demo_mod = b.createModule(.{
+            .root_source_file = b.path("demo/src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        demo_mod.addImport("recast-nav", recast_nav);
+        demo_mod.addImport("dvui", dvui_dep.module("dvui_glfw"));
+        demo_mod.addImport("glfw-backend", dvui_dep.module("glfw"));
+
+        const zgl_mod = zgl_dep.module("zgl");
+        switch (target.result.os.tag) {
+            .windows => zgl_mod.linkSystemLibrary("opengl32", .{}),
+            .linux => zgl_mod.linkSystemLibrary("GL", .{}),
+            .macos => zgl_mod.linkFramework("OpenGL", .{}),
+            else => {},
+        }
+        demo_mod.addImport("zgl", zgl_mod);
+
+        const demo_options = b.addOptions();
+        demo_options.addOption(bool, "enable_tracy", enable_tracy);
+        demo_mod.addImport("build_options", demo_options.createModule());
+
+        var ztracy_lib: ?*std.Build.Step.Compile = null;
+        if (enable_tracy) {
+            if (b.lazyDependency("ztracy", .{
+                .target = target,
+                .optimize = optimize,
+                .enable_ztracy = true,
+                .on_demand = true,
+            })) |ztracy_dep| {
+                demo_mod.addImport("ztracy", ztracy_dep.module("root"));
+                ztracy_lib = ztracy_dep.artifact("tracy");
+            }
+        } else {
+            demo_mod.addImport("ztracy", b.createModule(.{
+                .root_source_file = b.path("demo/src/ztracy_stub.zig"),
+            }));
+        }
+
+        const demo_exe = b.addExecutable(.{
+            .name = "recast_demo",
+            .root_module = demo_mod,
+            // self-hosted x86_64 backend не умеет tail calls из zgl — нужен LLVM.
+            .use_llvm = true,
+        });
+        if (ztracy_lib) |lib_t| demo_exe.root_module.linkLibrary(lib_t);
+        const install_demo = b.addInstallArtifact(demo_exe, .{});
+
+        // Ассеты рядом с exe (zig-out/bin/test_data) — standalone-запуск.
+        const install_assets = b.addInstallDirectory(.{
+            .source_dir = b.path("test_data"),
+            .install_dir = .bin,
+            .install_subdir = "test_data",
+        });
+
+        const demo_step = b.step(build_step_name, build_step_desc);
+        demo_step.dependOn(&install_demo.step);
+        demo_step.dependOn(&install_assets.step);
+
+        const run_demo = b.addRunArtifact(demo_exe);
+        run_demo.step.dependOn(&install_demo.step);
+        run_demo.step.dependOn(&install_assets.step);
+        const run_demo_step = b.step(run_step_name, run_step_desc);
+        run_demo_step.dependOn(&run_demo.step);
+    };
 }

@@ -67,8 +67,8 @@ jobs:
             libgl1-mesa-dev libx11-dev libxrandr-dev libxinerama-dev \
             libxcursor-dev libxi-dev libwayland-dev libxkbcommon-dev
 
-      - name: Build demo
-        run: zig build demo
+      - name: Build demo (ReleaseFast)
+        run: zig build demo-fast
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
