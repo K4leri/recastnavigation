@@ -39,11 +39,20 @@ pub const TimerLabel = enum {
     merge_polymeshdetail,
 };
 
+/// Опциональный приёмник лог-сообщений (аналог виртуального rcContext::doLog).
+/// Если задан в Context.sink, сообщения уходят в него вместо stderr —
+/// используется демкой для буфера панели Log.
+pub const LogSink = struct {
+    ptr: *anyopaque,
+    func: *const fn (ptr: *anyopaque, category: LogCategory, msg: []const u8) void,
+};
+
 /// Build context for logging and performance tracking
 pub const Context = struct {
     log_enabled: bool = true,
     timer_enabled: bool = true,
     allocator: std.mem.Allocator,
+    sink: ?LogSink = null,
 
     const Self = @This();
 
@@ -63,6 +72,13 @@ pub const Context = struct {
 
     pub fn log(self: *const Self, category: LogCategory, comptime fmt: []const u8, args: anytype) void {
         if (!self.log_enabled) return;
+
+        if (self.sink) |s| {
+            var buf: [1024]u8 = undefined;
+            const msg = std.fmt.bufPrint(&buf, fmt, args) catch fmt;
+            s.func(s.ptr, category, msg);
+            return;
+        }
 
         const prefix = switch (category) {
             .progress => "[PROGRESS]",
