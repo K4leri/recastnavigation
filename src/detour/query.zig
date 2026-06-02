@@ -2349,6 +2349,170 @@ pub const NavMeshQuery = struct {
         random_ref.* = poly_ref;
     }
 
+    /// Returns a random point reachable within `max_radius` of `center_pos`
+    /// (Dijkstra-bounded), on a filter-passing ground polygon weighted by area.
+    /// 1:1 with dtNavMeshQuery::findRandomPointAroundCircle
+    /// (DetourNavMeshQuery.cpp:317). `rand` supplies uniform floats in [0,1).
+    pub fn findRandomPointAroundCircle(
+        self: *const Self,
+        start_ref: PolyRef,
+        center_pos: *const [3]f32,
+        max_radius: f32,
+        filter: *const QueryFilter,
+        rand: std.Random,
+        random_ref: *PolyRef,
+        random_pt: *[3]f32,
+    ) !void {
+        const nav = self.nav orelse return error.NoNavMesh;
+        const node_pool = self.node_pool orelse return error.NoNodePool;
+        const open_list = self.open_list orelse return error.NoOpenList;
+
+        if (!nav.isValidPolyRef(start_ref) or !math.visfinite(center_pos) or
+            max_radius < 0 or !math.isfinite(max_radius))
+        {
+            return error.InvalidParam;
+        }
+
+        const start_r = nav.getTileAndPolyByRef(start_ref) catch return error.InvalidParam;
+        if (!filter.passFilter(start_ref, start_r.tile, start_r.poly)) return error.InvalidParam;
+
+        node_pool.clear();
+        open_list.clear();
+
+        var start_node = node_pool.getNode(start_ref, 0) orelse return error.OutOfNodes;
+        math.vcopy(&start_node.pos, center_pos);
+        start_node.pidx = 0;
+        start_node.cost = 0;
+        start_node.total = 0;
+        start_node.id = start_ref;
+        start_node.flags = .{ .open = true };
+        open_list.push(start_node);
+
+        const radius_sqr = max_radius * max_radius;
+        var area_sum: f32 = 0.0;
+
+        var random_tile: ?*const MeshTile = null;
+        var random_poly: ?*const Poly = null;
+        var random_poly_ref: PolyRef = 0;
+
+        while (!open_list.empty()) {
+            const best_node = open_list.pop().?;
+            best_node.flags.open = false;
+            best_node.flags.closed = true;
+
+            const best_ref = best_node.id;
+            const best_r = nav.getTileAndPolyByRef(best_ref) catch continue;
+            const best_tile = best_r.tile;
+            const best_poly = best_r.poly;
+
+            // Place random locations on ground (area-weighted reservoir sampling).
+            if (best_poly.getType() == .ground) {
+                var poly_area: f32 = 0.0;
+                const vcnt: usize = @intCast(best_poly.vert_count);
+                var j: usize = 2;
+                while (j < vcnt) : (j += 1) {
+                    const iv0 = @as(usize, best_poly.verts[0]) * 3;
+                    const iv1 = @as(usize, best_poly.verts[j - 1]) * 3;
+                    const iv2 = @as(usize, best_poly.verts[j]) * 3;
+                    const va = math.Vec3.init(best_tile.verts[iv0], best_tile.verts[iv0 + 1], best_tile.verts[iv0 + 2]);
+                    const vb = math.Vec3.init(best_tile.verts[iv1], best_tile.verts[iv1 + 1], best_tile.verts[iv1 + 2]);
+                    const vc = math.Vec3.init(best_tile.verts[iv2], best_tile.verts[iv2 + 1], best_tile.verts[iv2 + 2]);
+                    poly_area += math.triArea2D(va, vb, vc);
+                }
+                area_sum += poly_area;
+                if (rand.float(f32) * area_sum <= poly_area) {
+                    random_tile = best_tile;
+                    random_poly = best_poly;
+                    random_poly_ref = best_ref;
+                }
+            }
+
+            // Get parent ref.
+            var parent_ref: PolyRef = 0;
+            if (best_node.pidx != 0) {
+                parent_ref = node_pool.getNodeAtIdxConst(best_node.pidx).?.id;
+            }
+
+            // Expand to neighbours.
+            var link_idx = best_poly.first_link;
+            while (link_idx != common.NULL_LINK) {
+                const link = &best_tile.links[link_idx];
+                const neighbour_ref = link.ref;
+                link_idx = link.next;
+
+                if (neighbour_ref == 0 or neighbour_ref == parent_ref) continue;
+
+                var neighbour_tile: ?*const MeshTile = null;
+                var neighbour_poly: ?*const Poly = null;
+                nav.getTileAndPolyByRefUnsafe(neighbour_ref, &neighbour_tile, &neighbour_poly);
+
+                if (!filter.passFilter(neighbour_ref, neighbour_tile.?, neighbour_poly.?)) continue;
+
+                // Find edge and calc distance to the edge.
+                var va: [3]f32 = undefined;
+                var vb: [3]f32 = undefined;
+                var pp_ft: u8 = undefined;
+                var pp_tt: u8 = undefined;
+                self.getPortalPoints(best_ref, neighbour_ref, &va, &vb, &pp_ft, &pp_tt) catch continue;
+
+                // If the circle is not touching the next polygon, skip it.
+                var tseg: f32 = undefined;
+                const dist_sqr = math.distancePtSegSqr2D(center_pos, &va, &vb, &tseg);
+                if (dist_sqr > radius_sqr) continue;
+
+                var neighbour_node = node_pool.getNode(neighbour_ref, 0) orelse continue;
+                if (neighbour_node.flags.closed) continue;
+
+                // First visit: set position to edge midpoint.
+                if (!neighbour_node.flags.open and !neighbour_node.flags.closed) {
+                    math.vlerp(&neighbour_node.pos, &va, &vb, 0.5);
+                }
+
+                const total = best_node.total + math.vdist(&best_node.pos, &neighbour_node.pos);
+
+                // Already open with a better cost: skip.
+                if (neighbour_node.flags.open and total >= neighbour_node.total) continue;
+
+                neighbour_node.id = neighbour_ref;
+                neighbour_node.flags.closed = false;
+                neighbour_node.pidx = @intCast(node_pool.getNodeIdx(best_node));
+                neighbour_node.total = total;
+
+                if (neighbour_node.flags.open) {
+                    open_list.modify(neighbour_node);
+                } else {
+                    neighbour_node.flags.open = true;
+                    open_list.push(neighbour_node);
+                }
+            }
+        }
+
+        const poly = random_poly orelse return error.NotFound;
+        const tile = random_tile.?;
+
+        // Randomly pick a point on the chosen polygon.
+        const vcnt: usize = @intCast(poly.vert_count);
+        var verts: [3 * common.VERTS_PER_POLYGON]f32 = undefined;
+        var areas: [common.VERTS_PER_POLYGON]f32 = undefined;
+        for (0..vcnt) |j| {
+            const vi = @as(usize, poly.verts[j]) * 3;
+            verts[j * 3 + 0] = tile.verts[vi + 0];
+            verts[j * 3 + 1] = tile.verts[vi + 1];
+            verts[j * 3 + 2] = tile.verts[vi + 2];
+        }
+
+        const s = rand.float(f32);
+        const t2 = rand.float(f32);
+        var pt: [3]f32 = undefined;
+        common.randomPointInConvexPoly(verts[0 .. vcnt * 3], @intCast(poly.vert_count), areas[0..vcnt], s, t2, &pt);
+
+        var closest: [3]f32 = pt;
+        if (self.closestPointOnPoly(random_poly_ref, &pt, &closest, null)) |_| {} else |_| {}
+
+        random_pt.* = closest;
+        random_ref.* = random_poly_ref;
+    }
+
     pub fn closestPointOnPoly(
         self: *const Self,
         ref: PolyRef,

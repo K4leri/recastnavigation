@@ -458,5 +458,12 @@ test "Detour Pipeline: NavMesh and Query Initialization" {
         try query.findRandomPoint(&rfilter, prng.random(), &rref, &rpt);
         try testing.expect(rref != 0);
         try testing.expect(std.math.isFinite(rpt[0]) and std.math.isFinite(rpt[1]) and std.math.isFinite(rpt[2]));
+
+        // findRandomPointAroundCircle starting from that random point.
+        var rref2: nav.detour.PolyRef = 0;
+        var rpt2: [3]f32 = .{ 0, 0, 0 };
+        try query.findRandomPointAroundCircle(rref, &rpt, 20.0, &rfilter, prng.random(), &rref2, &rpt2);
+        try testing.expect(rref2 != 0);
+        try testing.expect(std.math.isFinite(rpt2[0]) and std.math.isFinite(rpt2[1]) and std.math.isFinite(rpt2[2]));
     }
 }
