@@ -4,14 +4,14 @@ const config = @import("config.zig");
 const heightfield = @import("heightfield.zig");
 const polymesh = @import("polymesh.zig");
 
-const Context = config.Context;
+const Context = @import("../context.zig").Context;
 const CompactHeightfield = heightfield.CompactHeightfield;
 const CompactSpan = heightfield.CompactSpan;
 const CompactCell = heightfield.CompactCell;
 const HeightfieldLayerSet = polymesh.HeightfieldLayerSet;
 const HeightfieldLayer = polymesh.HeightfieldLayer;
 
-const RC_NULL_AREA = config.NULL_AREA;
+const RC_NULL_AREA = config.AreaId.NULL_AREA;
 const NOT_CONNECTED = config.NOT_CONNECTED;
 
 // Constants for layers
@@ -99,7 +99,7 @@ pub fn buildHeightfieldLayers(
     const h = chf.height;
 
     // Allocate source region array
-    const src_reg = try allocator.alloc(u8, chf.span_count);
+    const src_reg = try allocator.alloc(u8, @intCast(chf.span_count));
     defer allocator.free(src_reg);
     @memset(src_reg, 0xff);
 
@@ -257,7 +257,7 @@ pub fn buildHeightfieldLayers(
 
             // Update overlapping regions
             var ii: usize = 0;
-            while (ii < nlregs - 1) : (ii += 1) {
+            while (ii + 1 < nlregs) : (ii += 1) {
                 var j: usize = ii + 1;
                 while (j < nlregs) : (j += 1) {
                     if (lregs[ii] != lregs[j]) {
@@ -407,17 +407,18 @@ pub fn buildHeightfieldLayers(
 
     var bmin = chf.bmin;
     var bmax = chf.bmax;
-    bmin[0] += @as(f32, @floatFromInt(border_size)) * chf.cs;
-    bmin[2] += @as(f32, @floatFromInt(border_size)) * chf.cs;
-    bmax[0] -= @as(f32, @floatFromInt(border_size)) * chf.cs;
-    bmax[2] -= @as(f32, @floatFromInt(border_size)) * chf.cs;
+    bmin.x += @as(f32, @floatFromInt(border_size)) * chf.cs;
+    bmin.z += @as(f32, @floatFromInt(border_size)) * chf.cs;
+    bmax.x -= @as(f32, @floatFromInt(border_size)) * chf.cs;
+    bmax.z -= @as(f32, @floatFromInt(border_size)) * chf.cs;
 
     lset.nlayers = layer_id;
-    lset.layers = try allocator.alloc(HeightfieldLayer, lset.nlayers);
+    lset.layers = try allocator.alloc(HeightfieldLayer, lset.layerCount());
 
-    for (0..lset.nlayers) |i| {
+    for (0..lset.layerCount()) |i| {
         const cur_id: u8 = @intCast(i);
         var layer = &lset.layers[i];
+        layer.allocator = allocator; // иначе deinit() освобождает по мусорному аллокатору
 
         const grid_size: usize = @intCast(lw * lh);
 
@@ -447,8 +448,8 @@ pub fn buildHeightfieldLayers(
 
         layer.bmin = bmin;
         layer.bmax = bmax;
-        layer.bmin[1] = bmin[1] + @as(f32, @floatFromInt(hmin)) * chf.ch;
-        layer.bmax[1] = bmin[1] + @as(f32, @floatFromInt(hmax)) * chf.ch;
+        layer.bmin.y = bmin.y + @as(f32, @floatFromInt(hmin)) * chf.ch;
+        layer.bmax.y = bmin.y + @as(f32, @floatFromInt(hmax)) * chf.ch;
         layer.hmin = @intCast(hmin);
         layer.hmax = @intCast(hmax);
 
@@ -494,7 +495,7 @@ pub fn buildHeightfieldLayers(
                             const alid = if (src_reg[ai] != 0xff) regs[src_reg[ai]].layer_id else 0xff;
 
                             if (chf.areas[ai] != RC_NULL_AREA and lid != alid) {
-                                portal |= @as(u8, @intCast(1 << @as(u3, @intCast(dir))));
+                                portal |= @as(u8, 1) << @as(u3, @intCast(dir));
                                 const as = chf.spans[ai];
                                 if (as.y > hmin) {
                                     layer.heights[idx] = @max(layer.heights[idx], @as(u8, @intCast(as.y - hmin)));
@@ -505,7 +506,7 @@ pub fn buildHeightfieldLayers(
                                 const nx = ax - border_size;
                                 const ny = ay - border_size;
                                 if (nx >= 0 and ny >= 0 and nx < lw and ny < lh) {
-                                    con |= @as(u8, @intCast(1 << @as(u3, @intCast(dir))));
+                                    con |= @as(u8, 1) << @as(u3, @intCast(dir));
                                 }
                             }
                         }
