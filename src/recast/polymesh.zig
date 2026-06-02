@@ -124,6 +124,14 @@ pub const PolyMesh = struct {
         if (self.areas.len > 0) self.allocator.free(self.areas);
         self.* = undefined;
     }
+
+    // usize-геттеры для чистых call-sites (поля остаются i32, см. CLAUDE.md).
+    pub fn vertCount(self: *const Self) usize {
+        return @intCast(self.nverts);
+    }
+    pub fn polyCount(self: *const Self) usize {
+        return @intCast(self.npolys);
+    }
 };
 
 /// Detail mesh for polygon mesh
@@ -155,6 +163,13 @@ pub const PolyMeshDetail = struct {
         if (self.verts.len > 0) self.allocator.free(self.verts);
         if (self.tris.len > 0) self.allocator.free(self.tris);
         self.* = undefined;
+    }
+
+    pub fn vertCount(self: *const Self) usize {
+        return @intCast(self.nverts);
+    }
+    pub fn triCount(self: *const Self) usize {
+        return @intCast(self.ntris);
     }
 };
 
@@ -230,5 +245,10 @@ pub const HeightfieldLayerSet = struct {
         }
         if (self.layers.len > 0) self.allocator.free(self.layers);
         self.* = undefined;
+    }
+
+    /// Число слоёв как usize (для чистых call-sites без @intCast).
+    pub fn layerCount(self: *const Self) usize {
+        return @intCast(self.nlayers);
     }
 };
