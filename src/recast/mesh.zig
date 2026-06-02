@@ -713,9 +713,11 @@ fn removeVertex(
 
     const hreg = try allocator.alloc(i32, num_removed_verts * nvp);
     defer allocator.free(hreg);
+    @memset(hreg, 0);
 
     const harea = try allocator.alloc(i32, num_removed_verts * nvp);
     defer allocator.free(harea);
+    @memset(harea, 0); // детерминизм: незаполненные слоты hole -> 0 (ground), не 0xAA
 
     var polys_with_rem: usize = 0;
     var i: usize = 0;
@@ -876,9 +878,11 @@ fn removeVertex(
 
     const pregs = try allocator.alloc(u16, ntris_usize);
     defer allocator.free(pregs);
+    @memset(pregs, 0);
 
     const pareas = try allocator.alloc(u8, ntris_usize);
     defer allocator.free(pareas);
+    @memset(pareas, 0); // иначе неинициализированные слоты (0xAA) утекают в mesh.areas
 
     const tmp_poly = polys[ntris_usize * nvp ..];
 
@@ -1081,6 +1085,7 @@ pub fn buildPolyMesh(
         // Add and merge vertices
         for (0..@intCast(cont.nverts)) |j| {
             const v = cont.verts[j * 4 ..];
+
             indices[j] = @intCast(addVertex(
                 @intCast(v[0]),
                 @intCast(v[1]),
