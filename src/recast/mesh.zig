@@ -1248,7 +1248,8 @@ pub fn buildPolyMesh(
     ctx.log(.progress, "buildPolyMesh: Created mesh with {d} vertices and {d} polygons", .{ mesh.nverts, mesh.npolys });
 }
 
-/// Merges multiple polygon meshes into one
+/// Merges multiple polygon meshes into one. 1:1 with upstream rcMergePolyMeshes
+/// (RecastMesh.cpp:1410). `mesh` must be a freshly initialised (empty) PolyMesh.
 pub fn mergePolyMeshes(
     ctx: *const Context,
     meshes: []const *PolyMesh,
@@ -1256,14 +1257,123 @@ pub fn mergePolyMeshes(
     mesh: *PolyMesh,
     allocator: std.mem.Allocator,
 ) !void {
-    _ = ctx;
-    _ = meshes;
-    _ = nmeshes;
-    _ = mesh;
-    _ = allocator;
+    if (nmeshes == 0 or meshes.len == 0) return;
 
-    // TODO: Implement mesh merging
-    return error.NotImplemented;
+    mesh.nvp = meshes[0].nvp;
+    mesh.cs = meshes[0].cs;
+    mesh.ch = meshes[0].ch;
+    mesh.bmin = meshes[0].bmin;
+    mesh.bmax = meshes[0].bmax;
+
+    const nvp: usize = @intCast(mesh.nvp);
+
+    var max_verts: usize = 0;
+    var max_polys: usize = 0;
+    var max_verts_per_mesh: usize = 0;
+    for (meshes[0..nmeshes]) |pm| {
+        mesh.bmin.x = @min(mesh.bmin.x, pm.bmin.x);
+        mesh.bmin.y = @min(mesh.bmin.y, pm.bmin.y);
+        mesh.bmin.z = @min(mesh.bmin.z, pm.bmin.z);
+        mesh.bmax.x = @max(mesh.bmax.x, pm.bmax.x);
+        mesh.bmax.y = @max(mesh.bmax.y, pm.bmax.y);
+        mesh.bmax.z = @max(mesh.bmax.z, pm.bmax.z);
+        max_verts_per_mesh = @max(max_verts_per_mesh, @as(usize, @intCast(pm.nverts)));
+        max_verts += @intCast(pm.nverts);
+        max_polys += @intCast(pm.npolys);
+    }
+
+    mesh.nverts = 0;
+    mesh.verts = try allocator.alloc(u16, max_verts * 3);
+    @memset(mesh.verts, 0);
+
+    mesh.npolys = 0;
+    mesh.polys = try allocator.alloc(u16, max_polys * 2 * nvp);
+    @memset(mesh.polys, MESH_NULL_IDX);
+
+    mesh.regs = try allocator.alloc(u16, max_polys);
+    @memset(mesh.regs, 0);
+
+    mesh.areas = try allocator.alloc(u8, max_polys);
+    @memset(mesh.areas, 0);
+
+    mesh.flags = try allocator.alloc(u16, max_polys);
+    @memset(mesh.flags, 0);
+
+    mesh.maxpolys = @intCast(max_polys);
+
+    const next_vert = try allocator.alloc(i32, max_verts);
+    defer allocator.free(next_vert);
+    @memset(next_vert, 0);
+
+    const first_vert = try allocator.alloc(i32, VERTEX_BUCKET_COUNT);
+    defer allocator.free(first_vert);
+    @memset(first_vert, @bitCast(@as(u32, 0xffffffff))); // all -1
+
+    const vremap = try allocator.alloc(u16, max_verts_per_mesh);
+    defer allocator.free(vremap);
+    @memset(vremap, 0);
+
+    for (meshes[0..nmeshes]) |pmesh| {
+        const ox: u16 = @intFromFloat(@floor((pmesh.bmin.x - mesh.bmin.x) / mesh.cs + 0.5));
+        const oz: u16 = @intFromFloat(@floor((pmesh.bmin.z - mesh.bmin.z) / mesh.cs + 0.5));
+
+        const is_min_x = (ox == 0);
+        const is_min_z = (oz == 0);
+        const is_max_x = @as(u16, @intFromFloat(@floor((mesh.bmax.x - pmesh.bmax.x) / mesh.cs + 0.5))) == 0;
+        const is_max_z = @as(u16, @intFromFloat(@floor((mesh.bmax.z - pmesh.bmax.z) / mesh.cs + 0.5))) == 0;
+        const is_on_border = is_min_x or is_min_z or is_max_x or is_max_z;
+
+        for (0..@intCast(pmesh.nverts)) |j| {
+            const v = pmesh.verts[j * 3 ..];
+            vremap[j] = addVertex(v[0] +% ox, v[1], v[2] +% oz, mesh.verts, first_vert, next_vert, &mesh.nverts);
+        }
+
+        for (0..@intCast(pmesh.npolys)) |j| {
+            const tgt = mesh.polys[@as(usize, @intCast(mesh.npolys)) * 2 * nvp ..];
+            const src = pmesh.polys[j * 2 * nvp ..];
+            mesh.regs[@intCast(mesh.npolys)] = pmesh.regs[j];
+            mesh.areas[@intCast(mesh.npolys)] = pmesh.areas[j];
+            mesh.flags[@intCast(mesh.npolys)] = pmesh.flags[j];
+            mesh.npolys += 1;
+            for (0..nvp) |k| {
+                if (src[k] == MESH_NULL_IDX) break;
+                tgt[k] = vremap[src[k]];
+            }
+
+            if (is_on_border) {
+                for (nvp..nvp * 2) |k| {
+                    if ((src[k] & 0x8000) != 0 and src[k] != 0xffff) {
+                        const dir = src[k] & 0xf;
+                        switch (dir) {
+                            0 => if (is_min_x) {
+                                tgt[k] = src[k];
+                            },
+                            1 => if (is_max_z) {
+                                tgt[k] = src[k];
+                            },
+                            2 => if (is_max_x) {
+                                tgt[k] = src[k];
+                            },
+                            3 => if (is_min_z) {
+                                tgt[k] = src[k];
+                            },
+                            else => {},
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Calculate adjacency.
+    try buildMeshAdjacency(mesh.polys, @intCast(mesh.npolys), @intCast(mesh.nverts), nvp, allocator);
+
+    if (mesh.nverts > 0xffff) {
+        ctx.log(.err, "mergePolyMeshes: The resulting mesh has too many vertices {d} (max {d}). Data can be corrupted.", .{ mesh.nverts, 0xffff });
+    }
+    if (mesh.npolys > 0xffff) {
+        ctx.log(.err, "mergePolyMeshes: The resulting mesh has too many polygons {d} (max {d}). Data can be corrupted.", .{ mesh.npolys, 0xffff });
+    }
 }
 
 /// Копирует polygon mesh из source в destination
