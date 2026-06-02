@@ -815,7 +815,9 @@ fn seedArrayWithPolyCenter(
     try array.append(start_span_index);
 
     var dirs = [_]i32{ 0, 1, 2, 3 };
-    @memset(hp.data, 0);
+    // Clear only the ACTIVE patch (hp.width*hp.height), not the full max-sized
+    // buffer — matches upstream RecastMeshDetail.cpp memset(...,width*height).
+    @memset(hp.data[0..@as(usize, @intCast(hp.width * hp.height))], 0);
 
     // DFS to move to the center. Note that we need a DFS here and can not just move
     // directly towards the center without recording intermediate nodes, even though the polygons
@@ -881,7 +883,7 @@ fn seedArrayWithPolyCenter(
     try array.append(ci);
 
     // Reset height patch and seed the center cell height
-    @memset(hp.data, 0xffff);
+    @memset(hp.data[0..@as(usize, @intCast(hp.width * hp.height))], 0xffff);
     if (ci >= 0) {
         const cs = chf.spans[@as(usize, @intCast(ci))];
         hp.data[@as(usize, @intCast((cx - hp.xmin) + (cy - hp.ymin) * hp.width))] = cs.y;
@@ -900,7 +902,7 @@ fn getHeightData(
     region: u16,
 ) !void {
     try queue.resize(0);
-    @memset(hp.data, 0xffff);
+    @memset(hp.data[0..@as(usize, @intCast(hp.width * hp.height))], 0xffff);
 
     var empty = true;
 
