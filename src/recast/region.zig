@@ -84,12 +84,15 @@ fn calculateDistanceField(
                 const area = chf.areas[i];
 
                 var nc: u32 = 0;
-                var dir: u3 = 0;
-                while (dir < 4) : (dir += 1) {
-                    const dir_u2: u2 = @intCast(dir);
+                // inline for → dir is comptime, folding getDirOffsetX/Y(dir) and the
+                // getCon shift to constants. Zig/LLVM otherwise leaves the fixed 4-trip
+                // direction loop as a runtime-dir loop (rodata offset lookups + variable
+                // shifts) that MSVC unrolls. Output-identical.
+                inline for (0..4) |dir_i| {
+                    const dir_u2: u2 = @intCast(dir_i);
                     if (s.getCon(dir_u2) != NOT_CONNECTED) {
-                        const ax = x + heightfield_mod.getDirOffsetX(dir_u2);
-                        const ay = y + heightfield_mod.getDirOffsetY(dir_u2);
+                        const ax = x + comptime heightfield_mod.getDirOffsetX(dir_u2);
+                        const ay = y + comptime heightfield_mod.getDirOffsetY(dir_u2);
                         const ai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax + ay * w))].index + s.getCon(dir_u2)));
                         if (area == chf.areas[ai]) {
                             nc += 1;
@@ -267,20 +270,23 @@ fn boxBlur(
                 }
 
                 var d: i32 = @intCast(cd);
-                var dir: u3 = 0;
-                while (dir < 4) : (dir += 1) {
-                    const dir_u2: u2 = @intCast(dir);
+                // inline for → dir comptime; folds the offset lookups + getCon shifts
+                // (the dominant ~44% of rcBuildDistanceField on span-dense maps). The
+                // fixed 4-trip loop is otherwise left runtime-dir by Zig/LLVM where MSVC
+                // unrolls it. Output-identical.
+                inline for (0..4) |dir_i| {
+                    const dir_u2: u2 = @intCast(dir_i);
                     if (s.getCon(dir_u2) != NOT_CONNECTED) {
-                        const ax = x + heightfield_mod.getDirOffsetX(dir_u2);
-                        const ay = y + heightfield_mod.getDirOffsetY(dir_u2);
+                        const ax = x + comptime heightfield_mod.getDirOffsetX(dir_u2);
+                        const ay = y + comptime heightfield_mod.getDirOffsetY(dir_u2);
                         const ai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax + ay * w))].index + s.getCon(dir_u2)));
                         d += @intCast(src[ai]);
 
                         const as = chf.spans[ai];
-                        const dir2: u2 = @intCast((dir + 1) & 0x3);
+                        const dir2: u2 = comptime @intCast((dir_i + 1) & 0x3);
                         if (as.getCon(dir2) != NOT_CONNECTED) {
-                            const ax2 = ax + heightfield_mod.getDirOffsetX(dir2);
-                            const ay2 = ay + heightfield_mod.getDirOffsetY(dir2);
+                            const ax2 = ax + comptime heightfield_mod.getDirOffsetX(dir2);
+                            const ay2 = ay + comptime heightfield_mod.getDirOffsetY(dir2);
                             const ai2 = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax2 + ay2 * w))].index + as.getCon(dir2)));
                             d += @intCast(src[ai2]);
                         } else {
@@ -332,36 +338,39 @@ fn floodRegion(
 
         // Check if any neighbor already has a valid region
         var ar: u16 = 0;
-        var dir: u3 = 0;
-        while (dir < 4) : (dir += 1) {
-            const dir_u2: u2 = @intCast(dir);
-            if (cs.getCon(dir_u2) != NOT_CONNECTED) {
-                const ax = cx + heightfield_mod.getDirOffsetX(dir_u2);
-                const ay = cy + heightfield_mod.getDirOffsetY(dir_u2);
+        // inline for (dir comptime) + ar_found flag replaces a runtime `break`
+        // (inline for forbids runtime break/continue); the `continue`s are folded into
+        // nested ifs. Output-identical to the upstream 4-dir neighbor scan.
+        var ar_found = false;
+        inline for (0..4) |dir_i| {
+            const dir_u2: u2 = @intCast(dir_i);
+            if (!ar_found and cs.getCon(dir_u2) != NOT_CONNECTED) {
+                const ax = cx + comptime heightfield_mod.getDirOffsetX(dir_u2);
+                const ay = cy + comptime heightfield_mod.getDirOffsetY(dir_u2);
                 const ai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax + ay * w))].index + cs.getCon(dir_u2)));
-                if (chf.areas[ai] != area) continue;
-
-                const nr = src_reg[ai];
-                if ((nr & BORDER_REG) != 0) continue; // Don't take borders into account
-                if (nr != 0 and nr != r) {
-                    ar = nr;
-                    break;
-                }
-
-                const as = chf.spans[ai];
-
-                // Check diagonal neighbor
-                const dir2: u2 = @intCast((dir + 1) & 0x3);
-                if (as.getCon(dir2) != NOT_CONNECTED) {
-                    const ax2 = ax + heightfield_mod.getDirOffsetX(dir2);
-                    const ay2 = ay + heightfield_mod.getDirOffsetY(dir2);
-                    const ai2 = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax2 + ay2 * w))].index + as.getCon(dir2)));
-                    if (chf.areas[ai2] != area) continue;
-
-                    const nr2 = src_reg[ai2];
-                    if (nr2 != 0 and nr2 != r) {
-                        ar = nr2;
-                        break;
+                if (chf.areas[ai] == area) {
+                    const nr = src_reg[ai];
+                    if ((nr & BORDER_REG) == 0) {
+                        if (nr != 0 and nr != r) {
+                            ar = nr;
+                            ar_found = true;
+                        } else {
+                            const as = chf.spans[ai];
+                            // Check diagonal neighbor
+                            const dir2: u2 = comptime @intCast((dir_i + 1) & 0x3);
+                            if (as.getCon(dir2) != NOT_CONNECTED) {
+                                const ax2 = ax + comptime heightfield_mod.getDirOffsetX(dir2);
+                                const ay2 = ay + comptime heightfield_mod.getDirOffsetY(dir2);
+                                const ai2 = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax2 + ay2 * w))].index + as.getCon(dir2)));
+                                if (chf.areas[ai2] == area) {
+                                    const nr2 = src_reg[ai2];
+                                    if (nr2 != 0 and nr2 != r) {
+                                        ar = nr2;
+                                        ar_found = true;
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -375,15 +384,13 @@ fn floodRegion(
         count += 1;
 
         // Expand to neighbors
-        dir = 0;
-        while (dir < 4) : (dir += 1) {
-            const dir_u2: u2 = @intCast(dir);
+        inline for (0..4) |dir_i| {
+            const dir_u2: u2 = @intCast(dir_i);
             if (cs.getCon(dir_u2) != NOT_CONNECTED) {
-                const ax = cx + heightfield_mod.getDirOffsetX(dir_u2);
-                const ay = cy + heightfield_mod.getDirOffsetY(dir_u2);
+                const ax = cx + comptime heightfield_mod.getDirOffsetX(dir_u2);
+                const ay = cy + comptime heightfield_mod.getDirOffsetY(dir_u2);
                 const ai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax + ay * w))].index + cs.getCon(dir_u2)));
-                if (chf.areas[ai] != area) continue;
-                if (chf.dist[ai] >= lev and src_reg[ai] == 0) {
+                if (chf.areas[ai] == area and chf.dist[ai] >= lev and src_reg[ai] == 0) {
                     src_reg[ai] = r;
                     src_dist[ai] = 0;
                     try stack.append(.{ .x = ax, .y = ay, .index = @intCast(ai) });
@@ -461,19 +468,20 @@ fn expandRegions(
             const area = chf.areas[i];
             const s = chf.spans[i];
 
-            var dir: u3 = 0;
-            while (dir < 4) : (dir += 1) {
-                const dir_u2: u2 = @intCast(dir);
-                if (s.getCon(dir_u2) == NOT_CONNECTED) continue;
-
-                const ax = x + heightfield_mod.getDirOffsetX(dir_u2);
-                const ay = y + heightfield_mod.getDirOffsetY(dir_u2);
-                const ai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax + ay * w))].index + s.getCon(dir_u2)));
-                if (chf.areas[ai] != area) continue;
-                if (src_reg[ai] > 0 and (src_reg[ai] & BORDER_REG) == 0) {
-                    if (@as(i32, @intCast(src_dist[ai])) + 2 < @as(i32, @intCast(d2))) {
-                        r = src_reg[ai];
-                        d2 = src_dist[ai] + 2;
+            // inline for (dir comptime); the two `continue`s folded into nested ifs
+            // (inline for forbids runtime continue). This is the watershed expansion
+            // core. Output-identical.
+            inline for (0..4) |dir_i| {
+                const dir_u2: u2 = @intCast(dir_i);
+                if (s.getCon(dir_u2) != NOT_CONNECTED) {
+                    const ax = x + comptime heightfield_mod.getDirOffsetX(dir_u2);
+                    const ay = y + comptime heightfield_mod.getDirOffsetY(dir_u2);
+                    const ai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax + ay * w))].index + s.getCon(dir_u2)));
+                    if (chf.areas[ai] == area and src_reg[ai] > 0 and (src_reg[ai] & BORDER_REG) == 0) {
+                        if (@as(i32, @intCast(src_dist[ai])) + 2 < @as(i32, @intCast(d2))) {
+                            r = src_reg[ai];
+                            d2 = src_dist[ai] + 2;
+                        }
                     }
                 }
             }

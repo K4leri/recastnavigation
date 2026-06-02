@@ -14,6 +14,13 @@ const NULL_AREA = config.AreaId.NULL_AREA;
 const NOT_CONNECTED = config.NOT_CONNECTED;
 const MAX_HEIGHTFIELD_HEIGHT: i32 = 0xffff;
 
+/// All four 6-bit direction slots packed with NOT_CONNECTED (0x3f) — the initial
+/// `con` value before any walkable neighbor is found in the connect loop.
+const ALL_DIRS_NOT_CONNECTED: u24 = (@as(u24, NOT_CONNECTED) << 18) |
+    (@as(u24, NOT_CONNECTED) << 12) |
+    (@as(u24, NOT_CONNECTED) << 6) |
+    @as(u24, NOT_CONNECTED);
+
 /// Returns the number of walkable spans in the heightfield.
 pub fn getHeightFieldSpanCount(ctx: *const Context, heightfield: *const Heightfield) usize {
     _ = ctx; // TODO: timer
@@ -104,8 +111,16 @@ pub fn buildCompactHeightfield(
                 const bot: i32 = @intCast(s.smax);
                 const top: i32 = if (s.next) |next| @intCast(next.smin) else MAX_HEIGHTFIELD_HEIGHT;
 
-                compact_hf.spans[current_cell_index].y = @intCast(std.math.clamp(bot, 0, 0xffff));
-                compact_hf.spans[current_cell_index].h = @intCast(std.math.clamp(top - bot, 0, 0xff));
+                // Write the whole packed CompactSpan in ONE store instead of two
+                // partial-field stores (.y then .h), each of which lowers to a
+                // read-modify-write on the packed backing word. reg/con are 0 here
+                // (the connect phase overwrites con later) — byte-identical.
+                compact_hf.spans[current_cell_index] = .{
+                    .y = @intCast(std.math.clamp(bot, 0, 0xffff)),
+                    .reg = 0,
+                    .con = 0,
+                    .h = @intCast(std.math.clamp(top - bot, 0, 0xff)),
+                };
                 compact_hf.areas[current_cell_index] = s.area;
                 current_cell_index += 1;
                 cell.count += 1;
@@ -129,7 +144,7 @@ pub fn buildCompactHeightfield(
             var i: usize = cell.index;
             const ni = cell.index + cell.count;
             while (i < ni) : (i += 1) {
-                var span = &compact_hf.spans[i];
+                const span = &compact_hf.spans[i];
 
                 // Span extents are invariant across the dir/neighbor loops; hoist
                 // them to i32 (matching upstream's int promotion of span.y/span.h)
@@ -138,11 +153,18 @@ pub fn buildCompactHeightfield(
                 const span_y: i32 = span.y;
                 const span_top: i32 = span_y + span.h;
 
+                // Accumulate the 4 direction codes in a local u24 and write `con`
+                // ONCE after the loop. The per-direction setCon form does up to two
+                // read-modify-write cycles per direction on the packed backing word
+                // (8 RMWs/span); building con locally and storing once is a single
+                // masked store. Every slot starts at NOT_CONNECTED so unmatched
+                // directions keep the exact bits the old code wrote — output-identical.
+                var con_acc: u24 = ALL_DIRS_NOT_CONNECTED;
+
                 // Check all 4 directions
                 var dir: u3 = 0;
                 while (dir < 4) : (dir += 1) {
                     const dir_u2: u2 = @intCast(dir);
-                    span.setCon(dir_u2, @intCast(NOT_CONNECTED));
 
                     const neighbor_x = x + heightfield_mod.getDirOffsetX(dir_u2);
                     const neighbor_z = z + heightfield_mod.getDirOffsetY(dir_u2);
@@ -181,11 +203,15 @@ pub fn buildCompactHeightfield(
                                 max_layer_index = @max(max_layer_index, layer_index);
                                 continue;
                             }
-                            span.setCon(dir_u2, @intCast(layer_index));
+                            const shift: u5 = @as(u5, dir) * 6;
+                            const mask: u24 = @as(u24, 0x3f) << shift;
+                            con_acc = (con_acc & ~mask) |
+                                (@as(u24, @as(u6, @intCast(layer_index))) << shift);
                             break;
                         }
                     }
                 }
+                span.con = con_acc;
             }
         }
     }

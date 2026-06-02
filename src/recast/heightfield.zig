@@ -130,7 +130,13 @@ pub const Heightfield = struct {
 };
 
 /// Cell information for compact heightfield
-pub const CompactCell = struct {
+pub const CompactCell = packed struct {
+    // packed: u24+u8 = 32 bits = 4 bytes, matching upstream rcCompactCell
+    // ({unsigned int index:24; unsigned int count:8;}). A plain struct here was
+    // 8 bytes (u24 aligns to 4 + u8 + padding), DOUBLING the cells array (one
+    // entry per heightfield column, w*h of them) and halving its cache density.
+    // chf.cells is hit on every neighbor lookup across the distance field, contour
+    // and region sweeps, so the bloat showed up as a broad slowdown.
     index: u24, // Index to first span in column
     count: u8, // Number of spans in column
 

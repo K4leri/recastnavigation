@@ -25,13 +25,13 @@ fn getCornerHeight(
     x: i32,
     y: i32,
     i: usize,
-    dir: u2,
+    comptime dir: u2,
     chf: *const CompactHeightfield,
     is_border_vertex: *bool,
 ) i32 {
     const s = chf.spans[i];
     var ch: i32 = @intCast(s.y);
-    const dirp: u2 = dir +% 1;
+    const dirp: u2 = comptime dir +% 1;
 
     var regs: [4]u32 = .{ 0, 0, 0, 0 };
 
@@ -130,7 +130,13 @@ fn walkContour(
             var is_border_vertex = false;
             var is_area_border = false;
             var px = x;
-            const py = getCornerHeight(x, y, i, dir, chf, &is_border_vertex);
+            // inline switch → cdir is comptime, so getCornerHeight's 8-neighbour
+            // gather folds its getDirOffset/getCon to constants (the dominant contour
+            // cost; runtime dir otherwise leaves rodata lookups + variable shifts that
+            // MSVC avoids by specializing). Output-identical.
+            const py = switch (dir) {
+                inline else => |cdir| getCornerHeight(x, y, i, cdir, chf, &is_border_vertex),
+            };
             var pz = y;
 
             switch (dir) {
@@ -672,13 +678,12 @@ pub fn buildContours(
                 const s = chf.spans[i];
                 var res: u8 = 0;
 
-                var dir: u3 = 0;
-                while (dir < 4) : (dir += 1) {
-                    const dir_u2: u2 = @intCast(dir);
+                inline for (0..4) |dir_i| {
+                    const dir_u2: u2 = @intCast(dir_i);
                     var r: u16 = 0;
                     if (s.getCon(dir_u2) != NOT_CONNECTED) {
-                        const ax = x + heightfield_mod.getDirOffsetX(dir_u2);
-                        const ay = y + heightfield_mod.getDirOffsetY(dir_u2);
+                        const ax = x + comptime heightfield_mod.getDirOffsetX(dir_u2);
+                        const ay = y + comptime heightfield_mod.getDirOffsetY(dir_u2);
                         const ai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax + ay * w))].index + s.getCon(dir_u2)));
                         r = chf.spans[ai].reg;
                     }
