@@ -131,6 +131,13 @@ pub fn buildCompactHeightfield(
             while (i < ni) : (i += 1) {
                 var span = &compact_hf.spans[i];
 
+                // Span extents are invariant across the dir/neighbor loops; hoist
+                // them to i32 (matching upstream's int promotion of span.y/span.h)
+                // so the inner test is pure signed-int arithmetic — no per-neighbor
+                // re-read of the packed span and no unsigned-underflow guard.
+                const span_y: i32 = span.y;
+                const span_top: i32 = span_y + span.h;
+
                 // Check all 4 directions
                 var dir: u3 = 0;
                 while (dir < 4) : (dir += 1) {
@@ -149,21 +156,27 @@ pub fn buildCompactHeightfield(
                     const neighbor_cell_idx = @as(usize, @intCast(neighbor_x + neighbor_z * z_stride));
                     const neighbor_cell = compact_hf.cells[neighbor_cell_idx];
 
-                    var k: usize = neighbor_cell.index;
-                    const nk = neighbor_cell.index + neighbor_cell.count;
+                    const k0: usize = neighbor_cell.index;
+                    const nk = k0 + neighbor_cell.count;
+                    var k: usize = k0;
                     while (k < nk) : (k += 1) {
-                        const neighbor_span = compact_hf.spans[k];
+                        // Reference (not a value copy) into the packed span array,
+                        // mirroring upstream `const rcCompactSpan& neighborSpan`.
+                        const neighbor_span = &compact_hf.spans[k];
+                        const ny: i32 = neighbor_span.y;
 
-                        const bot = @max(span.y, neighbor_span.y);
-                        const top = @min(span.y + span.h, neighbor_span.y + neighbor_span.h);
+                        const bot = @max(span_y, ny);
+                        const top = @min(span_top, ny + neighbor_span.h);
 
                         // Check that the gap between the spans is walkable,
-                        // and that the climb height between the gaps is not too high
-                        if (top >= bot and (top - bot) >= walkable_height and
-                            @abs(@as(i32, neighbor_span.y) - @as(i32, span.y)) <= walkable_climb)
+                        // and that the climb height between the gaps is not too high.
+                        // (top - bot) is signed here, so the upstream test needs no
+                        // separate top>=bot guard.
+                        if ((top - bot) >= walkable_height and
+                            @abs(ny - span_y) <= walkable_climb)
                         {
                             // Mark direction as walkable
-                            const layer_index: i32 = @as(i32, @intCast(k)) - @as(i32, @intCast(neighbor_cell.index));
+                            const layer_index: i32 = @as(i32, @intCast(k - k0));
                             if (layer_index < 0 or layer_index > MAX_LAYERS) {
                                 max_layer_index = @max(max_layer_index, layer_index);
                                 continue;
