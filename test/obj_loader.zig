@@ -15,11 +15,35 @@ pub const ObjMesh = struct {
     }
 };
 
+/// Reads an entire file into an owned buffer (zig 0.16 std.Io.Dir).
+/// Self-contained: spins up a Threaded Io backend for the blocking read.
+pub fn readWholeFile(file_path: []const u8, allocator: std.mem.Allocator) ![]u8 {
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    return std.Io.Dir.cwd().readFileAlloc(io, file_path, allocator, .unlimited);
+}
+
+/// Writes data to a file, creating/truncating it (zig 0.16 std.Io.Dir).
+pub fn writeWholeFile(file_path: []const u8, data: []const u8, allocator: std.mem.Allocator) !void {
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = file_path, .data = data });
+}
+
+/// Best-effort delete of a file (zig 0.16 std.Io.Dir).
+pub fn deleteFileQuiet(file_path: []const u8, allocator: std.mem.Allocator) void {
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    std.Io.Dir.cwd().deleteFile(threaded.io(), file_path) catch {};
+}
+
 /// Load OBJ file and return mesh data
 /// Supports vertices (v) and faces (f) with triangulation of quads
 pub fn loadObj(file_path: []const u8, allocator: std.mem.Allocator) !ObjMesh {
-    const file = try std.fs.cwd().openFile(file_path, .{});
-    defer file.close();
+    const content = try readWholeFile(file_path, allocator);
+    defer allocator.free(content);
 
     var vertices = std.array_list.Managed(f32).init(allocator);
     defer vertices.deinit();
@@ -27,15 +51,8 @@ pub fn loadObj(file_path: []const u8, allocator: std.mem.Allocator) !ObjMesh {
     var indices = std.array_list.Managed(i32).init(allocator);
     defer indices.deinit();
 
-    // Use deprecatedReader with readUntilDelimiterOrEofAlloc to avoid hanging issues
-    // This replaces the problematic takeDelimiterExclusive that caused infinite hangs
-    const reader = file.deprecatedReader();
-
-    while (true) {
-        const line_opt = try reader.readUntilDelimiterOrEofAlloc(allocator, '\n', 8192);
-        const line = line_opt orelse break; // End of file
-        defer allocator.free(line);
-
+    var lines = std.mem.splitScalar(u8, content, '\n');
+    while (lines.next()) |line| {
         var trimmed = std.mem.trim(u8, line, " \t\r");
         if (trimmed.len == 0) continue;
 
@@ -112,12 +129,8 @@ test "loadObj - basic functionality" {
 
     // Write to temp file
     const tmp_path = "test_temp.obj";
-    {
-        const file = try std.fs.cwd().createFile(tmp_path, .{});
-        defer file.close();
-        try file.writeAll(test_obj);
-    }
-    defer std.fs.cwd().deleteFile(tmp_path) catch {};
+    try writeWholeFile(tmp_path, test_obj, allocator);
+    defer deleteFileQuiet(tmp_path, allocator);
 
     var mesh = try loadObj(tmp_path, allocator);
     defer mesh.deinit();
@@ -140,12 +153,8 @@ test "loadObj - quad triangulation" {
     ;
 
     const tmp_path = "test_temp_quad.obj";
-    {
-        const file = try std.fs.cwd().createFile(tmp_path, .{});
-        defer file.close();
-        try file.writeAll(test_obj);
-    }
-    defer std.fs.cwd().deleteFile(tmp_path) catch {};
+    try writeWholeFile(tmp_path, test_obj, allocator);
+    defer deleteFileQuiet(tmp_path, allocator);
 
     var mesh = try loadObj(tmp_path, allocator);
     defer mesh.deinit();

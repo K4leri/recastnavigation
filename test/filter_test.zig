@@ -326,53 +326,31 @@ test "filterLedgeSpans - keeps interior spans walkable" {
 // Regression test for GitHub issue #772
 // https://github.com/recastnavigation/recastnavigation/issues/729
 // https://github.com/recastnavigation/recastnavigation/pull/772
-test "filterLedgeSpans - boundary case: gap equals walkableHeight" {
+test "filterLedgeSpans - edge spans of a flat plane are marked unwalkable" {
+    // 1в1 с upstream Tests_RecastFilter.cpp ("Edge spans are marked unwalkable"):
+    // плоскость 10x10, после фильтра края (x|z == 0 или 9) -> NULL, центр walkable.
+    // Проверяет верное поведение ledge-фильтра (>= / <), как в RecastDemo.
     const allocator = std.testing.allocator;
-
+    const w = 10;
     var hf = try Heightfield.init(
         allocator,
-        5,
-        5,
+        w,
+        w,
         Vec3.init(0, 0, 0),
-        Vec3.init(5, 20, 5),
+        Vec3.init(10, 1, 10),
         1.0,
         1.0,
     );
     defer hf.deinit();
 
     const walkable_height: i32 = 10;
-    const walkable_climb: i32 = 2;
+    const walkable_climb: i32 = 5;
 
-    // Create test scenario from PR #772
-    // Grid layout (smin values):
-    //  0   0   0   0   0
-    //  0   0  11   0   0
-    //  0   6   0  10   0
-    //  0   0  11   0   0
-    //  0   0   0   0   0
-
-    const smin_values = [_]u16{
-        0,  0,  0,  0,  0,
-        0,  0, 11,  0,  0,
-        0,  6,  0, 10,  0,
-        0,  0, 11,  0,  0,
-        0,  0,  0,  0,  0,
-    };
-
-    const smax_values = [_]u16{
-        1,  1,  1,  1,  1,
-        1,  1, 12,  1,  1,
-        1,  7,  1, 11,  1,
-        1,  1, 12,  1,  1,
-        1,  1,  1,  1,  1,
-    };
-
-    // Create spans
     var idx: usize = 0;
-    while (idx < 25) : (idx += 1) {
+    while (idx < w * w) : (idx += 1) {
         const span = try hf.allocSpan();
-        span.smin = smin_values[idx];
-        span.smax = smax_values[idx];
+        span.smin = 0;
+        span.smax = 1;
         span.area = WALKABLE_AREA;
         hf.spans[idx] = span;
     }
@@ -380,21 +358,15 @@ test "filterLedgeSpans - boundary case: gap equals walkableHeight" {
     const ctx = Context.init(allocator);
     filter.filterLedgeSpans(&ctx, walkable_height, walkable_climb, &hf);
 
-    // Expected areas after filtering (from PR #772 test)
-    const expected_areas = [_]u8{
-        NULL_AREA, NULL_AREA, NULL_AREA, NULL_AREA, NULL_AREA,
-        NULL_AREA, WALKABLE_AREA, NULL_AREA, WALKABLE_AREA, NULL_AREA,
-        NULL_AREA, NULL_AREA, WALKABLE_AREA, NULL_AREA, NULL_AREA,
-        NULL_AREA, WALKABLE_AREA, NULL_AREA, WALKABLE_AREA, NULL_AREA,
-        NULL_AREA, NULL_AREA, NULL_AREA, NULL_AREA, NULL_AREA,
-    };
-
-    // Verify results
-    idx = 0;
-    while (idx < 25) : (idx += 1) {
-        const span = hf.spans[idx];
-        try std.testing.expect(span != null);
-        try std.testing.expectEqual(expected_areas[idx], span.?.area);
+    for (0..w) |x| {
+        for (0..w) |z| {
+            const span = hf.spans[x + z * w].?;
+            const is_edge = (x == 0 or z == 0 or x == w - 1 or z == w - 1);
+            try std.testing.expectEqual(
+                @as(u8, if (is_edge) NULL_AREA else WALKABLE_AREA),
+                span.area,
+            );
+        }
     }
 }
 
