@@ -489,7 +489,7 @@ pub const TileCache = struct {
         const header_size = math.align4(@sizeOf(TileCacheLayerHeader));
         tile.header = header;
         tile.data = data;
-        tile.compressed = data[header_size..];
+        tile.compressed = data[@intCast(header_size)..];
         tile.flags = flags;
 
         return self.getTileRef(tile);
@@ -916,12 +916,11 @@ pub const TileCache = struct {
     pub fn buildNavMeshTilesAt(self: *Self, tx: i32, ty: i32, navmesh: *NavMesh) !Status {
         const MAX_TILES = 32;
         var tiles: [MAX_TILES]CompressedTileRef = undefined;
-        var ntiles: i32 = 0;
-        _ = self.getTilesAt(tx, ty, &tiles, &ntiles, MAX_TILES);
+        const ntiles = self.getTilesAt(tx, ty, tiles[0..MAX_TILES]);
 
-        var i: i32 = 0;
+        var i: usize = 0;
         while (i < ntiles) : (i += 1) {
-            const status = try self.buildNavMeshTile(tiles[@intCast(i)], navmesh);
+            const status = try self.buildNavMeshTile(tiles[i], navmesh);
             if (status.isFailure()) {
                 return status;
             }
