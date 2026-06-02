@@ -154,11 +154,18 @@ pub const PathCorridor = struct {
             }
         }
 
-        // Prune points in the beginning of the path which are too close
+        // Prune points in the beginning of the path which are too close.
+        // 1-в-1 dtPathCorridor::findCorners (DetourPathCorridor.cpp:264-277): also
+        // stop pruning at the first off-mesh-connection corner so the trigger sees it.
         while (n_corners > 0) {
+            const is_offmesh = if (corner_flags) |flags|
+                (flags[0] & detour.STRAIGHTPATH_OFFMESH_CONNECTION) != 0
+            else
+                false;
             const corner = corner_verts[0..3];
-            if ((corner[0] - self.pos[0]) * (corner[0] - self.pos[0]) +
-                (corner[2] - self.pos[2]) * (corner[2] - self.pos[2]) > MIN_TARGET_DIST * MIN_TARGET_DIST)
+            if (is_offmesh or
+                (corner[0] - self.pos[0]) * (corner[0] - self.pos[0]) +
+                    (corner[2] - self.pos[2]) * (corner[2] - self.pos[2]) > MIN_TARGET_DIST * MIN_TARGET_DIST)
             {
                 break;
             }
@@ -174,6 +181,18 @@ pub const PathCorridor = struct {
 
                 if (corner_polys) |polys| {
                     std.mem.copyForwards(PolyRef, polys[0..n_corners], polys[1 .. n_corners + 1]);
+                }
+            }
+        }
+
+        // Prune points after an off-mesh connection.
+        // 1-в-1 dtPathCorridor::findCorners (DetourPathCorridor.cpp:279-287): the
+        // off-mesh corner becomes the LAST corner, which overOffmeshConnection checks.
+        if (corner_flags) |flags| {
+            for (0..n_corners) |i| {
+                if ((flags[i] & detour.STRAIGHTPATH_OFFMESH_CONNECTION) != 0) {
+                    n_corners = i + 1;
+                    break;
                 }
             }
         }
@@ -456,15 +475,13 @@ pub const PathCorridor = struct {
         refs[0] = prev_ref;
         refs[1] = poly_ref;
 
-        const nav = navquery.getAttachedNavMesh();
-        const status = try nav.getOffMeshConnectionPolyEndPoints(refs[0], refs[1], start_pos, end_pos);
+        const nav = navquery.getAttachedNavMesh() orelse return false;
+        // getOffMeshConnectionPolyEndPoints signals success by returning (no error);
+        // 1-в-1 dtPathCorridor::moveOverOffmeshConnection (DetourPathCorridor.cpp:414-419).
+        nav.getOffMeshConnectionPolyEndPoints(refs[0], refs[1], start_pos, end_pos) catch return false;
 
-        if (status.isSuccess()) {
-            math.vcopy(&self.pos, end_pos);
-            return true;
-        }
-
-        return false;
+        math.vcopy(&self.pos, end_pos);
+        return true;
     }
 };
 

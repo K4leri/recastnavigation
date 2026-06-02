@@ -119,6 +119,12 @@ const CrowdAgentAnimation = struct {
     tmax: f32,
 };
 
+/// Helper: normalized, clamped interpolation parameter for off-mesh animation.
+/// 1-в-1 DetourCrowd.cpp:54 `tween`.
+fn tween(t: f32, t0: f32, t1: f32) f32 {
+    return std.math.clamp((t - t0) / (t1 - t0), 0.0, 1.0);
+}
+
 /// Helper: Integrate velocity with acceleration constraint
 fn integrate(ag: *CrowdAgent, dt: f32) void {
     // Fake dynamic constraint
@@ -205,8 +211,9 @@ fn overOffmeshConnection(ag: *const CrowdAgent, radius: f32) bool {
 
     const offmesh_connection = (ag.corner_flags[ag.ncorners - 1] & detour.STRAIGHTPATH_OFFMESH_CONNECTION) != 0;
     if (offmesh_connection) {
-        const last_corner = ag.corner_verts[(ag.ncorners - 1) * 3 .. (ag.ncorners - 1) * 3 + 3];
-        const dist_sq = math.vdist2DSqr(&ag.npos, last_corner);
+        const last_corner_slice = ag.corner_verts[(ag.ncorners - 1) * 3 .. (ag.ncorners - 1) * 3 + 3];
+        const last_corner: [3]f32 = .{ last_corner_slice[0], last_corner_slice[1], last_corner_slice[2] };
+        const dist_sq = math.vdist2DSqr(&ag.npos, &last_corner);
         if (dist_sq < radius * radius) {
             return true;
         }
@@ -669,6 +676,45 @@ pub const Crowd = struct {
             }
         }
 
+        // Trigger off-mesh connections (depends on corners).
+        // 1-в-1 dtCrowd::update (DetourCrowd.cpp:1154-1193).
+        for (agents) |ag| {
+            if (ag.state != .walking) continue;
+            if (ag.target_state == .target_none or ag.target_state == .target_velocity) continue;
+
+            // Check
+            const trigger_radius = ag.params.radius * 2.25;
+            if (overOffmeshConnection(ag, trigger_radius)) {
+                // Prepare to off-mesh connection.
+                const idx: usize = @intCast(self.getAgentIndex(ag));
+                const anim = &self.agent_anims[idx];
+
+                // Adjust the path over the off-mesh connection.
+                var refs = [2]PolyRef{ 0, 0 };
+                const ok = ag.corridor.moveOverOffmeshConnection(
+                    ag.corner_polys[ag.ncorners - 1],
+                    &refs,
+                    &anim.start_pos,
+                    &anim.end_pos,
+                    self.navquery,
+                ) catch false;
+                if (ok) {
+                    math.vcopy(&anim.init_pos, &ag.npos);
+                    anim.poly_ref = refs[1];
+                    anim.active = true;
+                    anim.t = 0.0;
+                    anim.tmax = (math.vdist2D(&anim.start_pos, &anim.end_pos) / ag.params.max_speed) * 0.5;
+
+                    ag.state = .offmesh;
+                    ag.ncorners = 0;
+                    ag.nneis = 0;
+                    continue;
+                } else {
+                    // Path validity check will ensure that bad/blocked connections will be replanned.
+                }
+            }
+        }
+
         // Calculate steering
         for (agents) |ag| {
             if (ag.state != .walking) continue;
@@ -859,6 +905,38 @@ pub const Crowd = struct {
                 ag.corridor.reset(ag.corridor.getFirstPoly(), &ag.npos);
                 ag.partial = false;
             }
+        }
+
+        // Update agents using off-mesh connection.
+        // 1-в-1 dtCrowd::update (DetourCrowd.cpp:1442-1479).
+        for (agents) |ag| {
+            const idx: usize = @intCast(self.getAgentIndex(ag));
+            const anim = &self.agent_anims[idx];
+            if (!anim.active) continue;
+
+            anim.t += dt;
+            if (anim.t > anim.tmax) {
+                // Reset animation
+                anim.active = false;
+                // Prepare agent for walking.
+                ag.state = .walking;
+                continue;
+            }
+
+            // Update position
+            const ta = anim.tmax * 0.15;
+            const tb = anim.tmax;
+            if (anim.t < ta) {
+                const u = tween(anim.t, 0.0, ta);
+                math.vlerp(&ag.npos, &anim.init_pos, &anim.start_pos, u);
+            } else {
+                const u = tween(anim.t, ta, tb);
+                math.vlerp(&ag.npos, &anim.start_pos, &anim.end_pos, u);
+            }
+
+            // Update velocity.
+            ag.vel = [3]f32{ 0, 0, 0 };
+            ag.dvel = [3]f32{ 0, 0, 0 };
         }
     }
 
