@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 _No unreleased changes._
 
+## [0.1.2] - 2026-06-02
+
+### Added
+- Recast: `mergePolyMeshes` (port of `rcMergePolyMeshes`); region filter/merge in
+  `buildRegionsMonotone`.
+- Detour: `getOffMeshConnectionByRef`; `findRandomPoint` / `findRandomPointAroundCircle`;
+  byte-order (endian) swap for navmesh tile data and tile-cache headers.
+- Crowd: asynchronous sliced pathfinding through the path queue (preserves
+  `DT_PARTIAL_RESULT`).
+- Debug: binary dump/read for `ContourSet` and `CompactHeightfield`.
+
+### Fixed
+- Demo: hard crash when building an offset convex volume (`@min` result-type narrowing
+  overflowed `u4`).
+- Demo: off-mesh connections and convex volumes now stay visible across tool switches
+  (e.g. when switching to Crowd).
+
+### Changed
+- Demo: removed the worldspace-label backdrop.
+
+### Docs
+- Rewrote the README (English + Russian), added the GUI demo screenshot and a
+  Tracy-profiling / influence-map roadmap.
+
 ## [0.1.1] - 2026-06-02
 
 ### Changed
