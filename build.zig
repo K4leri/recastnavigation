@@ -81,18 +81,29 @@ pub fn build(b: *std.Build) void {
         }
         demo_mod.addImport("zgl", zgl_mod);
 
-        // Tracy: опции + модуль ztracy (само-гейтится через enable_ztracy).
+        // Tracy: опции + модуль ztracy. Только при -Dtracy тянем реальный ztracy
+        // (lazy path-dep вне репо); иначе локальный no-op stub — чтобы demo собирался
+        // без внешних зависимостей на CI / свежем clone.
         const demo_options = b.addOptions();
         demo_options.addOption(bool, "enable_tracy", enable_tracy);
         demo_mod.addImport("build_options", demo_options.createModule());
 
-        const ztracy_dep = b.dependency("ztracy", .{
-            .target = target,
-            .optimize = demo_optimize,
-            .enable_ztracy = enable_tracy,
-            .on_demand = true,
-        });
-        demo_mod.addImport("ztracy", ztracy_dep.module("root"));
+        var ztracy_lib: ?*std.Build.Step.Compile = null;
+        if (enable_tracy) {
+            if (b.lazyDependency("ztracy", .{
+                .target = target,
+                .optimize = demo_optimize,
+                .enable_ztracy = true,
+                .on_demand = true,
+            })) |ztracy_dep| {
+                demo_mod.addImport("ztracy", ztracy_dep.module("root"));
+                ztracy_lib = ztracy_dep.artifact("tracy");
+            }
+        } else {
+            demo_mod.addImport("ztracy", b.createModule(.{
+                .root_source_file = b.path("demo/src/ztracy_stub.zig"),
+            }));
+        }
 
         const demo_exe = b.addExecutable(.{
             .name = "recast_demo",
@@ -102,7 +113,7 @@ pub fn build(b: *std.Build) void {
             .use_llvm = true,
         });
         // C-клиент Tracy линкуем только когда профилирование включено.
-        if (enable_tracy) demo_exe.root_module.linkLibrary(ztracy_dep.artifact("tracy"));
+        if (ztracy_lib) |lib_t| demo_exe.root_module.linkLibrary(lib_t);
         const install_demo = b.addInstallArtifact(demo_exe, .{});
 
         // Ассеты рядом с exe (zig-out/bin/test_data) — чтобы установленный demo
