@@ -102,12 +102,6 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Build source tarball (library)
-        run: |
-          git archive --format=tar.gz \
-            --prefix="recast-nav-${GITHUB_REF_NAME#v}/" \
-            -o "dist/recast-nav-src-${GITHUB_REF_NAME#v}.tar.gz" "${GITHUB_REF_NAME}"
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
