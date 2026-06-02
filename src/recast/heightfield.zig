@@ -143,7 +143,12 @@ pub const CompactCell = struct {
 };
 
 /// Span in compact heightfield
-pub const CompactSpan = struct {
+pub const CompactSpan = packed struct {
+    // packed: u16+u16+u24+u8 = 64 bits = 8 bytes, matching upstream rcCompactSpan.
+    // A plain struct was 12 bytes (u24 aligns to 4), inflating the spans array ~50%
+    // and hurting cache density across every span-bound stage (distance field /
+    // compact heightfield / contours / regions): ~12-39% slower, worst on
+    // span-dense (vertical) maps.
     y: u16, // Lower extent from heightfield base
     reg: u16, // Region ID (0 if not in region)
     con: u24, // Packed neighbor connection data
