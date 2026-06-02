@@ -33,6 +33,53 @@ pub const TileCacheLayerHeader = struct {
     maxy: u8, // Usable sub-region
 };
 
+/// Byte-swaps a tile-cache layer header in place. Returns false if the data is
+/// not a (native or already byte-swapped) tile-cache header. 1:1 with
+/// dtTileCacheHeaderSwapEndian (DetourTileCacheBuilder.cpp:2201).
+pub fn tileCacheHeaderSwapEndian(data: []u8) bool {
+    const header: *TileCacheLayerHeader = @ptrCast(@alignCast(data.ptr));
+
+    const sw = struct {
+        fn i(v: *i32) void {
+            v.* = @bitCast(@byteSwap(@as(u32, @bitCast(v.*))));
+        }
+        fn f(v: *f32) void {
+            v.* = @bitCast(@byteSwap(@as(u32, @bitCast(v.*))));
+        }
+        fn u(v: *u16) void {
+            v.* = @byteSwap(v.*);
+        }
+    };
+
+    var swapped_magic: i32 = TILECACHE_MAGIC;
+    var swapped_version: i32 = TILECACHE_VERSION;
+    sw.i(&swapped_magic);
+    sw.i(&swapped_version);
+
+    if ((header.magic != TILECACHE_MAGIC or header.version != TILECACHE_VERSION) and
+        (header.magic != swapped_magic or header.version != swapped_version))
+    {
+        return false;
+    }
+
+    sw.i(&header.magic);
+    sw.i(&header.version);
+    sw.i(&header.tx);
+    sw.i(&header.ty);
+    sw.i(&header.tlayer);
+    sw.f(&header.bmin[0]);
+    sw.f(&header.bmin[1]);
+    sw.f(&header.bmin[2]);
+    sw.f(&header.bmax[0]);
+    sw.f(&header.bmax[1]);
+    sw.f(&header.bmax[2]);
+    sw.u(&header.hmin);
+    sw.u(&header.hmax);
+
+    // width/height/minx/maxx/miny/maxy are single bytes, no swap.
+    return true;
+}
+
 /// Tile cache layer
 pub const TileCacheLayer = struct {
     header: *TileCacheLayerHeader,

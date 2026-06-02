@@ -823,4 +823,163 @@ test "createNavMeshData - with off-mesh connections" {
     try testing.expectEqual(@as(i32, 2), header.poly_count); // 1 mesh poly + 1 off-mesh poly
     try testing.expectEqual(@as(i32, 5), header.vert_count); // 3 mesh verts + 2 off-mesh verts
     try testing.expectEqual(@as(i32, 1), header.off_mesh_con_count);
+
+    // Endian round-trip: swapping twice must return the original bytes.
+    const orig = try allocator.dupe(u8, data);
+    defer allocator.free(orig);
+    try testing.expect(navMeshDataSwapEndian(data));
+    try testing.expect(navMeshDataSwapEndian(data));
+    try testing.expectEqualSlices(u8, orig, data);
+    try testing.expect(navMeshHeaderSwapEndian(data));
+    try testing.expect(navMeshHeaderSwapEndian(data));
+    try testing.expectEqualSlices(u8, orig, data);
+}
+
+// ============================================================================
+// Endian swapping (DetourNavMeshBuilder.cpp) — convert tile data between
+// native and foreign byte order. Useful for loading navmesh data produced on a
+// machine with the opposite endianness.
+// ============================================================================
+
+inline fn swapU16(v: *u16) void {
+    v.* = @byteSwap(v.*);
+}
+inline fn swapU32(v: *u32) void {
+    v.* = @byteSwap(v.*);
+}
+inline fn swapI32(v: *i32) void {
+    v.* = @bitCast(@byteSwap(@as(u32, @bitCast(v.*))));
+}
+inline fn swapF32(v: *f32) void {
+    v.* = @bitCast(@byteSwap(@as(u32, @bitCast(v.*))));
+}
+
+/// Byte-swaps a navmesh tile header in place. Returns false if the data is not a
+/// (native or already byte-swapped) navmesh header. 1:1 with
+/// dtNavMeshHeaderSwapEndian (DetourNavMeshBuilder.cpp:660).
+pub fn navMeshHeaderSwapEndian(data: []u8) bool {
+    const header: *MeshHeader = @ptrCast(@alignCast(data.ptr));
+
+    var swapped_magic: i32 = common.NAVMESH_MAGIC;
+    var swapped_version: i32 = common.NAVMESH_VERSION;
+    swapI32(&swapped_magic);
+    swapI32(&swapped_version);
+
+    if ((header.magic != common.NAVMESH_MAGIC or header.version != common.NAVMESH_VERSION) and
+        (header.magic != swapped_magic or header.version != swapped_version))
+    {
+        return false;
+    }
+
+    swapI32(&header.magic);
+    swapI32(&header.version);
+    swapI32(&header.x);
+    swapI32(&header.y);
+    swapI32(&header.layer);
+    swapU32(&header.user_id);
+    swapI32(&header.poly_count);
+    swapI32(&header.vert_count);
+    swapI32(&header.max_link_count);
+    swapI32(&header.detail_mesh_count);
+    swapI32(&header.detail_vert_count);
+    swapI32(&header.detail_tri_count);
+    swapI32(&header.bv_node_count);
+    swapI32(&header.off_mesh_con_count);
+    swapI32(&header.off_mesh_base);
+    swapF32(&header.walkable_height);
+    swapF32(&header.walkable_radius);
+    swapF32(&header.walkable_climb);
+    swapF32(&header.bmin.x);
+    swapF32(&header.bmin.y);
+    swapF32(&header.bmin.z);
+    swapF32(&header.bmax.x);
+    swapF32(&header.bmax.y);
+    swapF32(&header.bmax.z);
+    swapF32(&header.bv_quant_factor);
+
+    // Freelist index and pointers are updated when the tile is added; no swap.
+    return true;
+}
+
+/// Byte-swaps a navmesh tile's data arrays in place. Assumes the header is in
+/// native endianness. 1:1 with dtNavMeshDataSwapEndian
+/// (DetourNavMeshBuilder.cpp:712). Links and detail-tris are not swapped
+/// (links are rebuilt on load; detail-tris are single bytes).
+pub fn navMeshDataSwapEndian(data: []u8) bool {
+    const header: *const MeshHeader = @ptrCast(@alignCast(data.ptr));
+    if (header.magic != common.NAVMESH_MAGIC) return false;
+    if (header.version != common.NAVMESH_VERSION) return false;
+
+    const a4 = struct {
+        fn f(n: usize) usize {
+            return std.mem.alignForward(usize, n, 4);
+        }
+    }.f;
+
+    const header_size = a4(@sizeOf(MeshHeader));
+    const verts_size = a4(@sizeOf(f32) * 3 * @as(usize, @intCast(header.vert_count)));
+    const polys_size = a4(@sizeOf(Poly) * @as(usize, @intCast(header.poly_count)));
+    const links_size = a4(@sizeOf(Link) * @as(usize, @intCast(header.max_link_count)));
+    const detail_meshes_size = a4(@sizeOf(PolyDetail) * @as(usize, @intCast(header.detail_mesh_count)));
+    const detail_verts_size = a4(@sizeOf(f32) * 3 * @as(usize, @intCast(header.detail_vert_count)));
+    const detail_tris_size = a4(@sizeOf(u8) * 4 * @as(usize, @intCast(header.detail_tri_count)));
+    const bvtree_size = a4(@sizeOf(BVNode) * @as(usize, @intCast(header.bv_node_count)));
+
+    var off: usize = header_size;
+    const verts: [*]f32 = @ptrCast(@alignCast(data[off..].ptr));
+    off += verts_size;
+    const polys: [*]Poly = @ptrCast(@alignCast(data[off..].ptr));
+    off += polys_size;
+    off += links_size; // links rebuilt on load
+    const detail_meshes: [*]PolyDetail = @ptrCast(@alignCast(data[off..].ptr));
+    off += detail_meshes_size;
+    const detail_verts: [*]f32 = @ptrCast(@alignCast(data[off..].ptr));
+    off += detail_verts_size;
+    off += detail_tris_size; // single bytes
+    const bv_tree: [*]BVNode = @ptrCast(@alignCast(data[off..].ptr));
+    off += bvtree_size;
+    const offmesh_cons: [*]OffMeshConnection = @ptrCast(@alignCast(data[off..].ptr));
+
+    // Vertices
+    for (0..@as(usize, @intCast(header.vert_count)) * 3) |i| swapF32(&verts[i]);
+
+    // Polys
+    for (0..@intCast(header.poly_count)) |i| {
+        const p = &polys[i];
+        for (0..common.VERTS_PER_POLYGON) |j| {
+            swapU16(&p.verts[j]);
+            swapU16(&p.neis[j]);
+        }
+        swapU16(&p.flags);
+    }
+
+    // Detail meshes
+    for (0..@intCast(header.detail_mesh_count)) |i| {
+        const pd = &detail_meshes[i];
+        swapU32(&pd.vert_base);
+        swapU32(&pd.tri_base);
+    }
+
+    // Detail verts
+    for (0..@as(usize, @intCast(header.detail_vert_count)) * 3) |i| swapF32(&detail_verts[i]);
+
+    // BV-tree
+    for (0..@intCast(header.bv_node_count)) |i| {
+        const node = &bv_tree[i];
+        for (0..3) |j| {
+            swapU16(&node.bmin[j]);
+            swapU16(&node.bmax[j]);
+        }
+        swapI32(&node.i);
+    }
+
+    // Off-mesh connections
+    for (0..@intCast(header.off_mesh_con_count)) |i| {
+        const con = &offmesh_cons[i];
+        for (0..6) |j| swapF32(&con.pos[j]);
+        swapF32(&con.rad);
+        swapU16(&con.poly);
+    }
+
+    return true;
 }
