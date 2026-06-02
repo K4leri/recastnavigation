@@ -1,0 +1,96 @@
+name: release
+
+# Собирает recast_demo нативно на Windows/Linux/macOS и прикрепляет готовые бинари
+# к GitHub Release. Запускается при пуше тега v* (например v0.1.0) либо вручную.
+# GUI-demo линкует системный OpenGL/оконную систему, поэтому кросс-компиляция невозможна —
+# каждый бинарь собирается на своей ОС нативно.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.asset }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            asset: recast_demo-windows-x86_64
+            ext: zip
+          - os: ubuntu-latest
+            asset: recast_demo-linux-x86_64
+            ext: tar.gz
+          - os: macos-latest
+            asset: recast_demo-macos-aarch64
+            ext: tar.gz
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Zig 0.16.0
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.16.0
+
+      - name: Install Linux GUI dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgl1-mesa-dev libx11-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libxi-dev libwayland-dev libxkbcommon-dev
+
+      - name: Build demo
+        run: zig build demo
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path zig-out/bin/recast_demo.exe, zig-out/bin/test_data `
+            -DestinationPath "${{ matrix.asset }}.${{ matrix.ext }}" -Force
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: tar czf "${{ matrix.asset }}.${{ matrix.ext }}" -C zig-out/bin recast_demo test_data
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}.${{ matrix.ext }}
+          if-no-files-found: error
+
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Build source tarball (library)
+        run: |
+          git archive --format=tar.gz \
+            --prefix="recast-nav-${GITHUB_REF_NAME#v}/" \
+            -o "dist/recast-nav-src-${GITHUB_REF_NAME#v}.tar.gz" "${GITHUB_REF_NAME}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
