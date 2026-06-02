@@ -133,6 +133,15 @@ Correctness and fidelity come first; performance work is next, and it is
 
 Each item lands only if a Tracy trace shows it is worth it.
 
+Beyond the 1:1 port, one optional module is on the radar:
+
+- **Influence maps (`DetourInfluence`)** — a tactical layer over the navmesh
+  (threat / visibility / territory fields with temporal decay and
+  "find the safest spot" queries), in the spirit of the upstream proposal
+  ([discussion #794](https://github.com/recastnavigation/recastnavigation/discussions/794)).
+  An independent, opt-in module like DetourCrowd — only once the core port is
+  solid.
+
 ## Layout
 
 ```
