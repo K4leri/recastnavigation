@@ -129,8 +129,8 @@ pub const ConvexVolumeTool = struct {
 
     pub fn render(self: *ConvexVolumeTool) void {
         const dd = self.dd_gl.debugDraw();
-        // Уже сохранённые объёмы рисует sample/InputGeom; тут — текущая заготовка.
-        self.geom.drawConvexVolumes(dd);
+        // Committed volumes are drawn by the sample render (always visible);
+        // here we only show the in-progress hull being edited.
 
         const np = self.numPoints();
 

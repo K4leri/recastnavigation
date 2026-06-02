@@ -239,6 +239,12 @@ pub const SampleTile = struct {
                 dbg.debugDrawNavMeshPortals(dd, n);
             },
         }
+
+        // Scene overlays drawn regardless of the active tool (1:1 Sample::handleRender).
+        if (self.geom) |g| {
+            g.drawConvexVolumes(dd);
+            g.drawOffMeshConnections(dd);
+        }
     }
 
     fn renderInputMesh(self: *SampleTile, dd: dbg.DebugDraw) void {

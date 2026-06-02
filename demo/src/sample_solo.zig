@@ -444,6 +444,14 @@ pub const SampleSolo = struct {
             else => {},
         }
 
+        // Off-mesh connections and convex volumes are part of the scene and are
+        // drawn regardless of the active tool (1:1 Sample::handleRender). The
+        // tools only render their in-progress editing state.
+        if (self.geom) |g| {
+            g.drawConvexVolumes(dd);
+            g.drawOffMeshConnections(dd);
+        }
+
         // ВОССТАНОВЛЕНИЕ GL-стейта после варианта вокселей — чтобы НЕ протекало в UI/др. режимы.
         if (voxel_mode) {
             self.dd_gl.enableFog(false);

@@ -46,7 +46,8 @@ pub const OffMeshConnectionTool = struct {
 
     pub fn render(self: *OffMeshConnectionTool) void {
         const dd = self.dd_gl.debugDraw();
-        self.geom.drawOffMeshConnections(dd);
+        // Committed connections are drawn by the sample render (always visible);
+        // here we only show the in-progress start point.
         if (self.has_hit) {
             const col = dbg.rgba(220, 32, 128, 255);
             dd.begin(.lines, 1.0);

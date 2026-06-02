@@ -317,6 +317,12 @@ pub const SampleTempObstacles = struct {
             }
             dd.end();
         }
+
+        // Scene overlays drawn regardless of the active tool (1:1 Sample::handleRender).
+        if (self.geom) |g| {
+            g.drawConvexVolumes(dd);
+            g.drawOffMeshConnections(dd);
+        }
     }
 
     pub fn drawSettings(self: *SampleTempObstacles) void {
