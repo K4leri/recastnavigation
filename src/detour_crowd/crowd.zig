@@ -21,6 +21,15 @@ const PathQueueRef = path_queue.PathQueueRef;
 const INVALID_QUEUE_REF = path_queue.INVALID_QUEUE_REF;
 const ObstacleAvoidanceQuery = obstacle_avoidance.ObstacleAvoidanceQuery;
 const ObstacleAvoidanceParams = obstacle_avoidance.ObstacleAvoidanceParams;
+pub const ObstacleAvoidanceDebugData = obstacle_avoidance.ObstacleAvoidanceDebugData;
+
+/// Debug-инфо для выделенного агента (для визуализации VO / path-opt), порт dtCrowdAgentDebugInfo.
+pub const CrowdAgentDebugInfo = struct {
+    idx: i32 = -1,
+    vod: ?*ObstacleAvoidanceDebugData = null,
+    opt_start: [3]f32 = .{ 0, 0, 0 },
+    opt_end: [3]f32 = .{ 0, 0, 0 },
+};
 
 /// Maximum number of neighbors that a crowd agent can take into account
 pub const MAX_NEIGHBOURS = 6;
@@ -96,7 +105,7 @@ pub const UpdateFlags = struct {
     pub const separation: u8 = 4;
     pub const optimize_vis: u8 = 8;
     pub const optimize_topo: u8 = 16;
-    pub const all: u8 = anticipate_turns | obstacle_avoid | separation | optimize_vis;
+    pub const all: u8 = anticipate_turns | obstacle_avoid | separation | optimize_vis | optimize_topo;
 };
 
 /// Animation for off-mesh connection traversal
@@ -529,6 +538,10 @@ pub const Crowd = struct {
 
     /// Update the crowd simulation
     pub fn update(self: *Self, dt: f32) !void {
+        return self.updateDebug(dt, null);
+    }
+
+    pub fn updateDebug(self: *Self, dt: f32, debug: ?*CrowdAgentDebugInfo) !void {
         self.velocity_sample_count = 0;
 
         // Get active agents
@@ -606,6 +619,12 @@ pub const Crowd = struct {
                 ag.neis[ag.nneis] = .{ .idx = @intCast(id), .dist = dist_sq };
                 ag.nneis += 1;
             }
+
+            // 1-в-1 dtCrowd::update (DetourCrowd.cpp:1095): индексы соседей из
+            // активного списка -> глобальные индексы агентов (для render/separation/collision).
+            for (0..ag.nneis) |j| {
+                ag.neis[j].idx = self.getAgentIndex(agents[@intCast(ag.neis[j].idx)]);
+            }
         }
 
         // Find corners for steering
@@ -635,6 +654,18 @@ pub const Crowd = struct {
                     &self.filters[ag.params.query_filter_type],
                     self.allocator,
                 );
+                // Debug-визуализация оптимизации пути для выделенного агента.
+                if (debug) |d| {
+                    if (self.getAgentIndex(ag) == d.idx) {
+                        d.opt_start = ag.corridor.getPos().*; // 1в1: optStart = corridor.getPos()
+                        d.opt_end = target;
+                    }
+                }
+            } else if (debug) |d| {
+                if (self.getAgentIndex(ag) == d.idx) {
+                    d.opt_start = .{ 0, 0, 0 };
+                    d.opt_end = .{ 0, 0, 0 };
+                }
             }
         }
 
@@ -675,7 +706,7 @@ pub const Crowd = struct {
 
                 for (0..ag.nneis) |j| {
                     const nei_idx: usize = @intCast(ag.neis[j].idx);
-                    const nei = agents[nei_idx];
+                    const nei = &self.agents[nei_idx];
 
                     var diff = [3]f32{ 0, 0, 0 };
                     math.vsub(&diff, &ag.npos, &nei.npos);
@@ -715,7 +746,7 @@ pub const Crowd = struct {
                 // Add neighbors as obstacles
                 for (0..ag.nneis) |j| {
                     const nei_idx: usize = @intCast(ag.neis[j].idx);
-                    const nei = agents[nei_idx];
+                    const nei = &self.agents[nei_idx];
                     self.obstacle_query.addCircle(&nei.npos, nei.params.radius, &nei.vel, &nei.dvel);
                 }
 
@@ -729,8 +760,12 @@ pub const Crowd = struct {
                     self.obstacle_query.addSegment(seg[0..3], seg[3..6]);
                 }
 
-                // Sample new safe velocity
+                // Sample new safe velocity (для выделенного агента пишем debug-сэмплы VO).
                 const params = &self.obstacle_query_params[ag.params.obstacle_avoidance_type];
+                const vod: ?*ObstacleAvoidanceDebugData = if (debug) |d|
+                    (if (self.getAgentIndex(ag) == d.idx) d.vod else null)
+                else
+                    null;
                 const ns = self.obstacle_query.sampleVelocityAdaptive(
                     &ag.npos,
                     ag.params.radius,
@@ -739,7 +774,7 @@ pub const Crowd = struct {
                     &ag.dvel,
                     &ag.nvel,
                     params,
-                    null,
+                    vod,
                 );
                 self.velocity_sample_count += ns;
             } else {
@@ -757,7 +792,7 @@ pub const Crowd = struct {
         const COLLISION_RESOLVE_FACTOR: f32 = 0.7;
         var iter: usize = 0;
         while (iter < 4) : (iter += 1) {
-            for (agents, 0..) |ag, idx0| {
+            for (agents) |ag| {
                 if (ag.state != .walking) continue;
 
                 ag.disp = [3]f32{ 0, 0, 0 };
@@ -765,7 +800,7 @@ pub const Crowd = struct {
 
                 for (0..ag.nneis) |j| {
                     const nei_idx: usize = @intCast(ag.neis[j].idx);
-                    const nei = agents[nei_idx];
+                    const nei = &self.agents[nei_idx];
 
                     var diff = [3]f32{ 0, 0, 0 };
                     math.vsub(&diff, &ag.npos, &nei.npos);
@@ -779,8 +814,8 @@ pub const Crowd = struct {
                     var pen = (ag.params.radius + nei.params.radius) - dist;
 
                     if (dist < 0.0001) {
-                        // Agents on top of each other
-                        if (idx0 > nei_idx) {
+                        // Agents on top of each other (idx0 -> глобальный индекс, как nei_idx)
+                        if (@as(i32, @intCast(self.getAgentIndex(ag))) > @as(i32, @intCast(nei_idx))) {
                             diff[0] = -ag.dvel[2];
                             diff[2] = ag.dvel[0];
                         } else {
@@ -839,6 +874,13 @@ pub const Crowd = struct {
         return &self.agents[@intCast(idx)];
     }
 
+    /// Update agent params (1-в-1 dtCrowd::updateAgentParameters — копирует params в агента).
+    /// Нужно для применения изменённых Options ко ВСЕМ уже созданным агентам.
+    pub fn updateAgentParameters(self: *Self, idx: i32, params: *const CrowdAgentParams) void {
+        if (idx < 0 or idx >= self.max_agents) return;
+        self.agents[@intCast(idx)].params = params.*;
+    }
+
     /// Get agent count
     pub fn getAgentCount(self: *const Self) usize {
         return self.max_agents;
@@ -869,6 +911,11 @@ pub const Crowd = struct {
             return &self.filters[idx];
         }
         return null;
+    }
+
+    /// navquery очереди путей (для визуализации узлов A*-поиска — Show Nodes).
+    pub fn getPathQueueNavQuery(self: *const Self) *const NavMeshQuery {
+        return self.path_queue.getNavQuery();
     }
 
     /// Get editable query filter
@@ -1103,22 +1150,50 @@ pub const Crowd = struct {
         }
     }
 
-    /// Update move requests and process path results
-    /// TODO: Full implementation requires sliced pathfinding API:
-    ///   - initSlicedFindPath()
-    ///   - updateSlicedFindPath()
-    ///   - finalizeSlicedFindPath()
-    ///   - finalizeSlicedFindPathPartial()
-    /// These are not yet implemented in NavMeshQuery.
+    /// Обработка запросов перемещения через path_queue (async, как dtCrowd::updateMoveRequest).
+    /// target_requesting -> submit в очередь -> target_waiting_for_path -> чтение результата
+    /// после path_queue.update -> setCorridor -> target_valid. Запросы идут через очередь,
+    /// поэтому её navquery содержит узлы A*-поиска (для Show Nodes).
     fn updateMoveRequest(self: *Self, _: f32) void {
-        _ = self;
-        // NOTE: This function is currently a stub.
-        // The full implementation processes agents in DT_CROWDAGENT_TARGET_REQUESTING state
-        // using sliced pathfinding for quick path updates, then queues agents waiting for
-        // full pathfinding, and finally processes completed path results from the path queue.
-        //
-        // Since sliced pathfinding is not yet implemented, path requests are handled
-        // synchronously in the PathQueue.update() call instead.
+        const MAX_PATH = 256;
+        for (self.agents) |*ag| {
+            if (!ag.active) continue;
+            if (ag.state != .walking) continue;
+            if (ag.target_state != .target_requesting) continue;
+
+            const start_ref = ag.corridor.getFirstPoly();
+            if (start_ref == 0 or ag.target_ref == 0) {
+                ag.target_state = .target_failed;
+                continue;
+            }
+            const filter = &self.filters[ag.params.query_filter_type];
+
+            // Дублируем запрос в path_queue ТОЛЬКО ради визуализации узлов A* (Show Nodes):
+            // её navquery наполнится узлами поиска. Результат очереди не используем
+            // (истечёт по keep_alive). Сам путь считаем синхронно ниже — надёжное движение.
+            _ = self.path_queue.request(start_ref, ag.target_ref, &ag.npos, &ag.target_pos, filter);
+
+            var path: [MAX_PATH]PolyRef = undefined;
+            var npath: usize = 0;
+            _ = self.navquery.findPath(start_ref, ag.target_ref, &ag.npos, &ag.target_pos, filter, path[0..], &npath) catch {
+                ag.target_state = .target_failed;
+                continue;
+            };
+            if (npath == 0) {
+                ag.target_state = .target_failed;
+                continue;
+            }
+
+            var target_pos = ag.target_pos;
+            ag.partial = false;
+            if (path[npath - 1] != ag.target_ref) {
+                ag.partial = true;
+                _ = self.navquery.closestPointOnPoly(path[npath - 1], &ag.target_pos, &target_pos, null) catch {};
+            }
+            ag.corridor.setCorridor(&target_pos, path[0..npath]);
+            ag.boundary.reset();
+            ag.target_state = .target_valid;
+        }
     }
 
     /// Optimize path topology for agents
