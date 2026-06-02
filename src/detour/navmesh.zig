@@ -1032,6 +1032,13 @@ pub const NavMesh = struct {
         if (header.magic != common.NAVMESH_MAGIC) return error.WrongMagic;
         if (header.version != common.NAVMESH_VERSION) return error.WrongVersion;
 
+        // Do not allow adding more polygons than specified in the NavMesh's maxPolys constraint.
+        // Otherwise, the poly ID cannot be represented with the given number of bits.
+        // 1:1 with dtNavMesh::addTile (DetourNavMesh.cpp:927).
+        if (self.poly_bits < math.ilog2(math.nextPow2(@intCast(header.poly_count)))) {
+            return error.InvalidParam;
+        }
+
         // Check if location is free
         if (self.getTileAt(header.x, header.y, header.layer)) |_| {
             return error.AlreadyOccupied;
