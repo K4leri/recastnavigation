@@ -203,8 +203,6 @@ pub const PathQueue = struct {
     ) Status {
         for (&self.queue) |*q| {
             if (q.ref == ref) {
-                const details = q.status.value & 0x0fff0000; // DT_STATUS_DETAIL_MASK
-
                 // Free request for reuse
                 q.ref = INVALID_QUEUE_REF;
                 q.status = Status.ok();
@@ -214,7 +212,7 @@ pub const PathQueue = struct {
                 @memcpy(path[0..n], q.path[0..n]);
                 path_size.* = n;
 
-                return Status{ .success = true, .value = details };
+                return Status{ .success = true };
             }
         }
         return Status{ .failure = true };
