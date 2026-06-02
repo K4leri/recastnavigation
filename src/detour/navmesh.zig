@@ -685,6 +685,25 @@ pub const NavMesh = struct {
     }
 
     /// Set polygon flags
+    /// Returns the off-mesh connection record for an off-mesh polygon ref, or
+    /// null. 1:1 with dtNavMesh::getOffMeshConnectionByRef (DetourNavMesh.cpp:1508).
+    pub fn getOffMeshConnectionByRef(self: *const Self, ref: PolyRef) ?*const OffMeshConnection {
+        if (ref == 0) return null;
+
+        const decoded = self.decodePolyId(ref);
+        if (decoded.tile >= @as(u32, @intCast(self.max_tiles))) return null;
+        const tile = &self.tiles[decoded.tile];
+        if (tile.salt != decoded.salt or tile.header == null) return null;
+        if (decoded.poly >= @as(u32, @intCast(tile.header.?.poly_count))) return null;
+        const poly = &tile.polys[decoded.poly];
+
+        // Make sure that the current poly is indeed an off-mesh link.
+        if (poly.getType() != .offmesh_connection) return null;
+
+        const idx = decoded.poly - @as(u32, @intCast(tile.header.?.off_mesh_base));
+        return &tile.off_mesh_cons[idx];
+    }
+
     pub fn setPolyFlags(self: *Self, ref: PolyRef, flags: u16) !void {
         const result = try self.getTileAndPolyByRef(ref);
         result.poly.flags = flags;
