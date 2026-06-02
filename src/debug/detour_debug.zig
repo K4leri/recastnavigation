@@ -49,52 +49,32 @@ pub fn debugDrawNavMeshWithClosedList(dd: DebugDraw, mesh: *const NavMesh, query
 
 /// Draw navigation mesh nodes from query (pathfinding visualization)
 pub fn debugDrawNavMeshNodes(dd: DebugDraw, query: *const NavMeshQuery) void {
-    const pool = &query.node_pool;
+    const pool = query.node_pool orelse return;
     const off: f32 = 0.5;
 
-    // Draw nodes
+    // Draw nodes (NodePool: бакеты first[], связь next[]).
     dd.begin(.points, 4.0);
-
     for (0..pool.hash_size) |i| {
-        var j = pool.getFirst(@intCast(i));
-        while (j != detour.NULL_IDX) {
-            const node = pool.getNodeAtIdx(j + 1) orelse {
-                j = pool.getNext(j);
-                continue;
-            };
+        var j = pool.first[i];
+        while (j != detour.query.NULL_IDX) : (j = pool.next[@as(usize, @intCast(j))]) {
+            const node = pool.getNodeAtIdx(@as(u32, j) + 1) orelse continue;
             dd.vertexXYZ(node.pos[0], node.pos[1] + off, node.pos[2], dd_mod.rgba(255, 192, 0, 255));
-            j = pool.getNext(j);
         }
     }
-
     dd.end();
 
     // Draw connections to parents
     dd.begin(.lines, 2.0);
-
     for (0..pool.hash_size) |i| {
-        var j = pool.getFirst(@intCast(i));
-        while (j != detour.NULL_IDX) {
-            const node = pool.getNodeAtIdx(j + 1) orelse {
-                j = pool.getNext(j);
-                continue;
-            };
-            if (node.pidx == 0) {
-                j = pool.getNext(j);
-                continue;
-            }
-
-            const parent = pool.getNodeAtIdx(node.pidx) orelse {
-                j = pool.getNext(j);
-                continue;
-            };
-
+        var j = pool.first[i];
+        while (j != detour.query.NULL_IDX) : (j = pool.next[@as(usize, @intCast(j))]) {
+            const node = pool.getNodeAtIdx(@as(u32, j) + 1) orelse continue;
+            if (node.pidx == 0) continue;
+            const parent = pool.getNodeAtIdx(node.pidx) orelse continue;
             dd.vertexXYZ(node.pos[0], node.pos[1] + off, node.pos[2], dd_mod.rgba(255, 192, 0, 128));
             dd.vertexXYZ(parent.pos[0], parent.pos[1] + off, parent.pos[2], dd_mod.rgba(255, 192, 0, 128));
-            j = pool.getNext(j);
         }
     }
-
     dd.end();
 }
 
@@ -145,6 +125,10 @@ pub fn debugDrawNavMeshPoly(dd: DebugDraw, mesh: *const NavMesh, ref: PolyRef, c
     const poly = &tile.polys[decoded.poly];
     const pd = &tile.detail_meshes[decoded.poly];
 
+    // Как оригинал duDebugDrawNavMeshPoly: alpha перебивается на 64, рисуются только
+    // треугольники детейл-меша, БЕЗ отдельной обводки полигона.
+    const c = dd_mod.transCol(col, 64);
+
     dd.depthMask(false);
     dd.begin(.tris, 1.0);
 
@@ -155,31 +139,16 @@ pub fn debugDrawNavMeshPoly(dd: DebugDraw, mesh: *const NavMesh, ref: PolyRef, c
         for (0..3) |j| {
             if (t[j] < poly.vert_count) {
                 const v_idx = poly.verts[t[j]] * 3;
-                dd.vertex(@ptrCast(&tile.verts[v_idx]), col);
+                dd.vertex(@ptrCast(&tile.verts[v_idx]), c);
             } else {
                 const d_idx = (pd.vert_base + (t[j] - poly.vert_count)) * 3;
-                dd.vertex(@ptrCast(&tile.detail_verts[d_idx]), col);
+                dd.vertex(@ptrCast(&tile.detail_verts[d_idx]), c);
             }
         }
     }
 
     dd.end();
     dd.depthMask(true);
-
-    // Draw polygon boundaries
-    const pcol = dd_mod.rgba(0, 0, 0, 64);
-    dd.begin(.lines, 1.0);
-
-    for (0..poly.vert_count) |i| {
-        const j = (i + 1) % poly.vert_count;
-        const v0 = &tile.verts[poly.verts[i] * 3];
-        const v1 = &tile.verts[poly.verts[j] * 3];
-
-        dd.vertex(@ptrCast(v0[0..3]), pcol);
-        dd.vertex(@ptrCast(v1[0..3]), pcol);
-    }
-
-    dd.end();
 }
 
 // ============================================================================
@@ -188,7 +157,7 @@ pub fn debugDrawNavMeshPoly(dd: DebugDraw, mesh: *const NavMesh, ref: PolyRef, c
 
 fn drawMeshTile(dd: DebugDraw, mesh: *const NavMesh, query: ?*const NavMeshQuery, tile: *const MeshTile, flags: u8) void {
     const base = mesh.getPolyRefBase(tile);
-    const tile_num = mesh.decodePolyIdTile(base);
+    const tile_num = mesh.decodePolyId(base).tile;
     const tile_color = dd_mod.intToCol(@intCast(tile_num), 128);
 
     dd.depthMask(false);
@@ -236,9 +205,10 @@ fn drawMeshTile(dd: DebugDraw, mesh: *const NavMesh, query: ?*const NavMeshQuery
     dd.end();
     dd.depthMask(true);
 
-    // Draw boundaries
-    drawPolyBoundaries(dd, tile, dd_mod.rgba(0, 48, 64, 220), 1.5, false);
-    drawPolyBoundaries(dd, tile, dd_mod.rgba(0, 48, 64, 64), 1.0, true);
+    // Draw boundaries (1:1 с оригиналом DetourDebugDraw: inner тонкая полупрозрачная,
+    // outer толстая насыщенная). Сначала inner, потом outer.
+    drawPolyBoundaries(dd, tile, dd_mod.rgba(0, 48, 64, 32), 1.5, true);
+    drawPolyBoundaries(dd, tile, dd_mod.rgba(0, 48, 64, 220), 2.5, false);
 
     // Draw off-mesh connections
     if ((flags & OFFMESH_CONS) != 0) {
@@ -261,7 +231,7 @@ fn drawPolyBoundaries(dd: DebugDraw, tile: *const MeshTile, col: u32, linew: f32
             var c = col;
             if (inner) {
                 if (p.neis[j] == 0) continue;
-                if ((p.neis[j] & detour.EXT_LINK) != 0) {
+                if ((p.neis[j] & detour.common.EXT_LINK) != 0) {
                     var con = false;
                     var k = p.first_link;
                     while (k != detour.NULL_LINK) {
@@ -279,21 +249,21 @@ fn drawPolyBoundaries(dd: DebugDraw, tile: *const MeshTile, col: u32, linew: f32
                 if (p.neis[j] != 0) continue;
             }
 
-            const v0 = &tile.verts[p.verts[j] * 3];
+            const v0 = tile.verts[p.verts[j] * 3 ..][0..3];
             const nj = (j + 1) % p.vert_count;
-            const v1 = &tile.verts[p.verts[nj] * 3];
+            const v1 = tile.verts[p.verts[nj] * 3 ..][0..3];
 
             // Draw detail mesh edges which align with the actual poly edge
             for (0..@intCast(pd.tri_count)) |k| {
                 const t_idx = (pd.tri_base + @as(u32, @intCast(k))) * 4;
                 const t = tile.detail_tris[t_idx .. t_idx + 4];
 
-                var tv: [3]*const f32 = undefined;
+                var tv: [3][]const f32 = undefined;
                 for (0..3) |m| {
                     if (t[m] < p.vert_count) {
-                        tv[m] = &tile.verts[p.verts[t[m]] * 3];
+                        tv[m] = tile.verts[p.verts[t[m]] * 3 ..][0..3];
                     } else {
-                        tv[m] = &tile.detail_verts[(pd.vert_base + (t[m] - p.vert_count)) * 3];
+                        tv[m] = tile.detail_verts[(pd.vert_base + (t[m] - p.vert_count)) * 3 ..][0..3];
                     }
                 }
 
@@ -303,10 +273,10 @@ fn drawPolyBoundaries(dd: DebugDraw, tile: *const MeshTile, col: u32, linew: f32
                     n = m;
                     m += 1;
                 }) {
-                    if ((detour.getDetailTriEdgeFlags(t[3], n) & detour.DETAIL_EDGE_BOUNDARY) == 0) continue;
+                    if ((detour.common.getDetailTriEdgeFlags(t[3], n) & detour.common.DETAIL_EDGE_BOUNDARY) == 0) continue;
 
-                    if (distancePtLine2d(@ptrCast(tv[n]), v0[0..3], v1[0..3]) < thr and
-                        distancePtLine2d(@ptrCast(tv[m]), v0[0..3], v1[0..3]) < thr)
+                    if (distancePtLine2d(tv[n][0..3], v0, v1) < thr and
+                        distancePtLine2d(tv[m][0..3], v0, v1) < thr)
                     {
                         dd.vertex(@ptrCast(tv[n]), c);
                         dd.vertex(@ptrCast(tv[m]), c);
@@ -346,8 +316,8 @@ fn drawOffMeshConnections(dd: DebugDraw, tile: *const MeshTile) void {
         else
             dd_mod.darkenCol(dd_mod.intToCol(@intCast(p.getArea()), 220));
 
-        const v0 = &tile.verts[p.verts[0] * 3];
-        const v1 = &tile.verts[p.verts[1] * 3];
+        const v0 = tile.verts[p.verts[0] * 3 ..][0..3];
+        const v1 = tile.verts[p.verts[1] * 3 ..][0..3];
 
         dd.vertexXYZ(v0[0], v0[1], v0[2], col);
         dd.vertexXYZ(v1[0], v1[1], v1[2], col);
@@ -370,12 +340,12 @@ fn drawMeshTileBVTree(dd: DebugDraw, tile: *const MeshTile) void {
     for (tile.bv_tree) |n| {
         if (n.i < 0) continue; // Leaf
 
-        const minx = tile.header.?.bmin[0] + @as(f32, @floatFromInt(n.bmin[0])) * cs;
-        const miny = tile.header.?.bmin[1] + @as(f32, @floatFromInt(n.bmin[1])) * cs;
-        const minz = tile.header.?.bmin[2] + @as(f32, @floatFromInt(n.bmin[2])) * cs;
-        const maxx = tile.header.?.bmin[0] + @as(f32, @floatFromInt(n.bmax[0])) * cs;
-        const maxy = tile.header.?.bmin[1] + @as(f32, @floatFromInt(n.bmax[1])) * cs;
-        const maxz = tile.header.?.bmin[2] + @as(f32, @floatFromInt(n.bmax[2])) * cs;
+        const minx = tile.header.?.bmin.x + @as(f32, @floatFromInt(n.bmin[0])) * cs;
+        const miny = tile.header.?.bmin.y + @as(f32, @floatFromInt(n.bmin[1])) * cs;
+        const minz = tile.header.?.bmin.z + @as(f32, @floatFromInt(n.bmin[2])) * cs;
+        const maxx = tile.header.?.bmin.x + @as(f32, @floatFromInt(n.bmax[0])) * cs;
+        const maxy = tile.header.?.bmin.y + @as(f32, @floatFromInt(n.bmax[1])) * cs;
+        const maxz = tile.header.?.bmin.z + @as(f32, @floatFromInt(n.bmax[2])) * cs;
 
         appendBoxWire(dd, minx, miny, minz, maxx, maxy, maxz, dd_mod.rgba(255, 255, 255, 128));
     }
@@ -395,11 +365,11 @@ fn drawMeshTilePortal(dd: DebugDraw, tile: *const MeshTile) void {
         if (p.getType() != .ground) continue;
 
         for (0..p.vert_count) |j| {
-            if ((p.neis[j] & detour.EXT_LINK) == 0) continue;
+            if ((p.neis[j] & detour.common.EXT_LINK) == 0) continue;
 
             const nj = (j + 1) % p.vert_count;
-            const v0 = &tile.verts[p.verts[j] * 3];
-            const v1 = &tile.verts[p.verts[nj] * 3];
+            const v0 = tile.verts[p.verts[j] * 3 ..][0..3];
+            const v1 = tile.verts[p.verts[nj] * 3 ..][0..3];
 
             const seg_dir = .{
                 v1[0] - v0[0],

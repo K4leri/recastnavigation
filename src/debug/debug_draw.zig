@@ -165,14 +165,16 @@ pub fn appendArc(dd: DebugDraw, x0: f32, y0: f32, z0: f32, x1: f32, y1: f32, z1:
     const dx = x1 - x0;
     const dy = y1 - y0;
     const dz = z1 - z0;
-    const len = @sqrt(dx * dx + dz * dz);
+    const len = @sqrt(dx * dx + dy * dy + dz * dz);
     var prev: [3]f32 = undefined;
-    evalArc(x0, y0, z0, dx, dy, dz, len, h, PAD, &prev);
+    // C++ duAppendArc передаёт len*h как высоту дуги в evalArc (иначе дуга почти плоская).
+    const ah = len * h;
+    evalArc(x0, y0, z0, dx, dy, dz, ah, PAD, &prev);
 
     for (1..NUM_ARC_PTS + 1) |i| {
         const u = PAD + @as(f32, @floatFromInt(i)) * ARC_PTS_SCALE;
         var pt: [3]f32 = undefined;
-        evalArc(x0, y0, z0, dx, dy, dz, len, h, u, &pt);
+        evalArc(x0, y0, z0, dx, dy, dz, ah, u, &pt);
         dd.vertex(&prev, col);
         dd.vertex(&pt, col);
         prev = pt;
@@ -182,21 +184,21 @@ pub fn appendArc(dd: DebugDraw, x0: f32, y0: f32, z0: f32, x1: f32, y1: f32, z1:
     if (as0 > 0.001) {
         var p: [3]f32 = undefined;
         var q: [3]f32 = undefined;
-        evalArc(x0, y0, z0, dx, dy, dz, len, h, PAD, &p);
-        evalArc(x0, y0, z0, dx, dy, dz, len, h, PAD + 0.05, &q);
+        evalArc(x0, y0, z0, dx, dy, dz, ah, PAD, &p);
+        evalArc(x0, y0, z0, dx, dy, dz, ah, PAD + 0.05, &q);
         appendArrowHead(dd, &p, &q, as0, col);
     }
 
     if (as1 > 0.001) {
         var p: [3]f32 = undefined;
         var q: [3]f32 = undefined;
-        evalArc(x0, y0, z0, dx, dy, dz, len, h, 1.0 - PAD, &p);
-        evalArc(x0, y0, z0, dx, dy, dz, len, h, 1.0 - PAD - 0.05, &q);
+        evalArc(x0, y0, z0, dx, dy, dz, ah, 1.0 - PAD, &p);
+        evalArc(x0, y0, z0, dx, dy, dz, ah, 1.0 - PAD - 0.05, &q);
         appendArrowHead(dd, &p, &q, as1, col);
     }
 }
 
-fn evalArc(x0: f32, y0: f32, z0: f32, dx: f32, dy: f32, dz: f32, _: f32, h: f32, u: f32, res: *[3]f32) void {
+fn evalArc(x0: f32, y0: f32, z0: f32, dx: f32, dy: f32, dz: f32, h: f32, u: f32, res: *[3]f32) void {
     res[0] = x0 + dx * u;
     res[1] = y0 + dy * u + h * (1.0 - (u * 2.0 - 1.0) * (u * 2.0 - 1.0));
     res[2] = z0 + dz * u;
@@ -204,33 +206,44 @@ fn evalArc(x0: f32, y0: f32, z0: f32, dx: f32, dy: f32, dz: f32, _: f32, h: f32,
 
 fn appendArrowHead(dd: DebugDraw, p: *const [3]f32, q: *const [3]f32, s: f32, col: u32) void {
     const eps: f32 = 0.001;
-    if (!vcross2(p, q)) return;
+    const dxq = q[0] - p[0];
+    const dyq = q[1] - p[1];
+    const dzq = q[2] - p[2];
+    if (dxq * dxq + dyq * dyq + dzq * dzq < eps * eps) return;
 
-    const ax = q[0] - p[0];
-    const ay = q[1] - p[1];
-    const az = q[2] - p[2];
-    const len_sq = ax * ax + ay * ay + az * az;
-    if (len_sq < eps) return;
+    // Ортонормированный базис как в C++ duAppendArrowHead.
+    var az: [3]f32 = .{ dxq, dyq, dzq };
+    vnormalize(&az);
+    const up: [3]f32 = .{ 0, 1, 0 };
+    var ax: [3]f32 = undefined;
+    vcross3(&ax, &up, &az);
 
-    const inv_len = 1.0 / @sqrt(len_sq);
-    const dx = ax * inv_len;
-    const _dy = ay * inv_len;
-    const dz = az * inv_len;
-    _ = _dy; // unused
+    dd.vertex(p, col);
+    dd.vertex(&.{
+        p[0] + az[0] * s + ax[0] * s / 3.0,
+        p[1] + az[1] * s + ax[1] * s / 3.0,
+        p[2] + az[2] * s + ax[2] * s / 3.0,
+    }, col);
 
-    const px = p[0];
-    const py = p[1] + 0.001;
-    const pz = p[2];
-
-    dd.vertex(&.{ px - s * dx + s * dz, py, pz - s * dz - s * dx }, col);
-    dd.vertex(&.{ px, py, pz }, col);
-
-    dd.vertex(&.{ px - s * dx - s * dz, py, pz - s * dz + s * dx }, col);
-    dd.vertex(&.{ px, py, pz }, col);
+    dd.vertex(p, col);
+    dd.vertex(&.{
+        p[0] + az[0] * s - ax[0] * s / 3.0,
+        p[1] + az[1] * s - ax[1] * s / 3.0,
+        p[2] + az[2] * s - ax[2] * s / 3.0,
+    }, col);
 }
 
-fn vcross2(p1: *const [3]f32, p2: *const [3]f32) bool {
-    return @abs(p1[0] - p2[0]) > 0.001 or @abs(p1[2] - p2[2]) > 0.001;
+fn vcross3(dest: *[3]f32, v1: *const [3]f32, v2: *const [3]f32) void {
+    dest[0] = v1[1] * v2[2] - v1[2] * v2[1];
+    dest[1] = v1[2] * v2[0] - v1[0] * v2[2];
+    dest[2] = v1[0] * v2[1] - v1[1] * v2[0];
+}
+
+fn vnormalize(v: *[3]f32) void {
+    const d = 1.0 / @sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    v[0] *= d;
+    v[1] *= d;
+    v[2] *= d;
 }
 
 pub fn appendCircle(dd: DebugDraw, x: f32, y: f32, z: f32, r: f32, col: u32) void {
@@ -272,29 +285,23 @@ pub fn appendBox(dd: DebugDraw, minx: f32, miny: f32, minz: f32, maxx: f32, maxy
         .{ minx, maxy, maxz },
     };
 
+    // 6 граней × 4 вершины (КВАДЫ) — 1:1 с duAppendBox. Вызыватель делает begin(.quads),
+    // путь .quads разворачивает каждые 4 вершины в 2 треугольника. Если эмитить треугольники
+    // (6/грань), .quads мисинтерпретирует поток → искажённая геометрия («пирамидки»).
     const idx = [_]usize{
-        // Top
-        4, 5, 6, 4, 6, 7,
-        // Bottom
-        0, 3, 2, 0, 2, 1,
-        // Left
-        0, 4, 7, 0, 7, 3,
-        // Right
-        1, 2, 6, 1, 6, 5,
-        // Front
-        0, 1, 5, 0, 5, 4,
-        // Back
-        3, 7, 6, 3, 6, 2,
+        7, 6, 5, 4,
+        0, 1, 2, 3,
+        1, 5, 6, 2,
+        3, 7, 4, 0,
+        2, 6, 7, 3,
+        0, 4, 5, 1,
     };
 
     for (0..6) |i| {
-        dd.vertex(&verts[idx[i * 6 + 0]], fcol[i]);
-        dd.vertex(&verts[idx[i * 6 + 1]], fcol[i]);
-        dd.vertex(&verts[idx[i * 6 + 2]], fcol[i]);
-
-        dd.vertex(&verts[idx[i * 6 + 3]], fcol[i]);
-        dd.vertex(&verts[idx[i * 6 + 4]], fcol[i]);
-        dd.vertex(&verts[idx[i * 6 + 5]], fcol[i]);
+        dd.vertex(&verts[idx[i * 4 + 0]], fcol[i]);
+        dd.vertex(&verts[idx[i * 4 + 1]], fcol[i]);
+        dd.vertex(&verts[idx[i * 4 + 2]], fcol[i]);
+        dd.vertex(&verts[idx[i * 4 + 3]], fcol[i]);
     }
 }
 
@@ -312,29 +319,34 @@ pub fn appendCylinder(dd: DebugDraw, minx: f32, miny: f32, minz: f32, maxx: f32,
         dir[i * 2 + 1] = @sin(a);
     }
 
-    // Top and bottom caps
-    for (0..2) |j| {
-        const y = if (j == 0) miny else maxy;
-        for (0..NUM_SEG - 2) |i| {
-            const a = 0;
-            const b = i + 1;
-            const c = i + 2;
-            dd.vertex(&.{ cx + dir[a * 2 + 0] * rx, y, cz + dir[a * 2 + 1] * rz }, col);
-            dd.vertex(&.{ cx + dir[b * 2 + 0] * rx, y, cz + dir[b * 2 + 1] * rz }, col);
-            dd.vertex(&.{ cx + dir[c * 2 + 0] * rx, y, cz + dir[c * 2 + 1] * rz }, col);
-        }
+    // 1-в-1 с duAppendCylinder: бока (нижние верты затемнены multCol(col,160)) + ВЕРХНЯЯ
+    // крышка (fan). Без нижней крышки. Корректный winding — грани смотрят наружу, back-cull
+    // оставляет видимые (раньше обе крышки имели одинаковый winding → одна отсекалась →
+    // цилиндр выглядел «пустым спереди»).
+    const col2 = multCol(col, 160);
+
+    // Sides — winding как у appendBox (нормали НАРУЖУ): a-bot, a-top, b-top / a-bot, b-top, b-bot.
+    // (Прежний порядок был зеркальным -> нормали внутрь -> back-cull срезал передние грани,
+    // цилиндр выглядел «пустым спереди».)
+    for (0..NUM_SEG) |i| {
+        const a_idx = i;
+        const b_idx = (i + 1) % NUM_SEG;
+        dd.vertex(&.{ cx + dir[a_idx * 2] * rx, miny, cz + dir[a_idx * 2 + 1] * rz }, col2);
+        dd.vertex(&.{ cx + dir[a_idx * 2] * rx, maxy, cz + dir[a_idx * 2 + 1] * rz }, col);
+        dd.vertex(&.{ cx + dir[b_idx * 2] * rx, maxy, cz + dir[b_idx * 2 + 1] * rz }, col);
+
+        dd.vertex(&.{ cx + dir[a_idx * 2] * rx, miny, cz + dir[a_idx * 2 + 1] * rz }, col2);
+        dd.vertex(&.{ cx + dir[b_idx * 2] * rx, maxy, cz + dir[b_idx * 2 + 1] * rz }, col);
+        dd.vertex(&.{ cx + dir[b_idx * 2] * rx, miny, cz + dir[b_idx * 2 + 1] * rz }, col2);
     }
 
-    // Sides
-    for (0..NUM_SEG) |i| {
-        const a_idx = (i) % NUM_SEG;
-        const b_idx = (i + 1) % NUM_SEG;
-        dd.vertex(&.{ cx + dir[a_idx * 2] * rx, miny, cz + dir[a_idx * 2 + 1] * rz }, col);
-        dd.vertex(&.{ cx + dir[b_idx * 2] * rx, miny, cz + dir[b_idx * 2 + 1] * rz }, col);
-        dd.vertex(&.{ cx + dir[b_idx * 2] * rx, maxy, cz + dir[b_idx * 2 + 1] * rz }, col);
-
-        dd.vertex(&.{ cx + dir[a_idx * 2] * rx, miny, cz + dir[a_idx * 2 + 1] * rz }, col);
-        dd.vertex(&.{ cx + dir[b_idx * 2] * rx, maxy, cz + dir[b_idx * 2 + 1] * rz }, col);
+    // Top cap (fan) — нормаль вверх.
+    for (2..NUM_SEG) |i| {
+        const a_idx: usize = 0;
+        const b_idx = i;
+        const c_idx = i - 1;
         dd.vertex(&.{ cx + dir[a_idx * 2] * rx, maxy, cz + dir[a_idx * 2 + 1] * rz }, col);
+        dd.vertex(&.{ cx + dir[b_idx * 2] * rx, maxy, cz + dir[b_idx * 2 + 1] * rz }, col);
+        dd.vertex(&.{ cx + dir[c_idx * 2] * rx, maxy, cz + dir[c_idx * 2 + 1] * rz }, col);
     }
 }
