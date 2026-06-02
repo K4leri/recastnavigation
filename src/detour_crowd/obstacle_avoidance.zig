@@ -95,7 +95,28 @@ pub const ObstacleAvoidanceDebugData = struct {
     pub fn reset(self: *ObstacleAvoidanceDebugData) void {
         self.nsamples = 0;
     }
+
+    /// Порт dtObstacleAvoidanceDebugData::normalizeSamples — нормализует штрафы в [0,1].
+    pub fn normalizeSamples(self: *ObstacleAvoidanceDebugData) void {
+        normalizeArray(self.pen, self.nsamples);
+        normalizeArray(self.vpen, self.nsamples);
+        normalizeArray(self.vcpen, self.nsamples);
+        normalizeArray(self.spen, self.nsamples);
+        normalizeArray(self.tpen, self.nsamples);
+    }
 };
+
+fn normalizeArray(arr: []f32, n: usize) void {
+    var min_pen: f32 = std.math.floatMax(f32);
+    var max_pen: f32 = -std.math.floatMax(f32);
+    for (0..n) |i| {
+        min_pen = @min(min_pen, arr[i]);
+        max_pen = @max(max_pen, arr[i]);
+    }
+    const range = max_pen - min_pen;
+    const s: f32 = if (range > 0.001) 1.0 / range else 1.0;
+    for (0..n) |i| arr[i] = std.math.clamp((arr[i] - min_pen) * s, 0.0, 1.0);
+}
 
 /// Helper: Sweep circle-circle collision
 fn sweepCircleCircle(
