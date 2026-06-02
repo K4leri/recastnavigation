@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+_No unreleased changes._
+
+## [0.1.5] - 2026-06-03
+
 ### Fixed
 - **Crowd: agents no longer collapse into a single point at high density.** The
   neighbour search kept the *first* `MAX_NEIGHBOURS` agents the proximity grid
@@ -28,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   upstream (`RecastRegion.cpp` `stack[j].index = -1`). **Output is unchanged**
   (poly/vert counts identical; `undulating.obj` still 374 verts / 216 polys).
   Found via the Tracy `ZIG_VS_CPP_PERF` benchmark.
+
+### Demo
+- Removed the leftover debug window-title marker (`RecastDemo voxel V=…`); the
+  title is now just `RecastDemo — zig + dvui`. The `V` voxel-render-variant
+  toggle stays (logs to the console).
 
 ## [0.1.4] - 2026-06-02
 
@@ -174,7 +183,8 @@ Related bug investigations: `docs/bug_fixes/github_issues/`
 - `Fixed` — bug fixes
 - `Security` — vulnerability fixes
 
-[Unreleased]: https://github.com/K4leri/recastnavigation/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/K4leri/recastnavigation/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/K4leri/recastnavigation/releases/tag/v0.1.5
 [0.1.4]: https://github.com/K4leri/recastnavigation/releases/tag/v0.1.4
 [0.1.3]: https://github.com/K4leri/recastnavigation/releases/tag/v0.1.3
 [0.1.2]: https://github.com/K4leri/recastnavigation/releases/tag/v0.1.2

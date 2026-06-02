@@ -404,11 +404,6 @@ pub fn main(main_init: std.process.Init) !void {
             prev_space = false;
             prev_step = false;
         }
-        {
-            var ttl: [128]u8 = undefined;
-            const t = std.fmt.bufPrintZ(&ttl, "RecastDemo voxel V={s}", .{vox_names[dd_gl.voxel_variant % 8]}) catch "RecastDemo";
-            g_window.setTitle(t);
-        }
         // зум колесом — только из 3D (g_scroll уже 0, если скролл потреблён панелью dvui)
         if (g_scroll != 0 and !ui_mouse) {
             const zoom_step = @max(@as(f32, 0.5), dist * 0.1);
