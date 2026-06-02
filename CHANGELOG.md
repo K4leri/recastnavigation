@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 _No unreleased changes._
 
+## [0.1.1] - 2026-06-02
+
+### Changed
+- Release demo binaries are now built in **ReleaseFast** (faster) instead of ReleaseSafe.
+  A dedicated `demo-fast` / `run-demo-fast` build target was added; the default `demo` /
+  `run-demo` target stays ReleaseSafe for development. The release CI workflow now builds
+  `demo-fast`. (`build.zig`, `.github/workflows/release.yml`)
+
 ## [0.1.0] - 2026-06-02
 
 First tagged release. A pure-Zig port of Recast & Detour (recast / detour / crowd /
@@ -86,7 +94,8 @@ Related bug investigations: `docs/bug_fixes/github_issues/`
 - `Fixed` — bug fixes
 - `Security` — vulnerability fixes
 
-[Unreleased]: https://github.com/K4leri/recastnavigation/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/K4leri/recastnavigation/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/K4leri/recastnavigation/releases/tag/v0.1.1
 [0.1.0]: https://github.com/K4leri/recastnavigation/releases/tag/v0.1.0
 [upstream #772]: https://github.com/recastnavigation/recastnavigation/pull/772
 [upstream #766]: https://github.com/recastnavigation/recastnavigation/pull/766
