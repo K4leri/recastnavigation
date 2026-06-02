@@ -24,7 +24,32 @@ fn overlapBounds(amin: Vec3, amax: Vec3, bmin: Vec3, bmax: Vec3) bool {
 
 /// Adds a span to the heightfield. If the new span overlaps existing spans,
 /// it will merge the new span with the existing ones.
-pub fn addSpan(
+/// Adds a span to the heightfield (public API, mirrors upstream `rcAddSpan`).
+///
+/// Validates the span before insertion: a span with zero or inverted size
+/// (`smin >= smax`) is logged and ignored. The hot rasterization path bypasses
+/// this and calls the internal `addSpan` worker directly.
+pub fn rcAddSpan(
+    ctx: *const Context,
+    heightfield: *Heightfield,
+    x: i32,
+    z: i32,
+    smin: u16,
+    smax: u16,
+    area_id: u8,
+    flag_merge_threshold: i32,
+) !bool {
+    // Span is zero size or inverted size. Ignore. (upstream 762ecb5)
+    if (smin >= smax) {
+        ctx.log(.warning, "rcAddSpan: Adding a span with zero or negative size. Ignored.", .{});
+        return true;
+    }
+    return addSpan(heightfield, x, z, smin, smax, area_id, flag_merge_threshold);
+}
+
+/// Internal span insertion worker (mirrors upstream static `addSpan`).
+/// Hot path — no context, no validation; callers guarantee `smax > smin`.
+fn addSpan(
     heightfield: *Heightfield,
     x: i32,
     z: i32,
