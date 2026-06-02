@@ -1,0 +1,9 @@
+# Normalize line endings: LF in the repo for all text/source (cross-platform).
+* text=auto eol=lf
+*.zig text eol=lf
+*.zon text eol=lf
+*.md text eol=lf
+*.obj text eol=lf
+*.txt text eol=lf
+# Binary assets (none tracked yet, but guard common ones)
+*.png binary
