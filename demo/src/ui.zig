@@ -54,21 +54,13 @@ pub fn screenTextEx(px: f32, py: f32, text: []const u8, color: dvui.Color, cente
     const sz = font.textSize(text); // натуральные пиксели; rs.s = 1.0 => физические
     const x = if (centered) px - sz.w * 0.5 else px;
     const rs = dvui.RectScale{ .r = .{ .x = x, .y = py, .w = sz.w, .h = sz.h }, .s = 1.0 };
-    // Лёгкая светлая подложка под тёмным текстом — оригинал рисует чёрный текст
-    // через ImGui foreground поверх (более светлого) навмеша; на нашем тёмном
-    // воксельном фоне без подложки чёрный нечитаем. Подложка полупрозрачная,
-    // сохраняет "тёмный текст" дух оригинала и гарантирует видимость на любом фоне.
-    // Подложка только под ТЁМНЫЙ текст (светлая) — чёрные подписи нечитаемы на тёмном
-    // воксельном фоне. Светлый текст рисуем без подложки (как оригинал).
-    const bg: ?dvui.Color = if (color.r < 128 and color.g < 128 and color.b < 128)
-        dvui.Color{ .r = 255, .g = 255, .b = 255, .a = 160 }
-    else
-        null;
+    // No backdrop: worldspace labels render as plain text (1:1 with the original,
+    // which draws the label straight to the foreground without a background box).
     dvui.renderText(.{
         .font = font,
         .text = text,
         .rs = rs,
         .color = color,
-        .background_color = bg,
+        .background_color = null,
     }) catch {};
 }
