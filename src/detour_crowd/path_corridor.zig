@@ -512,7 +512,14 @@ pub fn mergeCorridorStartMoved(path: []PolyRef, npath: usize, max_path: usize, v
     }
 
     if (size > 0) {
-        std.mem.copyBackwards(PolyRef, path[req .. req + size], path[orig .. orig + size]);
+        // memmove-семантика (как C++ memmove в dtMergeCorridor*): направление по dest vs src.
+        // copyBackwards безопасен ТОЛЬКО при сдвиге вправо (req>orig); при сдвиге влево
+        // (req<orig) он каскадно копирует последний элемент — порча хвоста коридора.
+        if (req <= orig) {
+            std.mem.copyForwards(PolyRef, path[req .. req + size], path[orig .. orig + size]);
+        } else {
+            std.mem.copyBackwards(PolyRef, path[req .. req + size], path[orig .. orig + size]);
+        }
     }
 
     // Store visited in reverse order
@@ -602,7 +609,14 @@ fn mergeCorridorStartShortcut(path: []PolyRef, npath: usize, max_path: usize, vi
     }
 
     if (size > 0) {
-        std.mem.copyBackwards(PolyRef, path[req .. req + size], path[orig .. orig + size]);
+        // memmove-семантика (как C++ memmove в dtMergeCorridor*): направление по dest vs src.
+        // copyBackwards безопасен ТОЛЬКО при сдвиге вправо (req>orig); при сдвиге влево
+        // (req<orig) он каскадно копирует последний элемент — порча хвоста коридора.
+        if (req <= orig) {
+            std.mem.copyForwards(PolyRef, path[req .. req + size], path[orig .. orig + size]);
+        } else {
+            std.mem.copyBackwards(PolyRef, path[req .. req + size], path[orig .. orig + size]);
+        }
     }
 
     // Store visited
