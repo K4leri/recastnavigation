@@ -10,6 +10,7 @@ comptime {
     _ = @import("real_mesh_test.zig");
     _ = @import("dungeon_undulating_test.zig");
     _ = @import("pathfinding_test.zig");
+    _ = @import("findpath_partial_test.zig");
     _ = @import("raycast_test.zig");
     _ = @import("removetile_link_leak_test.zig");
     _ = @import("mergepolymesh_test.zig");
