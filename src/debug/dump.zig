@@ -211,38 +211,172 @@ pub fn logBuildTimes(ctx: *recast.Context, total_tile_usec: i32) void {
     std.debug.print("\n", .{});
 }
 
-// Simplified versions of binary dump/read functions
-// These are placeholder implementations - full binary serialization
-// would require more complex format handling
+// Binary dump/read of intermediate Recast structures. 1:1 with upstream
+// RecastDump.cpp (same magic/version tags and field order). The struct-array
+// blobs (contours, compact cells/spans) round-trip within this port; exact
+// byte-compatibility with the C++ reader depends on identical struct layout.
 
-/// Dump ContourSet to binary (placeholder)
+const CSET_MAGIC: i32 = ('c' << 24) | ('s' << 16) | ('e' << 8) | 't';
+const CSET_VERSION: i32 = 2;
+const CHF_MAGIC: i32 = ('r' << 24) | ('c' << 16) | ('h' << 8) | 'f';
+const CHF_VERSION: i32 = 3;
+
+fn wr(io: FileIO, comptime T: type, value: T) !void {
+    var tmp = value;
+    if (!io.write(std.mem.asBytes(&tmp))) return error.WriteFailed;
+}
+fn rd(io: FileIO, comptime T: type) !T {
+    var v: T = undefined;
+    if (!io.read(std.mem.asBytes(&v))) return error.ReadFailed;
+    return v;
+}
+fn wrSlice(io: FileIO, comptime T: type, s: []const T) !void {
+    if (s.len == 0) return;
+    if (!io.write(std.mem.sliceAsBytes(s))) return error.WriteFailed;
+}
+fn rdSlice(io: FileIO, comptime T: type, s: []T) !void {
+    if (s.len == 0) return;
+    if (!io.read(std.mem.sliceAsBytes(s))) return error.ReadFailed;
+}
+fn wrVec(io: FileIO, v: anytype) !void {
+    try wr(io, f32, v.x);
+    try wr(io, f32, v.y);
+    try wr(io, f32, v.z);
+}
+fn rdVec(io: FileIO, v: anytype) !void {
+    v.x = try rd(io, f32);
+    v.y = try rd(io, f32);
+    v.z = try rd(io, f32);
+}
+
+/// Dump ContourSet to binary (rcContourSet format).
 pub fn dumpContourSet(cset: *const recast.ContourSet, io: FileIO) !void {
     if (!io.isWriting()) return error.NotWriting;
-    // TODO: Implement binary serialization
-    _ = cset;
-    return error.NotImplemented;
+
+    try wr(io, i32, CSET_MAGIC);
+    try wr(io, i32, CSET_VERSION);
+    try wr(io, i32, cset.nconts);
+    try wrVec(io, cset.bmin);
+    try wrVec(io, cset.bmax);
+    try wr(io, f32, cset.cs);
+    try wr(io, f32, cset.ch);
+    try wr(io, i32, cset.width);
+    try wr(io, i32, cset.height);
+    try wr(io, i32, cset.border_size);
+
+    for (cset.conts[0..@intCast(cset.nconts)]) |cont| {
+        try wr(io, i32, cont.nverts);
+        try wr(io, i32, cont.nrverts);
+        try wr(io, u16, cont.reg);
+        try wr(io, u8, cont.area);
+        try wrSlice(io, i32, cont.verts[0 .. @as(usize, @intCast(cont.nverts)) * 4]);
+        try wrSlice(io, i32, cont.rverts[0 .. @as(usize, @intCast(cont.nrverts)) * 4]);
+    }
 }
 
-/// Read ContourSet from binary (placeholder)
+/// Read ContourSet from binary. Allocates contour storage via cset.allocator;
+/// `cset` must be freshly initialised (empty).
 pub fn readContourSet(cset: *recast.ContourSet, io: FileIO) !void {
     if (!io.isReading()) return error.NotReading;
-    // TODO: Implement binary deserialization
-    _ = cset;
-    return error.NotImplemented;
+
+    if (try rd(io, i32) != CSET_MAGIC) return error.BadMagic;
+    if (try rd(io, i32) != CSET_VERSION) return error.BadVersion;
+
+    cset.nconts = try rd(io, i32);
+    cset.conts = try cset.allocator.alloc(recast.Contour, @intCast(cset.nconts));
+    for (cset.conts) |*c| c.* = recast.Contour.init(cset.allocator);
+
+    try rdVec(io, &cset.bmin);
+    try rdVec(io, &cset.bmax);
+    cset.cs = try rd(io, f32);
+    cset.ch = try rd(io, f32);
+    cset.width = try rd(io, i32);
+    cset.height = try rd(io, i32);
+    cset.border_size = try rd(io, i32);
+
+    for (cset.conts) |*cont| {
+        cont.nverts = try rd(io, i32);
+        cont.nrverts = try rd(io, i32);
+        cont.reg = try rd(io, u16);
+        cont.area = try rd(io, u8);
+        cont.verts = try cset.allocator.alloc(i32, @as(usize, @intCast(cont.nverts)) * 4);
+        cont.rverts = try cset.allocator.alloc(i32, @as(usize, @intCast(cont.nrverts)) * 4);
+        try rdSlice(io, i32, cont.verts);
+        try rdSlice(io, i32, cont.rverts);
+    }
 }
 
-/// Dump CompactHeightfield to binary (placeholder)
+/// Dump CompactHeightfield to binary (rcCompactHeightfield format).
 pub fn dumpCompactHeightfield(chf: *const recast.CompactHeightfield, io: FileIO) !void {
     if (!io.isWriting()) return error.NotWriting;
-    // TODO: Implement binary serialization
-    _ = chf;
-    return error.NotImplemented;
+
+    try wr(io, i32, CHF_MAGIC);
+    try wr(io, i32, CHF_VERSION);
+    try wr(io, i32, chf.width);
+    try wr(io, i32, chf.height);
+    try wr(io, i32, chf.span_count);
+    try wr(io, i32, chf.walkable_height);
+    try wr(io, i32, chf.walkable_climb);
+    try wr(io, i32, chf.border_size);
+    try wr(io, u16, chf.max_distance);
+    try wr(io, u16, chf.max_regions);
+    try wrVec(io, chf.bmin);
+    try wrVec(io, chf.bmax);
+    try wr(io, f32, chf.cs);
+    try wr(io, f32, chf.ch);
+
+    var tmp: i32 = 0;
+    if (chf.cells.len > 0) tmp |= 1;
+    if (chf.spans.len > 0) tmp |= 2;
+    if (chf.dist.len > 0) tmp |= 4;
+    if (chf.areas.len > 0) tmp |= 8;
+    try wr(io, i32, tmp);
+
+    try wrSlice(io, recast.CompactCell, chf.cells);
+    try wrSlice(io, recast.CompactSpan, chf.spans);
+    try wrSlice(io, u16, chf.dist);
+    try wrSlice(io, u8, chf.areas);
 }
 
-/// Read CompactHeightfield from binary (placeholder)
+/// Read CompactHeightfield from binary. Allocates via chf.allocator; `chf` must
+/// be freshly initialised (empty).
 pub fn readCompactHeightfield(chf: *recast.CompactHeightfield, io: FileIO) !void {
     if (!io.isReading()) return error.NotReading;
-    // TODO: Implement binary deserialization
-    _ = chf;
-    return error.NotImplemented;
+
+    if (try rd(io, i32) != CHF_MAGIC) return error.BadMagic;
+    if (try rd(io, i32) != CHF_VERSION) return error.BadVersion;
+
+    chf.width = try rd(io, i32);
+    chf.height = try rd(io, i32);
+    chf.span_count = try rd(io, i32);
+    chf.walkable_height = try rd(io, i32);
+    chf.walkable_climb = try rd(io, i32);
+    chf.border_size = try rd(io, i32);
+    chf.max_distance = try rd(io, u16);
+    chf.max_regions = try rd(io, u16);
+    try rdVec(io, &chf.bmin);
+    try rdVec(io, &chf.bmax);
+    chf.cs = try rd(io, f32);
+    chf.ch = try rd(io, f32);
+
+    const tmp = try rd(io, i32);
+    const wh: usize = @intCast(chf.width * chf.height);
+    const sc: usize = @intCast(chf.span_count);
+
+    if ((tmp & 1) != 0) {
+        chf.cells = try chf.allocator.alloc(recast.CompactCell, wh);
+        try rdSlice(io, recast.CompactCell, chf.cells);
+    }
+    if ((tmp & 2) != 0) {
+        chf.spans = try chf.allocator.alloc(recast.CompactSpan, sc);
+        try rdSlice(io, recast.CompactSpan, chf.spans);
+    }
+    if ((tmp & 4) != 0) {
+        chf.dist = try chf.allocator.alloc(u16, sc);
+        try rdSlice(io, u16, chf.dist);
+    }
+    if ((tmp & 8) != 0) {
+        chf.areas = try chf.allocator.alloc(u8, sc);
+        try rdSlice(io, u8, chf.areas);
+    }
 }

@@ -12,4 +12,5 @@ comptime {
     _ = @import("raycast_test.zig");
     _ = @import("removetile_link_leak_test.zig");
     _ = @import("mergepolymesh_test.zig");
+    _ = @import("dump_roundtrip_test.zig");
 }
