@@ -438,7 +438,7 @@ fn expandRegions(
         var failed: usize = 0;
         dirty_entries.clearRetainingCapacity();
 
-        for (stack.items) |entry| {
+        for (stack.items) |*entry| {
             const x = entry.x;
             const y = entry.y;
             const idx = entry.index;
@@ -471,6 +471,10 @@ fn expandRegions(
             }
 
             if (r != 0) {
+                // Mark used in place — O(1), 1:1 RecastRegion.cpp (`stack[j].index = -1`).
+                // (Was an O(stack*dirty) reconstruction scan afterwards → O(n^1.5..2)
+                // watershed, 20–110× slower than C++. Output unchanged.)
+                entry.index = -1;
                 try dirty_entries.append(.{ .index = i, .region = r, .distance2 = d2 });
             } else {
                 failed += 1;
@@ -481,25 +485,6 @@ fn expandRegions(
         for (dirty_entries.items) |entry| {
             src_reg[entry.index] = entry.region;
             src_dist[entry.index] = entry.distance2;
-        }
-
-        // Mark processed entries in stack
-        var j: usize = 0;
-        for (stack.items) |*entry| {
-            if (entry.index >= 0) {
-                const i: usize = @intCast(entry.index);
-                var found = false;
-                for (dirty_entries.items) |de| {
-                    if (de.index == i) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (found) {
-                    entry.index = -1;
-                }
-            }
-            j += 1;
         }
 
         if (failed == stack.items.len) break;

@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-_No unreleased changes._
+### Performance
+- `rcBuildRegions` (watershed) is now **O(n) again — 20–110× faster** on every
+  navmesh build, restoring exact parity with C++ (de_ancient @8M: 44 710 ms →
+  1 389 ms vs C++ 1 384 ms). `expandRegions` reconstructed each cell's "used"
+  mark with a nested linear scan over `dirty_entries` (O(stack²) → O(n^1.5..2)
+  watershed); now it marks in place the instant a region is found, 1:1 with
+  upstream (`RecastRegion.cpp` `stack[j].index = -1`). **Output is unchanged**
+  (poly/vert counts identical; `undulating.obj` still 374 verts / 216 polys).
+  Found via the Tracy `ZIG_VS_CPP_PERF` benchmark.
 
 ## [0.1.4] - 2026-06-02
 
