@@ -115,6 +115,24 @@ currently green). Known, deliberate deviations from upstream are tracked in
 follows current upstream `main` (disputed by an open upstream PR), and a few
 serialization/endian helpers exist mainly for completeness.
 
+## Roadmap
+
+Correctness and fidelity come first; performance work is next, and it is
+**measurement-driven** rather than guesswork:
+
+- **Profile with Tracy** — instrument the Recast bake, Detour queries, and the
+  crowd update with Tracy zones and capture traces over representative scenes
+  (the `bench/` scenario harness is being built for exactly this).
+- **Then optimize the hot spots the traces actually show**, likely candidates:
+  - SIMD (`@Vector`) for the hot vector / geometry math.
+  - Fewer allocations on the pathfinding hot path (reuse node pools / scratch
+    buffers).
+  - `comptime` specialization where it removes branching.
+  - Cache-friendlier data layout for the rasterization / region passes if they
+    dominate a trace.
+
+Each item lands only if a Tracy trace shows it is worth it.
+
 ## Layout
 
 ```
