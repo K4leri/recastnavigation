@@ -279,8 +279,15 @@ test "Crowd Simulation: Basic Setup (Stub)" {
 
     // Update crowd simulation for a few steps
     const dt: f32 = 0.1; // 100ms per step
-    for (0..10) |_| {
+    const ag0 = &crowd.agents[@intCast(agent_idx)];
+    std.debug.print("\n[REPRO] target_ref={} nearest=({d:.2},{d:.2},{d:.2}) first_poly={}\n", .{ target_ref, nearest_pt[0], nearest_pt[1], nearest_pt[2], ag0.corridor.getFirstPoly() });
+    for (0..10) |s| {
         try crowd.update(dt);
+        std.debug.print("[REPRO] step {d}: ts={s} npos=({d:.3},{d:.3},{d:.3}) ncorners={d} dvel=({d:.3},{d:.3},{d:.3}) vel=({d:.3},{d:.3},{d:.3}) pathCount={d}\n", .{
+            s, @tagName(ag0.target_state), ag0.npos[0], ag0.npos[1], ag0.npos[2],
+            ag0.ncorners, ag0.dvel[0], ag0.dvel[1], ag0.dvel[2],
+            ag0.vel[0], ag0.vel[1], ag0.vel[2], ag0.corridor.getPathCount(),
+        });
     }
 
     // Verify agent has moved toward target
