@@ -93,7 +93,10 @@ pub const ConvexVolumeTool = struct {
                     );
                     if (noffset > 0) {
                         const no: usize = @intCast(noffset);
-                        const cap = @min(no, MAX_PTS);
+                        // NOTE: explicit usize — @min(no, MAX_PTS) would otherwise
+                        // narrow the result type to u4 (MAX_PTS=12 fits 0..15), and
+                        // `cap * 3` would then overflow u4 (e.g. 8*3=24). Hard crash.
+                        const cap: usize = @min(no, MAX_PTS);
                         self.geom.addConvexVolume(
                             offset[0 .. cap * 3],
                             @intCast(cap),
