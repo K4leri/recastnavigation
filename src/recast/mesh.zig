@@ -1212,6 +1212,39 @@ pub fn buildPolyMesh(
         allocator,
     );
 
+    // Find portal edges. Mark open edges that lie on a tile border with
+    // DT_EXT_LINK direction flags (0x8000 | dir) so neighbouring tiles can be
+    // stitched by Detour's connectExtLinks. Without this every tile-border edge
+    // stays a hard wall and multi-tile navmeshes never connect.
+    // 1:1 with rcBuildPolyMesh "Find portal edges" (RecastMesh.cpp:1357-1386).
+    if (mesh.border_size > 0) {
+        const w = cset.width;
+        const h = cset.height;
+        const npolys_usize: usize = @intCast(mesh.npolys);
+        for (0..npolys_usize) |pi| {
+            const p = mesh.polys[pi * nvp * 2 ..];
+            for (0..nvp) |j| {
+                if (p[j] == MESH_NULL_IDX) break;
+                // Skip connected (internal) edges.
+                if (p[nvp + j] != MESH_NULL_IDX) continue;
+                var nj = j + 1;
+                if (nj >= nvp or p[nj] == MESH_NULL_IDX) nj = 0;
+                const va = mesh.verts[@as(usize, p[j]) * 3 ..];
+                const vb = mesh.verts[@as(usize, p[nj]) * 3 ..];
+
+                if (@as(i32, va[0]) == 0 and @as(i32, vb[0]) == 0) {
+                    p[nvp + j] = 0x8000 | 0;
+                } else if (@as(i32, va[2]) == h and @as(i32, vb[2]) == h) {
+                    p[nvp + j] = 0x8000 | 1;
+                } else if (@as(i32, va[0]) == w and @as(i32, vb[0]) == w) {
+                    p[nvp + j] = 0x8000 | 2;
+                } else if (@as(i32, va[2]) == 0 and @as(i32, vb[2]) == 0) {
+                    p[nvp + j] = 0x8000 | 3;
+                }
+            }
+        }
+    }
+
     ctx.log(.progress, "buildPolyMesh: Created mesh with {d} vertices and {d} polygons", .{ mesh.nverts, mesh.npolys });
 }
 

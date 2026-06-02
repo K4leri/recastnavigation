@@ -10,4 +10,5 @@ comptime {
     _ = @import("dungeon_undulating_test.zig");
     _ = @import("pathfinding_test.zig");
     _ = @import("raycast_test.zig");
+    _ = @import("removetile_link_leak_test.zig");
 }
