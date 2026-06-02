@@ -448,4 +448,15 @@ test "Detour Pipeline: NavMesh and Query Initialization" {
     // Verify NavMesh and Query are initialized
     try testing.expect(navmesh.max_tiles > 0);
     try testing.expect(navmesh.tiles.len > 0);
+
+    // findRandomPoint: returns a valid ref + finite point on the mesh.
+    {
+        var rfilter = nav.detour.QueryFilter.init();
+        var prng = std.Random.DefaultPrng.init(0xC0FFEE);
+        var rref: nav.detour.PolyRef = 0;
+        var rpt: [3]f32 = .{ 0, 0, 0 };
+        try query.findRandomPoint(&rfilter, prng.random(), &rref, &rpt);
+        try testing.expect(rref != 0);
+        try testing.expect(std.math.isFinite(rpt[0]) and std.math.isFinite(rpt[1]) and std.math.isFinite(rpt[2]));
+    }
 }

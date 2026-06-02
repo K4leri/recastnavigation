@@ -2269,6 +2269,86 @@ pub const NavMeshQuery = struct {
     /// @param closest Output closest point on polygon [x,y,z]
     /// @param pos_over_poly Optional output: true if point is over polygon, false otherwise
     /// @return Status with success or failure
+    /// Returns a random point on a filter-passing ground polygon, weighted by
+    /// polygon area. 1:1 with dtNavMeshQuery::findRandomPoint
+    /// (DetourNavMeshQuery.cpp:226). `rand` supplies uniform floats in [0,1).
+    pub fn findRandomPoint(
+        self: *const Self,
+        filter: *const QueryFilter,
+        rand: std.Random,
+        random_ref: *PolyRef,
+        random_pt: *[3]f32,
+    ) !void {
+        const nav = self.nav orelse return error.NoNavMesh;
+
+        // Randomly pick one tile (reservoir sampling; tiles assumed equal area).
+        var tile: ?*const MeshTile = null;
+        var tsum: f32 = 0.0;
+        for (0..@intCast(nav.max_tiles)) |i| {
+            const t = &nav.tiles[i];
+            if (t.header == null) continue;
+            const area: f32 = 1.0;
+            tsum += area;
+            if (rand.float(f32) * tsum <= area) tile = t;
+        }
+        const picked_tile = tile orelse return error.NotFound;
+
+        // Randomly pick one polygon weighted by area (reservoir sampling).
+        var poly_ref: PolyRef = 0;
+        var picked_poly: ?*const Poly = null;
+        const base = nav.getPolyRefBase(picked_tile);
+        var area_sum: f32 = 0.0;
+        for (0..@intCast(picked_tile.header.?.poly_count)) |i| {
+            const p = &picked_tile.polys[i];
+            if (p.getType() != .ground) continue;
+            const ref = base | @as(PolyRef, @intCast(i));
+            if (!filter.passFilter(ref, picked_tile, p)) continue;
+
+            // Calc area of the polygon.
+            var poly_area: f32 = 0.0;
+            const vcnt: usize = @intCast(p.vert_count);
+            var j: usize = 2;
+            while (j < vcnt) : (j += 1) {
+                const iv0 = @as(usize, p.verts[0]) * 3;
+                const iv1 = @as(usize, p.verts[j - 1]) * 3;
+                const iv2 = @as(usize, p.verts[j]) * 3;
+                const va = math.Vec3.init(picked_tile.verts[iv0], picked_tile.verts[iv0 + 1], picked_tile.verts[iv0 + 2]);
+                const vb = math.Vec3.init(picked_tile.verts[iv1], picked_tile.verts[iv1 + 1], picked_tile.verts[iv1 + 2]);
+                const vc = math.Vec3.init(picked_tile.verts[iv2], picked_tile.verts[iv2 + 1], picked_tile.verts[iv2 + 2]);
+                poly_area += math.triArea2D(va, vb, vc);
+            }
+
+            area_sum += poly_area;
+            if (rand.float(f32) * area_sum <= poly_area) {
+                picked_poly = p;
+                poly_ref = ref;
+            }
+        }
+        const poly = picked_poly orelse return error.NotFound;
+
+        // Randomly pick a point on the polygon.
+        const vcnt: usize = @intCast(poly.vert_count);
+        var verts: [3 * common.VERTS_PER_POLYGON]f32 = undefined;
+        var areas: [common.VERTS_PER_POLYGON]f32 = undefined;
+        for (0..vcnt) |j| {
+            const vi = @as(usize, poly.verts[j]) * 3;
+            verts[j * 3 + 0] = picked_tile.verts[vi + 0];
+            verts[j * 3 + 1] = picked_tile.verts[vi + 1];
+            verts[j * 3 + 2] = picked_tile.verts[vi + 2];
+        }
+
+        const s = rand.float(f32);
+        const t2 = rand.float(f32);
+        var pt: [3]f32 = undefined;
+        common.randomPointInConvexPoly(verts[0 .. vcnt * 3], @intCast(poly.vert_count), areas[0..vcnt], s, t2, &pt);
+
+        var closest: [3]f32 = pt;
+        if (self.closestPointOnPoly(poly_ref, &pt, &closest, null)) |_| {} else |_| {}
+
+        random_pt.* = closest;
+        random_ref.* = poly_ref;
+    }
+
     pub fn closestPointOnPoly(
         self: *const Self,
         ref: PolyRef,
