@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+_No unreleased changes._
+
+## [0.1.3] - 2026-06-02
+
 ### Fixed
 - Detail mesh now conforms to the input surface again. `polyMinExtent` collapsed
   to ~0 — it took a plain min over all vertex/edge pairs instead of the min over
