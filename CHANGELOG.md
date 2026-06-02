@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-_No unreleased changes._
+### Fixed
+- Detail mesh now conforms to the input surface again. `polyMinExtent` collapsed
+  to ~0 — it took a plain min over all vertex/edge pairs instead of the min over
+  edges of the *per-edge max* distance — so most polygons satisfied
+  `minExtent < sampleDist*2` and skipped internal detail sampling, and the
+  navmesh stopped following undulating terrain. Now 1:1 with `rcPolyMinExtent`;
+  the `undulating.obj` sample matches the C++ reference detail mesh
+  (~216 meshes / ~2800 verts / ~3200 tris, vs the buggy ~2429 / ~2441). Added a
+  regression test (`detail_conformance_test`).
 
 ## [0.1.2] - 2026-06-02
 

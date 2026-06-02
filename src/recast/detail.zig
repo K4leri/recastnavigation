@@ -232,13 +232,20 @@ fn polyMinExtent(verts: [*]const f32, nverts: i32) f32 {
         const ni = @rem(i + 1, nverts);
         const p1 = verts + @as(usize, @intCast(i)) * 3;
         const p2 = verts + @as(usize, @intCast(ni)) * 3;
+        // 1:1 with rcPolyMinExtent (RecastMeshDetail.cpp): the polygon's minimum
+        // extent is the MIN over edges of the MAX vertex-to-edge distance. Using
+        // a plain min over all (i,j) collapses to ~0, which makes most polygons
+        // skip internal detail sampling (min_extent < sample_dist*2) and stops
+        // the detail mesh conforming to the surface.
+        var max_edge_dist: f32 = 0;
         var j: i32 = 0;
         while (j < nverts) : (j += 1) {
             if (j == i or j == ni) continue;
             const p3 = verts + @as(usize, @intCast(j)) * 3;
             const d = distancePtSeg2d(p3, p1, p2);
-            minDist = @min(minDist, d);
+            max_edge_dist = @max(max_edge_dist, d);
         }
+        minDist = @min(minDist, max_edge_dist);
     }
     return @sqrt(minDist);
 }
@@ -1178,12 +1185,15 @@ fn buildPolyDetail(
                 };
                 if (distToPoly(nin, in.ptr, &pt) > -sample_dist / 2) continue;
 
+                // 1:1 with rcBuildPolyDetail (RecastMeshDetail.cpp:851): push every
+                // in-polygon grid sample with getHeight's result — do NOT skip
+                // RC_UNSET_HEIGHT. Skipping under-samples the detail mesh so it
+                // stops conforming to undulating terrain.
                 const sh = getHeight(pt[0], pt[1], pt[2], cs, ics, chf.ch, height_search_radius, hp);
-                if (sh == RC_UNSET_HEIGHT) continue; // Skip samples with no valid height data
                 try samples.append(x);
                 try samples.append(@intCast(sh));
                 try samples.append(z);
-                try samples.append(0);
+                try samples.append(0); // Not added
             }
         }
 

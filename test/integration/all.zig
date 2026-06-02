@@ -13,4 +13,5 @@ comptime {
     _ = @import("removetile_link_leak_test.zig");
     _ = @import("mergepolymesh_test.zig");
     _ = @import("dump_roundtrip_test.zig");
+    _ = @import("detail_conformance_test.zig");
 }
