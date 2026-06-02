@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-_No unreleased changes._
+### Tests
+- Pinned the `filterLedgeSpans` operator question (upstream [#772]) with two
+  regression tests (`test/filter_test.zig`): the canonical flat-10×10 edge test
+  (1:1 with upstream main's merged `rcFilterLedgeSpans` test — operator-agnostic,
+  passes under both `>=`/`<` and `>`/`<=`), and the #772 pillar scenario — the
+  only input where the operator matters. We follow upstream **main** (`>=`/`<`),
+  which collapses the whole interior to ledge where #772's open/unmerged `>`/`<=`
+  would keep the diagonal; the second test is the canary that flips if #772 ever
+  lands. See `.agent/core-changes-justification.md`.
+
+[#772]: https://github.com/recastnavigation/recastnavigation/pull/772
 
 ## [0.1.3] - 2026-06-02
 

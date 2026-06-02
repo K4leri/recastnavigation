@@ -88,6 +88,112 @@ test "clearUnwalkableTriangles - flat triangle unchanged" {
     try std.testing.expectEqual(WALKABLE_AREA, areas[0]);
 }
 
+// rcFilterLedgeSpans — 1:1 with upstream main's canonical test
+// (Tests/Recast/Tests_RecastFilter.cpp, TEST_CASE "rcFilterLedgeSpans" /
+// SECTION "Edge spans are marked unwalkable"). A flat 10x10 plane: only the
+// outer ring (x==0 || z==0 || x==9 || z==9) is a ledge; the interior stays
+// walkable. This is operator-agnostic — the clearance check at filter.zig:120
+// never fires on a flat field — so it passes under both the main `>=`/`<` and
+// the proposed PR #772 `>`/`<=`. It pins our 1:1 match with merged upstream.
+test "filterLedgeSpans - flat plane: edges become ledges (upstream main 1:1)" {
+    const allocator = std.testing.allocator;
+    var hf = try Heightfield.init(allocator, 10, 10, Vec3.init(0, 0, 0), Vec3.init(10, 1, 10), 1.0, 1.0);
+    defer hf.deinit();
+
+    var z: i32 = 0;
+    while (z < 10) : (z += 1) {
+        var x: i32 = 0;
+        while (x < 10) : (x += 1) {
+            const s = try hf.allocSpan();
+            s.smin = 0;
+            s.smax = 1;
+            s.area = 1;
+            s.next = null;
+            hf.spans[@intCast(x + z * 10)] = s;
+        }
+    }
+
+    const ctx = Context.init(allocator);
+    filter.filterLedgeSpans(&ctx, 10, 5, &hf); // walkableHeight=10, walkableClimb=5
+
+    z = 0;
+    while (z < 10) : (z += 1) {
+        var x: i32 = 0;
+        while (x < 10) : (x += 1) {
+            const s = hf.spans[@intCast(x + z * 10)].?;
+            const expected: u8 = if (x == 0 or z == 0 or x == 9 or z == 9) NULL_AREA else 1;
+            try std.testing.expectEqual(expected, s.area);
+            try std.testing.expectEqual(@as(u16, 0), s.smin);
+            try std.testing.expectEqual(@as(u16, 1), s.smax);
+            try std.testing.expect(s.next == null);
+        }
+    }
+}
+
+// rcFilterLedgeSpans — the PR #772 discriminating scenario (the new test elsid
+// added in https://github.com/recastnavigation/recastnavigation/pull/772, which
+// is OPEN/unmerged). A 5x5 field with four pillars exactly `walkableHeight`
+// above a flat floor. This is the ONLY known input where the disputed operator
+// matters: a neighbour whose clearance equals walkableHeight is a ledge under
+// main's `>=` (filter.zig:120) but NOT under #772's proposed `>`.
+//
+// We follow upstream MAIN (`>=`/`<`), so every interior cell that touches a
+// pillar is a ledge → the whole interior collapses to RC_NULL_AREA. PR #772's
+// `>`/`<=` would instead keep the four corner cells + the centre walkable (the
+// "diagonal" pattern below). There is no upstream consensus on #772, and main's
+// `>=` is self-consistent with filterWalkableLowHeightSpans' `< walkableHeight`
+// (clearance == walkableHeight is treated as just-walkable), so we deliberately
+// pin the main result. This test is the canary: if upstream ever merges #772,
+// it flips and we revisit. See .agent/core-changes-justification.md.
+test "filterLedgeSpans - PR #772 pillar scenario pins main >= behaviour" {
+    const allocator = std.testing.allocator;
+    var hf = try Heightfield.init(allocator, 5, 5, Vec3.init(0, 0, 0), Vec3.init(5, 100, 5), 1.0, 1.0);
+    defer hf.deinit();
+
+    // Exact smin/smax from upstream PR #772's added SECTION.
+    const smin = [_]u16{
+        0, 0, 0,  0,  0,
+        0, 0, 11, 0,  0,
+        0, 6, 0,  10, 0,
+        0, 0, 11, 0,  0,
+        0, 0, 0,  0,  0,
+    };
+    const smax = [_]u16{
+        1, 1, 1,  1,  1,
+        1, 1, 12, 1,  1,
+        1, 7, 1,  11, 1,
+        1, 1, 12, 1,  1,
+        1, 1, 1,  1,  1,
+    };
+    var i: usize = 0;
+    while (i < 25) : (i += 1) {
+        const s = try hf.allocSpan();
+        s.smin = smin[i];
+        s.smax = smax[i];
+        s.area = 1;
+        s.next = null;
+        hf.spans[i] = s;
+    }
+
+    const ctx = Context.init(allocator);
+    filter.filterLedgeSpans(&ctx, 10, 5, &hf); // walkableHeight=10, walkableClimb=5
+
+    // Our (main `>=`/`<`) result: entire interior collapses to ledge.
+    //   #772's proposed `>`/`<=` would instead give the diagonal:
+    //     0 0 0 0 0 / 0 1 0 1 0 / 0 0 1 0 0 / 0 1 0 1 0 / 0 0 0 0 0
+    const expected = [_]u8{
+        0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0,
+    };
+    i = 0;
+    while (i < 25) : (i += 1) {
+        try std.testing.expectEqual(expected[i], hf.spans[i].?.area);
+    }
+}
+
 test "filterWalkableLowHeightSpans - removes low ceiling spans" {
     const allocator = std.testing.allocator;
 
