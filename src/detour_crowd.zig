@@ -25,6 +25,7 @@ pub const CrowdNeighbour = crowd.CrowdNeighbour;
 pub const CrowdAgentState = crowd.CrowdAgentState;
 pub const MoveRequestState = crowd.MoveRequestState;
 pub const UpdateFlags = crowd.UpdateFlags;
+pub const CrowdAgentDebugInfo = crowd.CrowdAgentDebugInfo;
 
 test {
     @import("std").testing.refAllDecls(@This());
