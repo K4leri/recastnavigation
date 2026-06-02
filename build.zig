@@ -4,6 +4,16 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // Tracy-профилирование demo: zig build run-demo -Dtracy=true
+    const enable_tracy = b.option(bool, "tracy", "Enable Tracy profiling in demo") orelse false;
+
+    // Demo (и его dvui/zgl-зависимости) по умолчанию ReleaseSafe: оптимизировано
+    // (immediate-mode UI dvui в Debug в ~4× медленнее), но с safety-проверками и
+    // детерминированным заполнением undefined (0xAA) — иначе ReleaseFast вскрывает
+    // latent-UB в core-пайплайне (мусорная геометрия, фликер). Для отладки демо:
+    // -Ddemo-optimize=Debug; для максимума скорости (на свой риск) ReleaseFast.
+    const demo_optimize = b.option(std.builtin.OptimizeMode, "demo-optimize", "Optimize mode for demo (default ReleaseSafe)") orelse .ReleaseSafe;
+
     // Main library module
     const recast_nav = b.addModule("recast-nav", .{
         .root_source_file = b.path("src/root.zig"),
@@ -33,6 +43,89 @@ pub fn build(b: *std.Build) void {
         .linkage = .static,
     });
     b.installArtifact(lib);
+
+    // ====================================================================
+    // RECAST DEMO - GUI приложение (порт RecastDemo на DVUI + GLFW/OpenGL)
+    // ====================================================================
+    // lazyDependency: демо-зависимости тянутся/оцениваются только когда реально
+    // собирается таргет demo/run-demo. Сборка библиотеки и тестов их не трогает.
+    if (b.lazyDependency("dvui", .{
+        .target = target,
+        .optimize = demo_optimize,
+        .backend = .glfw,
+        // подсветка синтаксиса (tree-sitter) нам не нужна — отключаем лишние C-deps.
+        .@"tree-sitter" = false,
+        // stb_truetype вместо C-freetype (минус зависимость).
+        .freetype = false,
+    })) |dvui_dep| if (b.lazyDependency("zgl", .{
+        .target = target,
+        .optimize = demo_optimize,
+    })) |zgl_dep| {
+        const demo_mod = b.createModule(.{
+            .root_source_file = b.path("demo/src/main.zig"),
+            .target = target,
+            .optimize = demo_optimize,
+        });
+        demo_mod.addImport("recast-nav", recast_nav);
+        demo_mod.addImport("dvui", dvui_dep.module("dvui_glfw"));
+        // прямой доступ к glfw-бэкенду (zglfw, Backend.init) — как в примере dvui
+        demo_mod.addImport("glfw-backend", dvui_dep.module("glfw"));
+
+        // zgl сам по себе не линкует системный GL — добавляем по платформе.
+        const zgl_mod = zgl_dep.module("zgl");
+        switch (target.result.os.tag) {
+            .windows => zgl_mod.linkSystemLibrary("opengl32", .{}),
+            .linux => zgl_mod.linkSystemLibrary("GL", .{}),
+            .macos => zgl_mod.linkFramework("OpenGL", .{}),
+            else => {},
+        }
+        demo_mod.addImport("zgl", zgl_mod);
+
+        // Tracy: опции + модуль ztracy (само-гейтится через enable_ztracy).
+        const demo_options = b.addOptions();
+        demo_options.addOption(bool, "enable_tracy", enable_tracy);
+        demo_mod.addImport("build_options", demo_options.createModule());
+
+        const ztracy_dep = b.dependency("ztracy", .{
+            .target = target,
+            .optimize = demo_optimize,
+            .enable_ztracy = enable_tracy,
+            .on_demand = true,
+        });
+        demo_mod.addImport("ztracy", ztracy_dep.module("root"));
+
+        const demo_exe = b.addExecutable(.{
+            .name = "recast_demo",
+            .root_module = demo_mod,
+            // self-hosted x86_64 backend не умеет tail calls, которые генерит zgl
+            // (см. коммент в dvui примере glfw-opengl-ontop) — нужен LLVM.
+            .use_llvm = true,
+        });
+        // C-клиент Tracy линкуем только когда профилирование включено.
+        if (enable_tracy) demo_exe.root_module.linkLibrary(ztracy_dep.artifact("tracy"));
+        const install_demo = b.addInstallArtifact(demo_exe, .{});
+
+        const demo_step = b.step("demo", "Build RecastDemo GUI");
+        demo_step.dependOn(&install_demo.step);
+
+        const run_demo = b.addRunArtifact(demo_exe);
+        run_demo.step.dependOn(&install_demo.step);
+        const run_demo_step = b.step("run-demo", "Run RecastDemo GUI");
+        run_demo_step.dependOn(&run_demo.step);
+    };
+
+    // Тесты математики демо (не требуют dvui/glfw — только recast-nav).
+    {
+        const mat_test_mod = b.createModule(.{
+            .root_source_file = b.path("demo/src/tests.zig"),
+            .target = target,
+            .optimize = .Debug,
+        });
+        mat_test_mod.addImport("recast-nav", recast_nav);
+        const mat_test = b.addTest(.{ .root_module = mat_test_mod });
+        const demo_test_step = b.step("demo-test", "Тесты математики демо");
+        demo_test_step.dependOn(&b.addRunArtifact(mat_test).step);
+    }
 
     // ====================================================================
     // OPTIMIZED TESTING ARCHITECTURE - SOLUTION TO LAZY COMPILATION
@@ -158,6 +251,21 @@ pub fn build(b: *std.Build) void {
         .name = "dynamic_obstacles",
         .root_module = example_dynamic_obstacles_module,
     });
+
+    // Дифференциальный харнесс query (сверка find-запросов Zig vs C++).
+    const query_diff_module = b.createModule(.{
+        .root_source_file = b.path("query_diff/query_zig.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    query_diff_module.addImport("recast-nav", recast_nav);
+    const query_diff_exe = b.addExecutable(.{
+        .name = "query_diff_zig",
+        .root_module = query_diff_module,
+    });
+    const install_query_diff = b.addInstallArtifact(query_diff_exe, .{});
+    const query_diff_step = b.step("query-diff", "Build query diff harness (Zig)");
+    query_diff_step.dependOn(&install_query_diff.step);
 
     const install_example_simple = b.addInstallArtifact(example_simple, .{});
     const install_example_pathfinding = b.addInstallArtifact(example_pathfinding, .{});
