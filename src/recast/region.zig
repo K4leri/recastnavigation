@@ -1234,9 +1234,6 @@ pub fn buildRegionsMonotone(
     merge_region_area: i32,
     allocator: std.mem.Allocator,
 ) !void {
-    _ = min_region_area; // TODO: Implement region filtering
-    _ = merge_region_area; // TODO: Implement region merging
-
     const w = chf.width;
     const h = chf.height;
     const span_count = @as(usize, @intCast(chf.span_count));
@@ -1360,9 +1357,14 @@ pub fn buildRegionsMonotone(
         }
     }
 
-    // TODO: Merge and filter regions
+    // Merge regions and filter out small regions. 1:1 with upstream
+    // rcBuildRegionsMonotone (RecastRegion.cpp). Monotone partitioning does not
+    // generate overlapping regions, so `overlaps` is collected but ignored.
+    var overlaps = std.array_list.Managed(i32).init(allocator);
+    defer overlaps.deinit();
+    try mergeAndFilterRegions(ctx, min_region_area, merge_region_area, &id, chf, src_reg, &overlaps, allocator);
 
-    // Write results
+    // Store the result out.
     chf.max_regions = id;
     for (0..span_count) |i| {
         chf.spans[i].reg = src_reg[i];
