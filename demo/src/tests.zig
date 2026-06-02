@@ -1,0 +1,12 @@
+//! Агрегатор тестов demo-модулей, которым достаточно recast-nav
+//! (без zgl/dvui). Модули с GL/UI проверяются через `zig build demo`.
+
+test {
+    _ = @import("mat.zig");
+    _ = @import("camera.zig");
+    _ = @import("sample.zig");
+    _ = @import("build_context.zig");
+    _ = @import("app_state.zig");
+    _ = @import("io_util.zig");
+    _ = @import("input_geom.zig");
+}

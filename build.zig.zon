@@ -1,0 +1,26 @@
+.{
+    .name = .recast_nav,
+    .version = "0.1.0",
+    .fingerprint = 0xe1245760ce15705a,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .dvui = .{
+            .url = "https://github.com/david-vanderson/dvui/archive/8fbaee1c0747e1de1f2075e9d2e1e2341d8f868f.tar.gz",
+            .hash = "dvui-0.5.0-dev-AQFJmZWt9gAsV1p-nlbLb9T3nJ3IHpC6For--ruyqoY0",
+            .lazy = true,
+        },
+        .zgl = .{
+            .url = "https://github.com/ziglibs/zgl/archive/6ee54c287f3c4f176bd05a92746828bb791a1ad0.tar.gz",
+            .hash = "zgl-1.1.0-p_NpAJNECgCzUGx0aF5KFsmD5VOwfw8LaOsN0fcoU2bi",
+            .lazy = true,
+        },
+        .ztracy = .{
+            .path = "../../../../ztracy",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
