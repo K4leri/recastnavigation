@@ -25,10 +25,9 @@ const PathQuery = struct {
     filter: ?*const QueryFilter,
 };
 
-/// Manages asynchronous pathfinding requests
-/// NOTE: This is a simplified implementation using blocking findPath()
-/// The original uses sliced pathfinding (initSlicedFindPath, updateSlicedFindPath, finalizeSlicedFindPath)
-/// which is not yet implemented
+/// Manages asynchronous pathfinding requests via sliced (budgeted) A* search.
+/// Each update() consumes a bounded number of pathfinder iterations across the
+/// active requests (initSlicedFindPath / updateSlicedFindPath / finalize).
 pub const PathQueue = struct {
     const MAX_QUEUE = 8;
     const MAX_KEEP_ALIVE = 2;
@@ -88,53 +87,60 @@ pub const PathQueue = struct {
         }
     }
 
-    /// Update path requests
-    /// NOTE: Simplified version - processes one complete path per call
-    /// Original version uses sliced pathfinding with maxIters budget
+    /// Update path requests using sliced pathfinding, consuming up to
+    /// `max_iters` pathfinder iterations across the active requests.
+    /// 1:1 with dtPathQueue::update (DetourPathQueue.cpp:77).
     pub fn update(self: *Self, max_iters: usize) void {
-        _ = max_iters; // Ignored in simplified version
+        // Update path request until there is nothing to update or up to
+        // max_iters pathfinder iterations have been consumed.
+        var iter_count: i64 = @intCast(max_iters);
 
-        // Update path request until there is nothing to update
         var i: usize = 0;
         while (i < MAX_QUEUE) : (i += 1) {
             var q = &self.queue[self.queue_head % MAX_QUEUE];
 
-            // Skip inactive requests
+            // Skip inactive requests.
             if (q.ref == INVALID_QUEUE_REF) {
                 self.queue_head += 1;
                 continue;
             }
 
-            // Handle completed request
+            // Handle completed request.
             if (q.status.isSuccess() or q.status.isFailure()) {
-                // If the path result has not been read in few frames, free the slot
+                // If the path result has not been read in few frames, free the slot.
                 q.keep_alive += 1;
                 if (q.keep_alive > MAX_KEEP_ALIVE) {
                     q.ref = INVALID_QUEUE_REF;
-                    q.status = Status.ok();
+                    q.status = Status{};
                 }
 
                 self.queue_head += 1;
                 continue;
             }
 
-            // Handle query start (status is all false = not started)
+            // Handle query start (status == 0, i.e. not started yet).
             if (!q.status.isSuccess() and !q.status.isFailure() and !q.status.isInProgress()) {
-                // Simplified: use blocking findPath instead of sliced pathfinding
-                self.navquery.findPath(
+                q.status = self.navquery.initSlicedFindPath(
                     q.start_ref,
                     q.end_ref,
                     &q.start_pos,
                     &q.end_pos,
                     q.filter orelse &QueryFilter.init(),
-                    q.path,
-                    &q.npath,
-                ) catch {
-                    q.status.failure = true;
-                    continue;
-                };
-                q.status.success = true;
+                    0,
+                );
             }
+            // Handle query in progress.
+            if (q.status.isInProgress()) {
+                var iters: u32 = 0;
+                const budget: u32 = if (iter_count > 0) @intCast(iter_count) else 0;
+                q.status = self.navquery.updateSlicedFindPath(budget, &iters);
+                iter_count -= @intCast(iters);
+            }
+            if (q.status.isSuccess()) {
+                q.status = self.navquery.finalizeSlicedFindPath(q.path, &q.npath);
+            }
+
+            if (iter_count <= 0) break;
 
             self.queue_head += 1;
         }
@@ -203,16 +209,18 @@ pub const PathQueue = struct {
     ) Status {
         for (&self.queue) |*q| {
             if (q.ref == ref) {
+                // Preserve the detail bits (DT_PARTIAL_RESULT) before clearing.
+                const partial = q.status.partial_result;
                 // Free request for reuse
                 q.ref = INVALID_QUEUE_REF;
-                q.status = Status.ok();
+                q.status = Status{};
 
                 // Copy path
                 const n = @min(q.npath, path.len);
                 @memcpy(path[0..n], q.path[0..n]);
                 path_size.* = n;
 
-                return Status{ .success = true };
+                return Status{ .success = true, .partial_result = partial };
             }
         }
         return Status{ .failure = true };

@@ -1150,49 +1150,175 @@ pub const Crowd = struct {
         }
     }
 
-    /// Обработка запросов перемещения через path_queue (async, как dtCrowd::updateMoveRequest).
-    /// target_requesting -> submit в очередь -> target_waiting_for_path -> чтение результата
-    /// после path_queue.update -> setCorridor -> target_valid. Запросы идут через очередь,
-    /// поэтому её navquery содержит узлы A*-поиска (для Show Nodes).
+    /// Process move requests asynchronously through the sliced path queue.
+    /// 1:1 with dtCrowd::updateMoveRequest (DetourCrowd.cpp:677): a quick sliced
+    /// search runs inline for new requests; longer/unreachable plans are queued
+    /// (target_waiting_for_queue -> _for_path), polled, then merged with the
+    /// existing corridor (trackback removal) before setCorridor.
     fn updateMoveRequest(self: *Self, _: f32) void {
-        const MAX_PATH = 256;
+        const PATH_MAX_AGENTS = 8;
+        const MAX_ITERS_PER_UPDATE = 100;
+        var queue: [PATH_MAX_AGENTS]*CrowdAgent = undefined;
+        var nqueue: usize = 0;
+
+        // Fire off new requests.
         for (self.agents) |*ag| {
             if (!ag.active) continue;
-            if (ag.state != .walking) continue;
-            if (ag.target_state != .target_requesting) continue;
+            if (ag.state == .invalid) continue;
+            if (ag.target_state == .target_none or ag.target_state == .target_velocity) continue;
 
-            const start_ref = ag.corridor.getFirstPoly();
-            if (start_ref == 0 or ag.target_ref == 0) {
-                ag.target_state = .target_failed;
-                continue;
+            if (ag.target_state == .target_requesting) {
+                const path = ag.corridor.getPath();
+
+                const MAX_RES = 32;
+                var req_pos: [3]f32 = .{ 0, 0, 0 };
+                var req_path: [MAX_RES]PolyRef = undefined;
+                var req_path_count: usize = 0;
+
+                const filter = &self.filters[ag.params.query_filter_type];
+
+                // Quick search towards the goal.
+                const MAX_ITER = 20;
+                _ = self.navquery.initSlicedFindPath(path[0], ag.target_ref, &ag.npos, &ag.target_pos, filter, 0);
+                _ = self.navquery.updateSlicedFindPath(MAX_ITER, null);
+                const status = if (ag.target_replan)
+                    // Try to use existing steady path during replan if possible.
+                    self.navquery.finalizeSlicedFindPathPartial(path, req_path[0..], &req_path_count)
+                else
+                    // Try to move towards target when goal changes.
+                    self.navquery.finalizeSlicedFindPath(req_path[0..], &req_path_count);
+
+                if (!status.isFailure() and req_path_count > 0) {
+                    if (req_path[req_path_count - 1] != ag.target_ref) {
+                        // Partial path, constrain target inside the last polygon.
+                        if (self.navquery.closestPointOnPoly(req_path[req_path_count - 1], &ag.target_pos, &req_pos, null)) |s2| {
+                            if (s2.isFailure()) req_path_count = 0;
+                        } else |_| {
+                            req_path_count = 0;
+                        }
+                    } else {
+                        math.vcopy(&req_pos, &ag.target_pos);
+                    }
+                } else {
+                    req_path_count = 0;
+                }
+
+                if (req_path_count == 0) {
+                    // Could not find path, start the request from current location.
+                    math.vcopy(&req_pos, &ag.npos);
+                    req_path[0] = path[0];
+                    req_path_count = 1;
+                }
+
+                ag.corridor.setCorridor(&req_pos, req_path[0..req_path_count]);
+                ag.boundary.reset();
+                ag.partial = false;
+
+                if (req_path[req_path_count - 1] == ag.target_ref) {
+                    ag.target_state = .target_valid;
+                    ag.target_replan_time = 0.0;
+                } else {
+                    // The path is longer or potentially unreachable, full plan.
+                    ag.target_state = .target_waiting_for_queue;
+                }
             }
-            const filter = &self.filters[ag.params.query_filter_type];
 
-            // Дублируем запрос в path_queue ТОЛЬКО ради визуализации узлов A* (Show Nodes):
-            // её navquery наполнится узлами поиска. Результат очереди не используем
-            // (истечёт по keep_alive). Сам путь считаем синхронно ниже — надёжное движение.
-            _ = self.path_queue.request(start_ref, ag.target_ref, &ag.npos, &ag.target_pos, filter);
-
-            var path: [MAX_PATH]PolyRef = undefined;
-            var npath: usize = 0;
-            _ = self.navquery.findPath(start_ref, ag.target_ref, &ag.npos, &ag.target_pos, filter, path[0..], &npath) catch {
-                ag.target_state = .target_failed;
-                continue;
-            };
-            if (npath == 0) {
-                ag.target_state = .target_failed;
-                continue;
+            if (ag.target_state == .target_waiting_for_queue) {
+                nqueue = addToPathQueue(ag, queue[0..], nqueue, PATH_MAX_AGENTS);
             }
+        }
 
-            var target_pos = ag.target_pos;
-            ag.partial = false;
-            if (path[npath - 1] != ag.target_ref) {
-                ag.partial = true;
-                _ = self.navquery.closestPointOnPoly(path[npath - 1], &ag.target_pos, &target_pos, null) catch {};
+        for (queue[0..nqueue]) |ag| {
+            ag.target_pathq_ref = self.path_queue.request(
+                ag.corridor.getLastPoly(),
+                ag.target_ref,
+                ag.corridor.getTarget(),
+                &ag.target_pos,
+                &self.filters[ag.params.query_filter_type],
+            );
+            if (ag.target_pathq_ref != INVALID_QUEUE_REF) {
+                ag.target_state = .target_waiting_for_path;
             }
-            ag.corridor.setCorridor(&target_pos, path[0..npath]);
-            ag.boundary.reset();
-            ag.target_state = .target_valid;
+        }
+
+        // Update requests.
+        self.path_queue.update(MAX_ITERS_PER_UPDATE);
+
+        // Process path results.
+        for (self.agents) |*ag| {
+            if (!ag.active) continue;
+            if (ag.target_state == .target_none or ag.target_state == .target_velocity) continue;
+
+            if (ag.target_state == .target_waiting_for_path) {
+                const status = self.path_queue.getRequestStatus(ag.target_pathq_ref);
+                if (status.isFailure()) {
+                    // Path find failed, retry if the target location is still valid.
+                    ag.target_pathq_ref = INVALID_QUEUE_REF;
+                    ag.target_state = if (ag.target_ref != 0) .target_requesting else .target_failed;
+                    ag.target_replan_time = 0.0;
+                } else if (status.isSuccess()) {
+                    const path = ag.corridor.getPath();
+                    const npath = ag.corridor.getPathCount();
+
+                    var target_pos: [3]f32 = ag.target_pos;
+                    const res = self.path_result;
+                    var valid = true;
+                    var nres: usize = 0;
+                    const rstatus = self.path_queue.getPathResult(ag.target_pathq_ref, res, &nres);
+                    if (rstatus.isFailure() or nres == 0) valid = false;
+                    ag.partial = rstatus.partial_result;
+
+                    // The last ref of the old path should match where the request was issued.
+                    if (valid and path[npath - 1] != res[0]) valid = false;
+
+                    if (valid) {
+                        // Put the old path in front of the new result.
+                        if (npath > 1) {
+                            if ((npath - 1) + nres > res.len) nres = res.len - (npath - 1);
+                            // memmove res+npath-1 <- res (shift right)
+                            std.mem.copyBackwards(PolyRef, res[npath - 1 .. npath - 1 + nres], res[0..nres]);
+                            @memcpy(res[0 .. npath - 1], path[0 .. npath - 1]);
+                            nres += npath - 1;
+
+                            // Remove trackbacks.
+                            var nres_i: isize = @intCast(nres);
+                            var j: isize = 0;
+                            while (j < nres_i) : (j += 1) {
+                                if (j - 1 >= 0 and j + 1 < nres_i) {
+                                    const jm1: usize = @intCast(j - 1);
+                                    const jp1: usize = @intCast(j + 1);
+                                    if (res[jm1] == res[jp1]) {
+                                        const cnt: usize = @intCast(nres_i - (j + 1));
+                                        std.mem.copyForwards(PolyRef, res[jm1 .. jm1 + cnt], res[jp1 .. jp1 + cnt]);
+                                        nres_i -= 2;
+                                        j -= 2;
+                                    }
+                                }
+                            }
+                            nres = @intCast(nres_i);
+                        }
+
+                        // Check for partial path.
+                        if (res[nres - 1] != ag.target_ref) {
+                            var nearest: [3]f32 = undefined;
+                            if (self.navquery.closestPointOnPoly(res[nres - 1], &target_pos, &nearest, null)) |s3| {
+                                if (s3.isSuccess()) math.vcopy(&target_pos, &nearest) else valid = false;
+                            } else |_| {
+                                valid = false;
+                            }
+                        }
+                    }
+
+                    if (valid) {
+                        ag.corridor.setCorridor(&target_pos, res[0..nres]);
+                        ag.boundary.reset();
+                        ag.target_state = .target_valid;
+                    } else {
+                        ag.target_state = .target_failed;
+                    }
+                    ag.target_replan_time = 0.0;
+                }
+            }
         }
     }
 
