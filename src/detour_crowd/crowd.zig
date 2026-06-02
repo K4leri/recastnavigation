@@ -205,6 +205,40 @@ fn getDistanceToGoal(ag: *const CrowdAgent, range: f32) f32 {
     return range;
 }
 
+/// Insert a neighbour keeping `neis` sorted ascending by distance and capped to
+/// its length (the CLOSEST neighbours win). 1-в-1 dtCrowd `addNeighbour`
+/// (DetourCrowd.cpp). Returns the new neighbour count.
+///
+/// CRITICAL: the proximity-grid query returns up to 32 agents in arbitrary order;
+/// taking the first MAX_NEIGHBOURS of them (the old behaviour) could drop the
+/// closest/overlapping neighbours, so collision resolution never pushed dense
+/// agents apart and they collapsed into one point. Keeping the closest fixes it.
+fn addNeighbour(idx: i32, dist: f32, neis: []CrowdNeighbour, nneis: usize) usize {
+    const max_neis = neis.len;
+    var ni: usize = undefined;
+    if (nneis == 0) {
+        ni = 0;
+    } else if (dist >= neis[nneis - 1].dist) {
+        if (nneis >= max_neis) return nneis;
+        ni = nneis;
+    } else {
+        var i: usize = 0;
+        while (i < nneis) : (i += 1) {
+            if (dist <= neis[i].dist) break;
+        }
+        const tgt = i + 1;
+        const n = @min(nneis - i, max_neis - tgt);
+        // memmove right-shift by 1 (copy from the tail to keep overlap correct).
+        var k: usize = n;
+        while (k > 0) : (k -= 1) {
+            neis[tgt + k - 1] = neis[i + k - 1];
+        }
+        ni = i;
+    }
+    neis[ni] = .{ .idx = idx, .dist = dist };
+    return @min(nneis + 1, max_neis);
+}
+
 /// Helper: Check if agent is over off-mesh connection
 fn overOffmeshConnection(ag: *const CrowdAgent, radius: f32) bool {
     if (ag.ncorners == 0) return false;
@@ -613,7 +647,6 @@ pub const Crowd = struct {
 
             for (ids[0..nids]) |id| {
                 if (id == i) continue;
-                if (ag.nneis >= MAX_NEIGHBOURS) break;
 
                 const nei = agents[id];
                 var diff = [3]f32{ 0, 0, 0 };
@@ -623,8 +656,9 @@ pub const Crowd = struct {
                 const dist_sq = math.vlenSqr(&diff);
                 if (dist_sq > range * range) continue;
 
-                ag.neis[ag.nneis] = .{ .idx = @intCast(id), .dist = dist_sq };
-                ag.nneis += 1;
+                // Sorted insertion keeps the CLOSEST MAX_NEIGHBOURS (1:1 dtCrowd
+                // addNeighbour) — NOT the first ones the grid happens to return.
+                ag.nneis = addNeighbour(@intCast(id), dist_sq, &ag.neis, ag.nneis);
             }
 
             // 1-в-1 dtCrowd::update (DetourCrowd.cpp:1095): индексы соседей из

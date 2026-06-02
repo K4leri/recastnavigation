@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **Crowd: agents no longer collapse into a single point at high density.** The
+  neighbour search kept the *first* `MAX_NEIGHBOURS` agents the proximity grid
+  happened to return (arbitrary order) instead of the *closest* ones. In a dense
+  crowd the grid returns up to 32 agents and the closest/overlapping neighbours
+  were often dropped, so collision resolution never pushed those agents apart and
+  they merged onto one another. Now uses a sorted insertion that keeps the closest
+  `MAX_NEIGHBOURS` — 1:1 with `dtCrowd`'s `addNeighbour` (`DetourCrowd.cpp`). A
+  36-agent converge-on-one-target repro went from 264 overlapping pairs (fully
+  collapsed) to 2–5. Pre-existing since ≤ v0.1.3 (not a v0.1.4 regression).
+  (`src/detour_crowd/crowd.zig`)
+
 ### Performance
 - `rcBuildRegions` (watershed) is now **O(n) again — 20–110× faster** on every
   navmesh build, restoring exact parity with C++ (de_ancient @8M: 44 710 ms →
