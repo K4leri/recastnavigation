@@ -2379,7 +2379,7 @@ pub const NavMeshQuery = struct {
         start_node.cost = 0;
         start_node.total = 0;
         start_node.id = start_ref;
-        start_node.flags = Node.OPEN;
+        start_node.flags = .{ .open = true };
         open_list.push(start_node);
 
         var status = common.Status.ok();
@@ -2390,12 +2390,14 @@ pub const NavMeshQuery = struct {
 
         while (!open_list.empty()) {
             const best_node = open_list.pop().?;
-            best_node.flags &= ~Node.OPEN;
-            best_node.flags |= Node.CLOSED;
+            best_node.flags.open = false;
+            best_node.flags.closed = true;
 
             // Get poly and tile
             const best_ref = best_node.id;
-            const best_tile, const best_poly = nav.getTileAndPolyByRefUnsafe(best_ref);
+            const best_r = nav.getTileAndPolyByRef(best_ref) catch continue;
+            const best_tile = best_r.tile;
+            const best_poly = best_r.poly;
 
             // Get parent poly and tile
             var parent_ref: PolyRef = 0;
@@ -2404,9 +2406,7 @@ pub const NavMeshQuery = struct {
             if (best_node.pidx != 0) {
                 const parent_node = node_pool.getNodeAtIdxConst(best_node.pidx).?;
                 parent_ref = parent_node.id;
-                const pt, const pp = nav.getTileAndPolyByRefUnsafe(parent_ref);
-                parent_tile = pt;
-                parent_poly = pp;
+                nav.getTileAndPolyByRefUnsafe(parent_ref, &parent_tile, &parent_poly);
             }
 
             // Add to result
@@ -2424,7 +2424,7 @@ pub const NavMeshQuery = struct {
             }
 
             // Expand to neighbors
-            var link_idx = best_poly.firstLink;
+            var link_idx = best_poly.first_link;
             while (link_idx != common.NULL_LINK) {
                 const link = &best_tile.links[link_idx];
                 const neighbour_ref = link.ref;
@@ -2444,8 +2444,9 @@ pub const NavMeshQuery = struct {
                 // Find edge and calc distance to the edge
                 var va: [3]f32 = undefined;
                 var vb: [3]f32 = undefined;
-                if (!self.getPortalPoints(best_ref, best_poly, best_tile, neighbour_ref, neighbour_poly, neighbour_tile, &va, &vb))
-                    continue;
+                var pp_ft: u8 = undefined;
+                var pp_tt: u8 = undefined;
+                self.getPortalPoints(best_ref, neighbour_ref, &va, &vb, &pp_ft, &pp_tt) catch continue;
 
                 // If the circle is not touching the next polygon, skip it
                 var tseg: f32 = undefined;
@@ -2457,10 +2458,10 @@ pub const NavMeshQuery = struct {
                     continue;
                 };
 
-                if ((neighbour_node.flags & Node.CLOSED) != 0) continue;
+                if (neighbour_node.flags.closed) continue;
 
                 // Cost - set position to edge midpoint on first visit
-                if (neighbour_node.flags == 0) {
+                if (!neighbour_node.flags.open and !neighbour_node.flags.closed) {
                     math.vlerp(&neighbour_node.pos, &va, &vb, 0.5);
                 }
 
@@ -2481,16 +2482,16 @@ pub const NavMeshQuery = struct {
                 const total = best_node.total + cost;
 
                 // The node is already in open list and the new result is worse, skip
-                if ((neighbour_node.flags & Node.OPEN) != 0 and total >= neighbour_node.total) continue;
+                if (neighbour_node.flags.open and total >= neighbour_node.total) continue;
 
                 neighbour_node.id = neighbour_ref;
-                neighbour_node.pidx = node_pool.getNodeIdx(best_node);
+                neighbour_node.pidx = @intCast(node_pool.getNodeIdx(best_node));
                 neighbour_node.total = total;
 
-                if ((neighbour_node.flags & Node.OPEN) != 0) {
+                if (neighbour_node.flags.open) {
                     open_list.modify(neighbour_node);
                 } else {
-                    neighbour_node.flags = Node.OPEN;
+                    neighbour_node.flags = .{ .open = true };
                     open_list.push(neighbour_node);
                 }
             }
@@ -2562,7 +2563,7 @@ pub const NavMeshQuery = struct {
         start_node.cost = 0;
         start_node.total = 0;
         start_node.id = start_ref;
-        start_node.flags = Node.OPEN;
+        start_node.flags = .{ .open = true };
         open_list.push(start_node);
 
         var status = common.Status.ok();
@@ -2571,12 +2572,14 @@ pub const NavMeshQuery = struct {
 
         while (!open_list.empty()) {
             const best_node = open_list.pop().?;
-            best_node.flags &= ~Node.OPEN;
-            best_node.flags |= Node.CLOSED;
+            best_node.flags.open = false;
+            best_node.flags.closed = true;
 
             // Get poly and tile
             const best_ref = best_node.id;
-            const best_tile, const best_poly = nav.getTileAndPolyByRefUnsafe(best_ref);
+            const best_r = nav.getTileAndPolyByRef(best_ref) catch continue;
+            const best_tile = best_r.tile;
+            const best_poly = best_r.poly;
 
             // Get parent poly and tile
             var parent_ref: PolyRef = 0;
@@ -2585,9 +2588,7 @@ pub const NavMeshQuery = struct {
             if (best_node.pidx != 0) {
                 const parent_node = node_pool.getNodeAtIdxConst(best_node.pidx).?;
                 parent_ref = parent_node.id;
-                const pt, const pp = nav.getTileAndPolyByRefUnsafe(parent_ref);
-                parent_tile = pt;
-                parent_poly = pp;
+                nav.getTileAndPolyByRefUnsafe(parent_ref, &parent_tile, &parent_poly);
             }
 
             // Add to result
@@ -2605,7 +2606,7 @@ pub const NavMeshQuery = struct {
             }
 
             // Expand to neighbors
-            var link_idx = best_poly.firstLink;
+            var link_idx = best_poly.first_link;
             while (link_idx != common.NULL_LINK) {
                 const link = &best_tile.links[link_idx];
                 const neighbour_ref = link.ref;
@@ -2625,8 +2626,9 @@ pub const NavMeshQuery = struct {
                 // Find edge and calc distance to the edge
                 var va: [3]f32 = undefined;
                 var vb: [3]f32 = undefined;
-                if (!self.getPortalPoints(best_ref, best_poly, best_tile, neighbour_ref, neighbour_poly, neighbour_tile, &va, &vb))
-                    continue;
+                var pp_ft: u8 = undefined;
+                var pp_tt: u8 = undefined;
+                self.getPortalPoints(best_ref, neighbour_ref, &va, &vb, &pp_ft, &pp_tt) catch continue;
 
                 // If the portal is not intersecting the shape, skip it
                 var tmin: f32 = undefined;
@@ -2642,10 +2644,10 @@ pub const NavMeshQuery = struct {
                     continue;
                 };
 
-                if ((neighbour_node.flags & Node.CLOSED) != 0) continue;
+                if (neighbour_node.flags.closed) continue;
 
                 // Cost - set position to edge midpoint on first visit
-                if (neighbour_node.flags == 0) {
+                if (!neighbour_node.flags.open and !neighbour_node.flags.closed) {
                     math.vlerp(&neighbour_node.pos, &va, &vb, 0.5);
                 }
 
@@ -2666,16 +2668,16 @@ pub const NavMeshQuery = struct {
                 const total = best_node.total + cost;
 
                 // The node is already in open list and the new result is worse, skip
-                if ((neighbour_node.flags & Node.OPEN) != 0 and total >= neighbour_node.total) continue;
+                if (neighbour_node.flags.open and total >= neighbour_node.total) continue;
 
                 neighbour_node.id = neighbour_ref;
-                neighbour_node.pidx = node_pool.getNodeIdx(best_node);
+                neighbour_node.pidx = @intCast(node_pool.getNodeIdx(best_node));
                 neighbour_node.total = total;
 
-                if ((neighbour_node.flags & Node.OPEN) != 0) {
+                if (neighbour_node.flags.open) {
                     open_list.modify(neighbour_node);
                 } else {
-                    neighbour_node.flags = Node.OPEN;
+                    neighbour_node.flags = .{ .open = true };
                     open_list.push(neighbour_node);
                 }
             }
