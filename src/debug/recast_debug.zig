@@ -20,18 +20,20 @@ const WHITE = dd_mod.rgba(255, 255, 255, 255);
 
 /// Draw heightfield as solid voxels
 pub fn debugDrawHeightfieldSolid(dd: DebugDraw, hf: *const Heightfield) void {
-    const orig = &hf.bmin;
+    const orig = hf.bmin.toArray();
     const cs = hf.cs;
     const ch = hf.ch;
-
-    const w = hf.width;
-    const h = hf.height;
+    const w: usize = @intCast(hf.width);
+    const h: usize = @intCast(hf.height);
 
     var fcol: [6]u32 = undefined;
     dd_mod.calcBoxColors(&fcol, WHITE, WHITE);
 
     dd.begin(.quads, 1.0);
 
+    // Полные боксы (все 6 граней) как оригинал duDebugDrawHeightfieldSolid.
+    // Боковые грани НУЖНЫ: тонкая крыша (1 воксель) видна с ребра именно за счёт них.
+    // Совпадение граней соседних боксов снимается back-cull (см. sample_solo render).
     var y: usize = 0;
     while (y < h) : (y += 1) {
         var x: usize = 0;
@@ -53,12 +55,12 @@ pub fn debugDrawHeightfieldSolid(dd: DebugDraw, hf: *const Heightfield) void {
 
 /// Draw heightfield walkable areas
 pub fn debugDrawHeightfieldWalkable(dd: DebugDraw, hf: *const Heightfield) void {
-    const orig = &hf.bmin;
+    const orig = hf.bmin.toArray();
     const cs = hf.cs;
     const ch = hf.ch;
 
-    const w = hf.width;
-    const h = hf.height;
+    const w: usize = @intCast(hf.width);
+    const h: usize = @intCast(hf.height);
 
     var fcol: [6]u32 = undefined;
     dd_mod.calcBoxColors(&fcol, WHITE, dd_mod.rgba(217, 217, 217, 255));
@@ -73,9 +75,9 @@ pub fn debugDrawHeightfieldWalkable(dd: DebugDraw, hf: *const Heightfield) void 
             const fz = orig[2] + @as(f32, @floatFromInt(y)) * cs;
             var s = hf.spans[x + y * w];
             while (s) |span| {
-                if (span.area == recast.WALKABLE_AREA) {
+                if (span.area == recast.config.AreaId.WALKABLE_AREA) {
                     fcol[0] = WALKABLE_AREA_COLOR;
-                } else if (span.area == recast.NULL_AREA) {
+                } else if (span.area == recast.config.AreaId.NULL_AREA) {
                     fcol[0] = NULL_AREA_COLOR;
                 } else {
                     fcol[0] = dd_mod.multCol(dd.areaToCol(span.area), 200);
@@ -103,23 +105,23 @@ pub fn debugDrawCompactHeightfieldSolid(dd: DebugDraw, chf: *const CompactHeight
     while (y < chf.height) : (y += 1) {
         var x: usize = 0;
         while (x < chf.width) : (x += 1) {
-            const fx = chf.bmin[0] + @as(f32, @floatFromInt(x)) * cs;
-            const fz = chf.bmin[2] + @as(f32, @floatFromInt(y)) * cs;
-            const c = &chf.cells[x + y * chf.width];
+            const fx = chf.bmin.x + @as(f32, @floatFromInt(x)) * cs;
+            const fz = chf.bmin.z + @as(f32, @floatFromInt(y)) * cs;
+            const c = &chf.cells[x + y * @as(usize, @intCast(chf.width))];
 
             var i: usize = c.index;
             const ni = c.index + c.count;
             while (i < ni) : (i += 1) {
                 const s = &chf.spans[i];
-                const fy = chf.bmin[1] + @as(f32, @floatFromInt(s.y)) * ch;
+                const fy = chf.bmin.y + @as(f32, @floatFromInt(s.y)) * ch;
                 var color: u32 = undefined;
 
-                if (s.area == recast.WALKABLE_AREA) {
+                if (chf.areas[i] == recast.config.AreaId.WALKABLE_AREA) {
                     color = WALKABLE_AREA_COLOR;
-                } else if (s.area == recast.NULL_AREA) {
+                } else if (chf.areas[i] == recast.config.AreaId.NULL_AREA) {
                     color = NULL_AREA_COLOR;
                 } else {
-                    color = dd.areaToCol(s.area);
+                    color = dd.areaToCol(chf.areas[i]);
                 }
 
                 dd.vertex(&.{ fx, fy, fz }, color);
@@ -144,19 +146,20 @@ pub fn debugDrawCompactHeightfieldRegions(dd: DebugDraw, chf: *const CompactHeig
     while (y < chf.height) : (y += 1) {
         var x: usize = 0;
         while (x < chf.width) : (x += 1) {
-            const fx = chf.bmin[0] + @as(f32, @floatFromInt(x)) * cs;
-            const fz = chf.bmin[2] + @as(f32, @floatFromInt(y)) * cs;
-            const c = &chf.cells[x + y * chf.width];
+            const fx = chf.bmin.x + @as(f32, @floatFromInt(x)) * cs;
+            const fz = chf.bmin.z + @as(f32, @floatFromInt(y)) * cs;
+            const c = &chf.cells[x + y * @as(usize, @intCast(chf.width))];
 
             var i: usize = c.index;
             const ni = c.index + c.count;
             while (i < ni) : (i += 1) {
                 const s = &chf.spans[i];
-                const fy = chf.bmin[1] + @as(f32, @floatFromInt(s.y)) * ch;
+                const fy = chf.bmin.y + @as(f32, @floatFromInt(s.y)) * ch;
+                // alpha 192 (регионы) / 64 (null) — 1:1 с оригиналом; иначе цвета слишком пёстрые.
                 const color = if (s.reg > 0)
-                    dd_mod.intToCol(@intCast(s.reg), 255)
+                    dd_mod.intToCol(@intCast(s.reg), 192)
                 else
-                    dd_mod.rgba(0, 0, 0, 255);
+                    dd_mod.rgba(0, 0, 0, 64);
 
                 dd.vertex(&.{ fx, fy, fz }, color);
                 dd.vertex(&.{ fx, fy, fz + cs }, color);
@@ -174,10 +177,11 @@ pub fn debugDrawCompactHeightfieldDistance(dd: DebugDraw, chf: *const CompactHei
     const cs = chf.cs;
     const ch = chf.ch;
 
-    // Find max distance
-    var maxd: u16 = 0;
+    // Find max distance (u32, чтобы присваивание @max не сужало u16->меньше и не паниковало
+    // на возможном мусоре в dist; визуализация устойчива к битым данным).
+    var maxd: u32 = 0;
     for (chf.dist) |d| {
-        maxd = @max(maxd, d);
+        maxd = @max(maxd, @as(u32, d));
     }
 
     dd.begin(.quads, 1.0);
@@ -186,15 +190,15 @@ pub fn debugDrawCompactHeightfieldDistance(dd: DebugDraw, chf: *const CompactHei
     while (y < chf.height) : (y += 1) {
         var x: usize = 0;
         while (x < chf.width) : (x += 1) {
-            const fx = chf.bmin[0] + @as(f32, @floatFromInt(x)) * cs;
-            const fz = chf.bmin[2] + @as(f32, @floatFromInt(y)) * cs;
-            const c = &chf.cells[x + y * chf.width];
+            const fx = chf.bmin.x + @as(f32, @floatFromInt(x)) * cs;
+            const fz = chf.bmin.z + @as(f32, @floatFromInt(y)) * cs;
+            const c = &chf.cells[x + y * @as(usize, @intCast(chf.width))];
 
             var i: usize = c.index;
             const ni = c.index + c.count;
             while (i < ni) : (i += 1) {
                 const s = &chf.spans[i];
-                const fy = chf.bmin[1] + (@as(f32, @floatFromInt(s.y)) + 1.0) * ch;
+                const fy = chf.bmin.y + (@as(f32, @floatFromInt(s.y)) + 1.0) * ch;
                 const cd: u32 = chf.dist[i];
                 const d: u32 = if (maxd > 0) cd * 255 / maxd else 0;
                 const color = dd_mod.rgba(@intCast(d), @intCast(d), @intCast(d), 255);
@@ -221,14 +225,14 @@ pub fn debugDrawHeightfieldLayer(dd: DebugDraw, layer: *const HeightfieldLayer, 
 
     // Layer bounds
     const bmin = [3]f32{
-        layer.bmin[0] + @as(f32, @floatFromInt(layer.minx)) * cs,
-        layer.bmin[1],
-        layer.bmin[2] + @as(f32, @floatFromInt(layer.miny)) * cs,
+        layer.bmin.x + @as(f32, @floatFromInt(layer.minx)) * cs,
+        layer.bmin.y,
+        layer.bmin.z + @as(f32, @floatFromInt(layer.miny)) * cs,
     };
     const bmax = [3]f32{
-        layer.bmin[0] + @as(f32, @floatFromInt(layer.maxx + 1)) * cs,
+        layer.bmin.x + @as(f32, @floatFromInt(layer.maxx + 1)) * cs,
         layer.bmax[1],
-        layer.bmin[2] + @as(f32, @floatFromInt(layer.maxy + 1)) * cs,
+        layer.bmin.z + @as(f32, @floatFromInt(layer.maxy + 1)) * cs,
     };
     debugDrawBoxWire(dd, bmin[0], bmin[1], bmin[2], bmax[0], bmax[1], bmax[2], dd_mod.transCol(color, 128), 2.0);
 
@@ -246,17 +250,17 @@ pub fn debugDrawHeightfieldLayer(dd: DebugDraw, layer: *const HeightfieldLayer, 
             const area = layer.areas[lidx];
 
             var col: u32 = undefined;
-            if (area == recast.WALKABLE_AREA) {
+            if (area == recast.config.AreaId.WALKABLE_AREA) {
                 col = dd_mod.lerpCol(color, dd_mod.rgba(0, 192, 255, 64), 32);
-            } else if (area == recast.NULL_AREA) {
+            } else if (area == recast.config.AreaId.NULL_AREA) {
                 col = dd_mod.lerpCol(color, dd_mod.rgba(0, 0, 0, 64), 32);
             } else {
                 col = dd_mod.lerpCol(color, dd.areaToCol(area), 32);
             }
 
-            const fx = layer.bmin[0] + @as(f32, @floatFromInt(x)) * cs;
-            const fy = layer.bmin[1] + @as(f32, @floatFromInt(lh + 1)) * ch;
-            const fz = layer.bmin[2] + @as(f32, @floatFromInt(y)) * cs;
+            const fx = layer.bmin.x + @as(f32, @floatFromInt(x)) * cs;
+            const fy = layer.bmin.y + @as(f32, @floatFromInt(lh + 1)) * ch;
+            const fz = layer.bmin.z + @as(f32, @floatFromInt(y)) * cs;
 
             dd.vertex(&.{ fx, fy, fz }, col);
             dd.vertex(&.{ fx, fy, fz + cs }, col);
@@ -294,12 +298,12 @@ fn drawLayerPortals(dd: DebugDraw, layer: *const HeightfieldLayer) void {
             for (0..4) |dir| {
                 if ((layer.cons[idx] & (@as(u8, 1) << @intCast(dir + 4))) != 0) {
                     const seg_base = dir * 4;
-                    const ax = layer.bmin[0] + @as(f32, @floatFromInt(@as(i32, @intCast(x)) + segs[seg_base + 0])) * cs;
-                    const ay = layer.bmin[1] + @as(f32, @floatFromInt(lh + 2)) * ch;
-                    const az = layer.bmin[2] + @as(f32, @floatFromInt(@as(i32, @intCast(y)) + segs[seg_base + 1])) * cs;
-                    const bx = layer.bmin[0] + @as(f32, @floatFromInt(@as(i32, @intCast(x)) + segs[seg_base + 2])) * cs;
-                    const by = layer.bmin[1] + @as(f32, @floatFromInt(lh + 2)) * ch;
-                    const bz = layer.bmin[2] + @as(f32, @floatFromInt(@as(i32, @intCast(y)) + segs[seg_base + 3])) * cs;
+                    const ax = layer.bmin.x + @as(f32, @floatFromInt(@as(i32, @intCast(x)) + segs[seg_base + 0])) * cs;
+                    const ay = layer.bmin.y + @as(f32, @floatFromInt(lh + 2)) * ch;
+                    const az = layer.bmin.z + @as(f32, @floatFromInt(@as(i32, @intCast(y)) + segs[seg_base + 1])) * cs;
+                    const bx = layer.bmin.x + @as(f32, @floatFromInt(@as(i32, @intCast(x)) + segs[seg_base + 2])) * cs;
+                    const by = layer.bmin.y + @as(f32, @floatFromInt(lh + 2)) * ch;
+                    const bz = layer.bmin.z + @as(f32, @floatFromInt(@as(i32, @intCast(y)) + segs[seg_base + 3])) * cs;
                     dd.vertex(&.{ ax, ay, az }, pcol);
                     dd.vertex(&.{ bx, by, bz }, pcol);
                 }
@@ -342,9 +346,9 @@ pub fn debugDrawHeightfieldLayersRegions(dd: DebugDraw, lset: *const Heightfield
                 else
                     dd_mod.rgba(0, 0, 0, 255);
 
-                const fx = layer.bmin[0] + @as(f32, @floatFromInt(x)) * cs;
-                const fy = layer.bmin[1] + @as(f32, @floatFromInt(lh)) * ch;
-                const fz = layer.bmin[2] + @as(f32, @floatFromInt(y)) * cs;
+                const fx = layer.bmin.x + @as(f32, @floatFromInt(x)) * cs;
+                const fy = layer.bmin.y + @as(f32, @floatFromInt(lh)) * ch;
+                const fz = layer.bmin.z + @as(f32, @floatFromInt(y)) * cs;
 
                 dd.vertex(&.{ fx, fy, fz }, col);
                 dd.vertex(&.{ fx, fy, fz + cs }, col);
@@ -396,7 +400,7 @@ fn debugDrawBoxWire(dd: DebugDraw, minx: f32, miny: f32, minz: f32, maxx: f32, m
 
 /// Draw region connections between contours
 pub fn debugDrawRegionConnections(dd: DebugDraw, cset: *const ContourSet, alpha: f32) void {
-    const orig = &cset.bmin;
+    const orig = cset.bmin.toArray();
     const cs = cset.cs;
     const ch = cset.ch;
 
@@ -409,14 +413,16 @@ pub fn debugDrawRegionConnections(dd: DebugDraw, cset: *const ContourSet, alpha:
 
     for (0..@intCast(cset.nconts)) |i| {
         const cont = &cset.conts[i];
-        getContourCenter(cont, orig, cs, ch, &pos);
+        getContourCenter(cont, &orig, cs, ch, &pos);
 
         for (0..@intCast(cont.nverts)) |j| {
-            const v = &cont.verts[j * 4];
-            if (v[3] == 0 or @as(u16, @intCast(v[3])) < cont.reg) continue;
+            const v = cont.verts[j * 4 ..][0..4];
+            // v[3] — region id вершины с возможными флаг-битами; маскируем RC_CONTOUR_REG_MASK
+            // (0xffff) перед сужением до u16, иначе @intCast паникует на флагах.
+            if ((v[3] & 0xffff) == 0 or v[3] < @as(i32, cont.reg)) continue;
 
-            if (findContourFromSet(cset, @intCast(v[3]))) |cont2| {
-                getContourCenter(cont2, orig, cs, ch, &pos2);
+            if (findContourFromSet(cset, @intCast(v[3] & 0xffff))) |cont2| {
+                getContourCenter(cont2, &orig, cs, ch, &pos2);
                 dd_mod.appendArc(dd, pos[0], pos[1], pos[2], pos2[0], pos2[1], pos2[2], 0.25, 0.6, 0.6, color);
             }
         }
@@ -430,7 +436,7 @@ pub fn debugDrawRegionConnections(dd: DebugDraw, cset: *const ContourSet, alpha:
     for (0..@intCast(cset.nconts)) |i| {
         const cont = &cset.conts[i];
         const col = dd_mod.darkenCol(dd_mod.intToCol(@intCast(cont.reg), @intCast(a)));
-        getContourCenter(cont, orig, cs, ch, &pos);
+        getContourCenter(cont, &orig, cs, ch, &pos);
         dd.vertex(&pos, col);
     }
 
@@ -444,7 +450,7 @@ fn getContourCenter(cont: *const recast.Contour, orig: *const [3]f32, cs: f32, c
     if (cont.nverts == 0) return;
 
     for (0..@intCast(cont.nverts)) |i| {
-        const v = &cont.verts[i * 4];
+        const v = cont.verts[i * 4 ..][0..4];
         center[0] += @floatFromInt(v[0]);
         center[1] += @floatFromInt(v[1]);
         center[2] += @floatFromInt(v[2]);
@@ -470,7 +476,7 @@ fn findContourFromSet(cset: *const ContourSet, reg: u16) ?*const recast.Contour 
 
 /// Draw raw contours (unsmoothed)
 pub fn debugDrawRawContours(dd: DebugDraw, cset: *const ContourSet, alpha: f32) void {
-    const orig = &cset.bmin;
+    const orig = cset.bmin.toArray();
     const cs = cset.cs;
     const ch = cset.ch;
 
@@ -483,7 +489,7 @@ pub fn debugDrawRawContours(dd: DebugDraw, cset: *const ContourSet, alpha: f32) 
         const color = dd_mod.intToCol(@intCast(c.reg), @intCast(a));
 
         for (0..@intCast(c.nrverts)) |j| {
-            const v = &c.rverts[j * 4];
+            const v = c.rverts[j * 4 ..][0..4];
             const fx = orig[0] + @as(f32, @floatFromInt(v[0])) * cs;
             const fy = orig[1] + @as(f32, @floatFromInt(v[1] + 1 + @as(i32, @intCast(i & 1)))) * ch;
             const fz = orig[2] + @as(f32, @floatFromInt(v[2])) * cs;
@@ -493,7 +499,7 @@ pub fn debugDrawRawContours(dd: DebugDraw, cset: *const ContourSet, alpha: f32) 
             }
         }
         // Loop last segment
-        const v = &c.rverts[0];
+        const v = c.rverts[0..][0..4];
         const fx = orig[0] + @as(f32, @floatFromInt(v[0])) * cs;
         const fy = orig[1] + @as(f32, @floatFromInt(v[1] + 1 + @as(i32, @intCast(i & 1)))) * ch;
         const fz = orig[2] + @as(f32, @floatFromInt(v[2])) * cs;
@@ -509,10 +515,10 @@ pub fn debugDrawRawContours(dd: DebugDraw, cset: *const ContourSet, alpha: f32) 
         const color = dd_mod.darkenCol(dd_mod.intToCol(@intCast(c.reg), @intCast(a)));
 
         for (0..@intCast(c.nrverts)) |j| {
-            const v = &c.rverts[j * 4];
+            const v = c.rverts[j * 4 ..][0..4];
             var off: f32 = 0;
             var colv = color;
-            if ((v[3] & recast.BORDER_VERTEX) != 0) {
+            if ((v[3] & recast.config.BORDER_VERTEX) != 0) {
                 colv = dd_mod.rgba(255, 255, 255, a);
                 off = ch * 2.0;
             }
@@ -529,7 +535,7 @@ pub fn debugDrawRawContours(dd: DebugDraw, cset: *const ContourSet, alpha: f32) 
 
 /// Draw simplified contours
 pub fn debugDrawContours(dd: DebugDraw, cset: *const ContourSet, alpha: f32) void {
-    const orig = &cset.bmin;
+    const orig = cset.bmin.toArray();
     const cs = cset.cs;
     const ch = cset.ch;
 
@@ -550,9 +556,9 @@ pub fn debugDrawContours(dd: DebugDraw, cset: *const ContourSet, alpha: f32) voi
             k = j;
             j += 1;
         }) {
-            const va = &c.verts[k * 4];
-            const vb = &c.verts[j * 4];
-            const col = if ((va[3] & recast.AREA_BORDER) != 0) bcolor else color;
+            const va = c.verts[k * 4 ..][0..4];
+            const vb = c.verts[j * 4 ..][0..4];
+            const col = if ((va[3] & recast.config.AREA_BORDER) != 0) bcolor else color;
 
             var fx = orig[0] + @as(f32, @floatFromInt(va[0])) * cs;
             var fy = orig[1] + @as(f32, @floatFromInt(va[1] + 1 + @as(i32, @intCast(i & 1)))) * ch;
@@ -575,10 +581,10 @@ pub fn debugDrawContours(dd: DebugDraw, cset: *const ContourSet, alpha: f32) voi
         const color = dd_mod.darkenCol(dd_mod.intToCol(@intCast(c.reg), @intCast(a)));
 
         for (0..@intCast(c.nverts)) |j| {
-            const v = &c.verts[j * 4];
+            const v = c.verts[j * 4 ..][0..4];
             var off: f32 = 0;
             var colv = color;
-            if ((v[3] & recast.BORDER_VERTEX) != 0) {
+            if ((v[3] & recast.config.BORDER_VERTEX) != 0) {
                 colv = dd_mod.rgba(255, 255, 255, a);
                 off = ch * 2.0;
             }
@@ -595,10 +601,10 @@ pub fn debugDrawContours(dd: DebugDraw, cset: *const ContourSet, alpha: f32) voi
 
 /// Draw polygon mesh
 pub fn debugDrawPolyMesh(dd: DebugDraw, mesh: *const PolyMesh) void {
-    const nvp = mesh.nvp;
+    const nvp: usize = @intCast(mesh.nvp);
     const cs = mesh.cs;
     const ch = mesh.ch;
-    const orig = &mesh.bmin;
+    const orig = mesh.bmin.toArray();
 
     // Draw triangulated polygons
     dd.begin(.tris, 1.0);
@@ -608,9 +614,9 @@ pub fn debugDrawPolyMesh(dd: DebugDraw, mesh: *const PolyMesh) void {
         const area = mesh.areas[i];
 
         var color: u32 = undefined;
-        if (area == recast.WALKABLE_AREA) {
+        if (area == recast.config.AreaId.WALKABLE_AREA) {
             color = dd_mod.rgba(0, 192, 255, 64);
-        } else if (area == recast.NULL_AREA) {
+        } else if (area == recast.config.AreaId.NULL_AREA) {
             color = dd_mod.rgba(0, 0, 0, 64);
         } else {
             color = dd.areaToCol(area);
@@ -625,7 +631,7 @@ pub fn debugDrawPolyMesh(dd: DebugDraw, mesh: *const PolyMesh) void {
             vi[2] = p[j];
 
             for (0..3) |k| {
-                const v = &mesh.verts[vi[k] * 3];
+                const v = mesh.verts[vi[k] * 3 ..][0..3];
                 const x = orig[0] + @as(f32, @floatFromInt(v[0])) * cs;
                 const y = orig[1] + @as(f32, @floatFromInt(v[1] + 1)) * ch;
                 const z = orig[2] + @as(f32, @floatFromInt(v[2])) * cs;
@@ -651,7 +657,7 @@ pub fn debugDrawPolyMesh(dd: DebugDraw, mesh: *const PolyMesh) void {
             const vi = [2]u16{ p[j], p[nj] };
 
             for (0..2) |k| {
-                const v = &mesh.verts[vi[k] * 3];
+                const v = mesh.verts[vi[k] * 3 ..][0..3];
                 const x = orig[0] + @as(f32, @floatFromInt(v[0])) * cs;
                 const y = orig[1] + @as(f32, @floatFromInt(v[1] + 1)) * ch + 0.1;
                 const z = orig[2] + @as(f32, @floatFromInt(v[2])) * cs;
@@ -682,7 +688,7 @@ pub fn debugDrawPolyMesh(dd: DebugDraw, mesh: *const PolyMesh) void {
             }
 
             for (0..2) |k| {
-                const v = &mesh.verts[vi[k] * 3];
+                const v = mesh.verts[vi[k] * 3 ..][0..3];
                 const x = orig[0] + @as(f32, @floatFromInt(v[0])) * cs;
                 const y = orig[1] + @as(f32, @floatFromInt(v[1] + 1)) * ch + 0.1;
                 const z = orig[2] + @as(f32, @floatFromInt(v[2])) * cs;
@@ -698,7 +704,7 @@ pub fn debugDrawPolyMesh(dd: DebugDraw, mesh: *const PolyMesh) void {
     const colv = dd_mod.rgba(0, 0, 0, 220);
 
     for (0..@intCast(mesh.nverts)) |i| {
-        const v = &mesh.verts[i * 3];
+        const v = mesh.verts[i * 3 ..][0..3];
         const x = orig[0] + @as(f32, @floatFromInt(v[0])) * cs;
         const y = orig[1] + @as(f32, @floatFromInt(v[1] + 1)) * ch + 0.1;
         const z = orig[2] + @as(f32, @floatFromInt(v[2])) * cs;
