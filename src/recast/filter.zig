@@ -114,10 +114,10 @@ pub fn filterLedgeSpans(
                     var neighbor_ceiling = if (neighbor_span) |ns| @as(i32, ns.smin) else MAX_HEIGHTFIELD_HEIGHT;
 
                     // Skip neighbor if the gap between the spans is too small.
-                    // Use strict inequality (>) to be conservative and avoid edge cases
-                    // where the agent would fit exactly (gap == walkableHeight).
-                    // See: https://github.com/recastnavigation/recastnavigation/pull/772
-                    if (@min(ceiling, neighbor_ceiling) - floor > walkable_height) {
+                    // 1в1 с upstream main rcFilterLedgeSpans (RecastFilter.cpp:120, оператор >=).
+                    // Примечание: этот оператор оспаривается открытым PR #772 (предлагает вернуть >),
+                    // консенсуса в upstream нет — следуем текущему main.
+                    if (@min(ceiling, neighbor_ceiling) - floor >= walkable_height) {
                         lowest_neighbor_floor_diff = -walkable_climb - 1;
                         is_ledge = true;
                         break;
@@ -128,10 +128,9 @@ pub fn filterLedgeSpans(
                         const neighbor_floor = @as(i32, ns.smax);
                         neighbor_ceiling = if (ns.next) |next| @as(i32, next.smin) else MAX_HEIGHTFIELD_HEIGHT;
 
-                        // Only consider neighboring areas that have enough overlap to be potentially traversable.
-                        // Use <= for correct logical inversion of the original (gap > h) condition.
-                        // See: https://github.com/recastnavigation/recastnavigation/pull/772
-                        if (@min(ceiling, neighbor_ceiling) - @max(floor, neighbor_floor) <= walkable_height) {
+                        // Only consider neighbours with enough overlap to be traversable.
+                        // 1в1 с upstream main (RecastFilter.cpp:133, оператор <). Также затронут спором PR #772.
+                        if (@min(ceiling, neighbor_ceiling) - @max(floor, neighbor_floor) < walkable_height) {
                             // No space to traverse between them
                             neighbor_span = ns.next;
                             continue;
