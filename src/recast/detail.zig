@@ -16,6 +16,7 @@ const RC_UNSET_HEIGHT: u16 = 0xffff;
 const RC_MULTIPLE_REGS = config.MULTIPLE_REGS;
 const RC_MESH_NULL_IDX = config.MESH_NULL_IDX;
 const NOT_CONNECTED = config.NOT_CONNECTED;
+const getDirForOffset = heightfield.getDirForOffset;
 
 // Constants for detail mesh generation
 const MAX_VERTS = 127;
@@ -135,6 +136,29 @@ fn distancePtSeg(x: f32, z: f32, px: f32, pz: f32, qx: f32, qz: f32) f32 {
     const dx_final = px + t * pqx - x;
     const dz_final = pz + t * pqz - z;
     return dx_final * dx_final + dz_final * dz_final;
+}
+
+/// Distance from point to line segment (3D, squared) - used for edge simplification
+fn distancePtSeg3d(pt: [*]const f32, p: [*]const f32, q: [*]const f32) f32 {
+    const pqx = q[0] - p[0];
+    const pqy = q[1] - p[1];
+    const pqz = q[2] - p[2];
+    var dx = pt[0] - p[0];
+    var dy = pt[1] - p[1];
+    var dz = pt[2] - p[2];
+    const d = pqx * pqx + pqy * pqy + pqz * pqz;
+    var t = pqx * dx + pqy * dy + pqz * dz;
+    if (d > 0) t /= d;
+    if (t < 0) {
+        t = 0;
+    } else if (t > 1) {
+        t = 1;
+    }
+
+    dx = p[0] + t * pqx - pt[0];
+    dy = p[1] + t * pqy - pt[1];
+    dz = p[2] + t * pqz - pt[2];
+    return dx * dx + dy * dy + dz * dz;
 }
 
 /// Distance from point to line segment (2D version with arrays)
@@ -260,45 +284,66 @@ inline fn getCon(s: *const CompactSpan, dir: i32) u8 {
 /// Sample height from heightfield with spiral search
 fn getHeight(
     fx: f32,
-    _: f32,
+    fy: f32,
     fz: f32,
-    cs: f32,
-    ics: f32,
     _: f32,
+    ics: f32,
+    ch: f32,
     radius: i32,
     hp: *const HeightPatch,
 ) u16 {
-    const ix = @as(i32, @intFromFloat(@floor(fx * ics + 0.01)));
-    const iz = @as(i32, @intFromFloat(@floor(fz * ics + 0.01)));
-    const x = std.math.clamp(ix - hp.xmin, 0, hp.width - 1);
-    const z = std.math.clamp(iz - hp.ymin, 0, hp.height - 1);
-    var h = hp.data[@as(usize, @intCast(x + z * hp.width))];
-    if (h != RC_UNSET_HEIGHT) {
-        return h;
-    }
+    const ix = std.math.clamp(@as(i32, @intFromFloat(@floor(fx * ics + 0.01))) - hp.xmin, 0, hp.width - 1);
+    const iz = std.math.clamp(@as(i32, @intFromFloat(@floor(fz * ics + 0.01))) - hp.ymin, 0, hp.height - 1);
+    var h = hp.data[@as(usize, @intCast(ix + iz * hp.width))];
+    if (h == RC_UNSET_HEIGHT) {
+        // Special case when data might be bad.
+        // Walk adjacent cells in a spiral up to 'radius', and look
+        // for a pixel which has a valid height.
+        var x: i32 = 1;
+        var z: i32 = 0;
+        var dx: i32 = 1;
+        var dz: i32 = 0;
+        const max_size = radius * 2 + 1;
+        const max_iter = max_size * max_size - 1;
 
-    // Spiral search
-    const offx = [_]i32{ 0, -1, -1, -1, 0, 1, 1, 1 };
-    const offy = [_]i32{ -1, -1, 0, 1, 1, 1, 0, -1 };
+        var next_ring_iter_start: i32 = 8;
+        var next_ring_iters: i32 = 16;
 
-    var dmin = std.math.floatMax(f32);
-    var r: i32 = 1;
-    while (r <= radius) : (r += 1) {
-        var dir: usize = 0;
-        while (dir < 8) : (dir += 1) {
-            const nx = x + offx[dir] * r;
-            const nz = z + offy[dir] * r;
-            if (nx >= 0 and nx < hp.width and nz >= 0 and nz < hp.height) {
+        var dmin = std.math.floatMax(f32);
+        var i: i32 = 0;
+        while (i < max_iter) : (i += 1) {
+            const nx = ix + x;
+            const nz = iz + z;
+
+            if (nx >= 0 and nz >= 0 and nx < hp.width and nz < hp.height) {
                 const nh = hp.data[@as(usize, @intCast(nx + nz * hp.width))];
                 if (nh != RC_UNSET_HEIGHT) {
-                    const d = @abs(@as(f32, @floatFromInt(nx)) * cs + @as(f32, @floatFromInt(hp.xmin)) * cs - fx) +
-                        @abs(@as(f32, @floatFromInt(nz)) * cs + @as(f32, @floatFromInt(hp.ymin)) * cs - fz);
+                    const d = @abs(@as(f32, @floatFromInt(nh)) * ch - fy);
                     if (d < dmin) {
                         h = nh;
                         dmin = d;
                     }
                 }
             }
+
+            // We want to find the best height as close to the center cell as possible.
+            // If we find a height in the current ring, don't expand to the next ring.
+            if (i + 1 == next_ring_iter_start) {
+                if (h != RC_UNSET_HEIGHT)
+                    break;
+
+                next_ring_iter_start += next_ring_iters;
+                next_ring_iters += 8;
+            }
+
+            // Spiral direction change
+            if ((x == z) or ((x < 0) and (x == -z)) or ((x > 0) and (x == 1 - z))) {
+                const tmp = dx;
+                dx = -dz;
+                dz = tmp;
+            }
+            x += dx;
+            z += dz;
         }
     }
     return h;
@@ -694,7 +739,7 @@ fn triangulateHull(
 // ============================================================================
 
 fn seedArrayWithPolyCenter(
-    _: *const Context,
+    ctx: *const Context,
     chf: *const CompactHeightfield,
     poly: []const u16,
     npoly: i32,
@@ -703,10 +748,14 @@ fn seedArrayWithPolyCenter(
     hp: *const HeightPatch,
     array: *std.array_list.Managed(i32),
 ) !void {
+    // Note: Reads to the compact heightfield are offset by border size (bs)
+    // since border size offset is already removed from the polymesh vertices.
+
     const offset = [_]i32{
         0, 0, -1, -1, 0, -1, 1, -1, 1, 0, 1, 1, 0, 1, -1, 1, -1, 0,
     };
 
+    // Find cell closest to a poly vertex
     var start_cell_x: i32 = 0;
     var start_cell_y: i32 = 0;
     var start_span_index: i32 = -1;
@@ -741,6 +790,7 @@ fn seedArrayWithPolyCenter(
         }
     }
 
+    // Find center of the polygon
     var pcx: i32 = 0;
     var pcy: i32 = 0;
     j = 0;
@@ -751,6 +801,7 @@ fn seedArrayWithPolyCenter(
     pcx = @divTrunc(pcx, @as(i32, @intCast(npoly)));
     pcy = @divTrunc(pcy, @as(i32, @intCast(npoly)));
 
+    // Use seeds array as a stack for DFS
     try array.resize(0);
     try array.append(start_cell_x);
     try array.append(start_cell_y);
@@ -759,59 +810,75 @@ fn seedArrayWithPolyCenter(
     var dirs = [_]i32{ 0, 1, 2, 3 };
     @memset(hp.data, 0);
 
-    const dx = start_cell_x - pcx;
-    const dy = start_cell_y - pcy;
-    if (dx < 0) {
-        std.mem.swap(i32, &dirs[0], &dirs[3]);
-    }
-    if (dy < 0) {
-        std.mem.swap(i32, &dirs[1], &dirs[2]);
-    }
-    if (@abs(dy) > @abs(dx)) {
-        std.mem.swap(i32, &dirs[0], &dirs[1]);
-        std.mem.swap(i32, &dirs[2], &dirs[3]);
-    }
+    // DFS to move to the center. Note that we need a DFS here and can not just move
+    // directly towards the center without recording intermediate nodes, even though the polygons
+    // are convex. In very rare cases we can get stuck due to contour simplification if we do not
+    // record nodes.
+    var cx: i32 = -1;
+    var cy: i32 = -1;
+    var ci: i32 = -1;
+    while (true) {
+        if (array.items.len < 3) {
+            ctx.log(.warning, "Walk towards polygon center failed to reach center", .{});
+            break;
+        }
 
-    var iter: usize = 0;
-    while (iter < array.items.len / 3) : (iter += 1) {
-        if (iter >= @as(usize, @intCast(chf.width * chf.height))) break;
+        // Pop from stack (DFS)
+        ci = array.items[array.items.len - 1];
+        cy = array.items[array.items.len - 2];
+        cx = array.items[array.items.len - 3];
+        try array.resize(array.items.len - 3);
 
-        const cx = array.items[iter * 3 + 0];
-        const cy = array.items[iter * 3 + 1];
-        const ci = array.items[iter * 3 + 2];
+        if (cx == pcx and cy == pcy)
+            break;
 
-        if (cx == pcx and cy == pcy) break;
+        // If we are already at the correct X-position, prefer direction
+        // directly towards the center in the Y-axis; otherwise prefer
+        // direction in the X-axis
+        const direct_dir: usize = @intCast(getDirForOffset(
+            if (cx == pcx) @as(i32, 0) else if (pcx > cx) @as(i32, 1) else @as(i32, -1),
+            if (cx == pcx) (if (pcy > cy) @as(i32, 1) else @as(i32, -1)) else @as(i32, 0),
+        ));
+
+        // Push the direct dir last so we start with this on next iteration
+        std.mem.swap(i32, &dirs[direct_dir], &dirs[3]);
 
         const cs = chf.spans[@as(usize, @intCast(ci))];
-
         for (dirs) |dir| {
             if (getCon(&cs, dir) == NOT_CONNECTED) continue;
 
-            const ax = cx + getDirOffsetX(dir);
-            const ay = cy + getDirOffsetY(dir);
+            const new_x = cx + getDirOffsetX(dir);
+            const new_y = cy + getDirOffsetY(dir);
 
-            if (ax < hp.xmin or ax >= hp.xmin + hp.width or
-                ay < hp.ymin or ay >= hp.ymin + hp.height) continue;
+            const hpx = new_x - hp.xmin;
+            const hpy = new_y - hp.ymin;
+            if (hpx < 0 or hpx >= hp.width or hpy < 0 or hpy >= hp.height) continue;
 
-            if (hp.data[@as(usize, @intCast((ax - hp.xmin) + (ay - hp.ymin) * hp.width))] != 0) continue;
+            if (hp.data[@as(usize, @intCast(hpx + hpy * hp.width))] != 0) continue;
 
-            const cell_idx = @as(usize, @intCast(ax + bs + (ay + bs) * chf.width));
-            const ai = @as(i32, @intCast(chf.cells[cell_idx].index)) + @as(i32, @intCast(getCon(&cs, dir)));
+            hp.data[@as(usize, @intCast(hpx + hpy * hp.width))] = 1;
 
-            const hx = ax - hp.xmin;
-            const hy = ay - hp.ymin;
-            hp.data[@as(usize, @intCast(hx + hy * hp.width))] = 1;
-
-            try array.append(ax);
-            try array.append(ay);
-            try array.append(ai);
+            try array.append(new_x);
+            try array.append(new_y);
+            try array.append(@as(i32, @intCast(chf.cells[@as(usize, @intCast(new_x + bs + (new_y + bs) * chf.width))].index)) +
+                @as(i32, @intCast(getCon(&cs, dir))));
         }
+
+        std.mem.swap(i32, &dirs[direct_dir], &dirs[3]);
     }
 
+    // Reset array and seed with center cell (with border offset for getHeightData)
     try array.resize(0);
-    try array.append(start_cell_x);
-    try array.append(start_cell_y);
-    try array.append(start_span_index);
+    try array.append(cx + bs);
+    try array.append(cy + bs);
+    try array.append(ci);
+
+    // Reset height patch and seed the center cell height
+    @memset(hp.data, 0xffff);
+    if (ci >= 0) {
+        const cs = chf.spans[@as(usize, @intCast(ci))];
+        hp.data[@as(usize, @intCast((cx - hp.xmin) + (cy - hp.ymin) * hp.width))] = cs.y;
+    }
 }
 
 fn getHeightData(
@@ -1000,7 +1067,10 @@ fn buildPolyDetail(
                 edge_verts[@intCast(k)][1] = vj[1] + dy * u;
                 edge_verts[@intCast(k)][2] = vj[2] + dz * u;
                 const h = getHeight(edge_verts[@intCast(k)][0], edge_verts[@intCast(k)][1], edge_verts[@intCast(k)][2], cs, ics, chf.ch, height_search_radius, hp);
-                edge_verts[@intCast(k)][1] = @as(f32, @floatFromInt(h)) * chf.ch;
+                if (h != RC_UNSET_HEIGHT) {
+                    edge_verts[@intCast(k)][1] = @as(f32, @floatFromInt(h)) * chf.ch;
+                }
+                // else: keep interpolated edge height (vj[1] + dy * u)
             }
 
             var idx: [MAX_VERTS_PER_EDGE]i32 = undefined;
@@ -1019,7 +1089,7 @@ fn buildPolyDetail(
                 var maxi: i32 = -1;
                 var m = a + 1;
                 while (m < b) : (m += 1) {
-                    const dev = distancePtSeg2d(&edge_verts[@intCast(m)], va, vb);
+                    const dev = distancePtSeg3d(&edge_verts[@intCast(m)], va, vb);
                     if (dev > maxd) {
                         maxd = dev;
                         maxi = m;
@@ -1108,8 +1178,10 @@ fn buildPolyDetail(
                 };
                 if (distToPoly(nin, in.ptr, &pt) > -sample_dist / 2) continue;
 
+                const sh = getHeight(pt[0], pt[1], pt[2], cs, ics, chf.ch, height_search_radius, hp);
+                if (sh == RC_UNSET_HEIGHT) continue; // Skip samples with no valid height data
                 try samples.append(x);
-                try samples.append(@intCast(getHeight(pt[0], pt[1], pt[2], cs, ics, chf.ch, height_search_radius, hp)));
+                try samples.append(@intCast(sh));
                 try samples.append(z);
                 try samples.append(0);
             }
@@ -1134,6 +1206,9 @@ fn buildPolyDetail(
                     @as(f32, @floatFromInt(samples.items[@intCast(s_idx + 1)])) * chf.ch,
                     @as(f32, @floatFromInt(samples.items[@intCast(s_idx + 2)])) * sample_dist + getJitterY(@intCast(i)) * cs * 0.1,
                 };
+                // Upstream #796: skip sampling when no triangles exist yet —
+                // distToTriMesh would dereference an empty tri list (assert/UB on large navmeshes).
+                if (tris.items.len == 0) continue;
                 const d = distToTriMesh(&pt, verts[0..].ptr, nverts.*, @ptrCast(tris.items.ptr), @divTrunc(@as(i32, @intCast(tris.items.len)), 4));
                 if (d < 0) continue;
                 if (d > bestd) {
