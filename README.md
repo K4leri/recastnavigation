@@ -61,32 +61,36 @@ zig build run-demo
 ## Library usage
 
 Add the dependency to your `build.zig.zon` and import the module. The build
-pipeline is namespaced — `recast.recast.*` to bake a mesh, `recast.detour.*` to
-query it; the common types (`Vec3`, `Context`, `RecastConfig`, `Heightfield`, …)
-are re-exported at the root. Sketch of the flow (declarations elided — see the
-example below for the complete, compiling code):
+pipeline is namespaced — the `recast` half (alias it `rc`) bakes a mesh, the
+`detour` half (alias it `dt`) queries it; the common types (`Vec3`, `Context`,
+`RecastConfig`, `Heightfield`, …) are re-exported at the root. The build functions
+sit under file-namespaces (`rc.rasterization`, `rc.filter`, `rc.region`, …) that
+mirror the upstream C++ source files. Sketch of the flow (declarations elided —
+see the example below for the complete, compiling code):
 
 ```zig
-const recast = @import("recast-nav");
+const nav = @import("recast-nav");
+const rc = nav.recast; // Recast: build the mesh
+const dt = nav.detour; // Detour: query it
 
-var ctx = recast.Context.init(allocator);
+var ctx = nav.Context.init(allocator);
 
 // 1. Bake: triangles -> heightfield -> compact -> regions -> contours -> mesh.
 //    `verts` is flat []f32 xyz, `indices` is []i32. Filters return void; the
 //    build steps fill structs you init'd (Heightfield/CompactHeightfield/...).
-try recast.recast.rasterization.rasterizeTriangles(&ctx, verts, indices, areas, &hf, cfg.walkable_climb);
-recast.recast.filter.filterLedgeSpans(&ctx, cfg.walkable_height, cfg.walkable_climb, &hf);
-try recast.recast.compact.buildCompactHeightfield(&ctx, cfg.walkable_height, cfg.walkable_climb, &hf, &chf);
-try recast.recast.region.buildRegions(&ctx, &chf, cfg.border_size, cfg.min_region_area, cfg.merge_region_area, allocator);
-try recast.recast.contour.buildContours(&ctx, &chf, cfg.max_simplification_error, cfg.max_edge_len, &cset, 0, allocator);
-try recast.recast.mesh.buildPolyMesh(&ctx, &cset, @intCast(cfg.max_verts_per_poly), &pmesh, allocator);
+try rc.rasterization.rasterizeTriangles(&ctx, verts, indices, areas, &hf, cfg.walkable_climb);
+rc.filter.filterLedgeSpans(&ctx, cfg.walkable_height, cfg.walkable_climb, &hf);
+try rc.compact.buildCompactHeightfield(&ctx, cfg.walkable_height, cfg.walkable_climb, &hf, &chf);
+try rc.region.buildRegions(&ctx, &chf, cfg.border_size, cfg.min_region_area, cfg.merge_region_area, allocator);
+try rc.contour.buildContours(&ctx, &chf, cfg.max_simplification_error, cfg.max_edge_len, &cset, 0, allocator);
+try rc.mesh.buildPolyMesh(&ctx, &cset, @intCast(cfg.max_verts_per_poly), &pmesh, allocator);
 
 // 2. Hand the mesh to Detour, then query it.
-const data = try recast.detour.createNavMeshData(&create_params, allocator);
-var navmesh = try recast.detour.NavMesh.init(allocator, nav_params);
+const data = try dt.createNavMeshData(&create_params, allocator);
+var navmesh = try dt.NavMesh.init(allocator, nav_params);
 _ = try navmesh.addTile(data, .{ .free_data = false }, 0);
 
-var query = try recast.detour.NavMeshQuery.init(allocator);
+const query = try dt.NavMeshQuery.init(allocator);
 try query.initQuery(&navmesh, 2048);
 _ = try query.findPath(start_ref, end_ref, &start_pos, &end_pos, &filter, &path, &path_count);
 ```
