@@ -60,41 +60,58 @@ zig build run-demo
 
 ## Library usage
 
-Add the dependency to your `build.zig.zon` and import the module:
+Add the dependency to your `build.zig.zon` and import the module. The build
+pipeline is namespaced — `recast.recast.*` to bake a mesh, `recast.detour.*` to
+query it; the common types (`Vec3`, `Context`, `RecastConfig`, `Heightfield`, …)
+are re-exported at the root. Sketch of the flow (declarations elided — see the
+example below for the complete, compiling code):
 
 ```zig
 const recast = @import("recast-nav");
 
 var ctx = recast.Context.init(allocator);
 
-var config = recast.RecastConfig{
-    .cs = 0.3,
-    .ch = 0.2,
-    .walkable_slope_angle = 45.0,
-    .walkable_height = 20,
-    .walkable_climb = 9,
-    .walkable_radius = 8,
-    .max_edge_len = 12,
-    .max_simplification_error = 1.3,
-    .min_region_area = 8,
-    .merge_region_area = 20,
-    .max_verts_per_poly = 6,
-    .detail_sample_dist = 6.0,
-    .detail_sample_max_error = 1.0,
-    .bmin = recast.Vec3.init(0, 0, 0),
-    .bmax = recast.Vec3.init(100, 10, 100),
-};
+// 1. Bake: triangles -> heightfield -> compact -> regions -> contours -> mesh.
+//    `verts` is flat []f32 xyz, `indices` is []i32. Filters return void; the
+//    build steps fill structs you init'd (Heightfield/CompactHeightfield/...).
+try recast.recast.rasterization.rasterizeTriangles(&ctx, verts, indices, areas, &hf, cfg.walkable_climb);
+recast.recast.filter.filterLedgeSpans(&ctx, cfg.walkable_height, cfg.walkable_climb, &hf);
+try recast.recast.compact.buildCompactHeightfield(&ctx, cfg.walkable_height, cfg.walkable_climb, &hf, &chf);
+try recast.recast.region.buildRegions(&ctx, &chf, cfg.border_size, cfg.min_region_area, cfg.merge_region_area, allocator);
+try recast.recast.contour.buildContours(&ctx, &chf, cfg.max_simplification_error, cfg.max_edge_len, &cset, 0, allocator);
+try recast.recast.mesh.buildPolyMesh(&ctx, &cset, @intCast(cfg.max_verts_per_poly), &pmesh, allocator);
 
-// ... rasterize triangles, filter, build regions/contours/mesh,
-//     then create Detour navmesh data and query it.
+// 2. Hand the mesh to Detour, then query it.
+const data = try recast.detour.createNavMeshData(&create_params, allocator);
+var navmesh = try recast.detour.NavMesh.init(allocator, nav_params);
+_ = try navmesh.addTile(data, .{ .free_data = false }, 0);
+
+var query = try recast.detour.NavMeshQuery.init(allocator);
+try query.initQuery(&navmesh, 2048);
+_ = try query.findPath(start_ref, end_ref, &start_pos, &end_pos, &filter, &path, &path_count);
 ```
 
-Runnable, end-to-end examples live in `examples/`:
+The full version of the above — every step, allocation, and error path — is
+`examples/03_full_pathfinding.zig`. Run it with `zig build run-example`.
 
-- `simple_navmesh.zig` — bake a navmesh from a box.
-- `pathfinding_demo.zig` — find and follow a path.
-- `crowd_simulation.zig` — drive several agents to a goal.
-- `dynamic_obstacles.zig` — tile cache + run-time obstacles.
+## Examples
+
+Every example builds **and runs** in CI (`zig build examples` builds all,
+`zig build run-<name>` runs one). They are the living, executable reference for
+the API:
+
+| Example | Demonstrates |
+|---|---|
+| `03_full_pathfinding` | complete bake → navmesh → `findPath`/`findStraightPath` |
+| `simple_navmesh` | the minimal bake (triangles → navmesh data) |
+| `pathfinding_demo` | query suite: nearest poly, path, raycast, area & wall queries |
+| `02_tiled_navmesh` | two stitched tiles, a path crossing the tile border |
+| `06_offmesh_connections` | an off-mesh link (jump/teleport) bridging disconnected areas |
+| `crowd_simulation` | DetourCrowd steering several agents to a shared goal |
+| `dynamic_obstacles` | DetourTileCache run-time obstacles re-routing a path |
+| `advanced/custom_areas` | custom area types + per-area query cost |
+| `advanced/hierarchical_pathfinding` | sliced/incremental pathfinding across frames |
+| `advanced/streaming_world` | tiles streamed in/out as an agent moves |
 
 ## Differences from the C++ version
 
