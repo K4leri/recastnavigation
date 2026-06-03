@@ -774,6 +774,9 @@ pub fn main(main_init: std.process.Init) !void {
             const white = dvui.Color{ .r = 255, .g = 255, .b = 255, .a = 255 };
             const label_col = dvui.Color{ .r = 0, .g = 0, .b = 0, .a = 220 };
 
+            // Crowd perf graph (Show Perf Graph) — 2D overlay over the dvui frame.
+            if (active_tool == .crowd) crowd_tool.renderPerfGraph(vh);
+
             // подписи агентов толпы (индекс над агентом) — по чекбоксу Show Labels
             if (active_tool == .crowd and crowd_tool.show_labels) {
                 if (crowd_tool.crowd) |*c| {

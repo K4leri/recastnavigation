@@ -7,6 +7,9 @@ const recast = @import("recast-nav");
 const ddgl = @import("debug_draw_gl.zig");
 const ui = @import("ui.zig");
 const sample = @import("sample.zig");
+const vh_mod = @import("value_history.zig");
+const ValueHistory = vh_mod.ValueHistory;
+const io_util = @import("io_util.zig");
 
 const dt = recast.detour;
 const dc = recast.detour_crowd;
@@ -53,11 +56,16 @@ pub const CrowdTool = struct {
     show_labels: bool = false,
     show_grid: bool = false,
     show_nodes: bool = false,
+    show_perf_graph: bool = false,
+    // Perf-graph histories (1:1 Tool_Crowd crowdTotalTime / crowdSampleCount).
+    crowd_total_time: ValueHistory = .{}, // ms per crowd update
+    crowd_sample_count: ValueHistory = .{}, // velocity samples per update
     show_detail_all: bool = false, // 1-в-1 Tool_Crowd.h:38 (showDetailAll=false). При true detail+float
     // рисуются для ВСЕХ агентов -> разные значения дистанции накладываются в общих точках -> каша.
     // След агентов (история позиций) + текущая цель (для креста).
     trails: [MAX_AGENTS]AgentTrail = [_]AgentTrail{.{}} ** MAX_AGENTS,
     target_pos: [3]f32 = .{ 0, 0, 0 },
+    target_ref: dt.PolyRef = 0, // current move-target poly (so new agents can join it)
     has_target: bool = false,
     // Габариты агента (из sample settings, как sample->agentRadius/Height в оригинале).
     agent_radius: f32 = 0.6,
@@ -208,8 +216,13 @@ pub const CrowdTool = struct {
                 if (best) |bi| c.removeAgent(@intCast(bi));
             } else {
                 var params = self.buildParams();
-                _ = c.addAgent(ray_hit, &params) catch {};
+                const idx = c.addAgent(ray_hit, &params) catch -1;
                 self.agent_count = c.getAgentCount();
+                // New agent joins the current move target, if any (1:1 C++
+                // CrowdToolState::addAgent: `if (targetPolyRef) requestMoveTarget(...)`).
+                if (idx >= 0 and self.has_target and self.target_ref != 0) {
+                    _ = c.requestMoveTarget(idx, self.target_ref, &self.target_pos);
+                }
             }
         } else if (self.mode == .move_target) {
             if (shift) {
@@ -238,6 +251,7 @@ pub const CrowdTool = struct {
                 if (ref != 0) {
                     for (0..self.agent_count) |i| _ = c.requestMoveTarget(@intCast(i), ref, &snapped);
                     self.target_pos = snapped;
+                    self.target_ref = ref;
                     self.has_target = true;
                 }
             }
@@ -280,7 +294,12 @@ pub const CrowdTool = struct {
             if (self.vod) |*v| {
                 self.debug.vod = v;
             } else self.debug.vod = null;
+            // Time the crowd update for the perf graph (1:1 CrowdToolState::update:
+            // crowdTotalTime/crowdSampleCount sampled around dtCrowd::update).
+            var timer = io_util.PerfTimer.start();
             c.updateDebug(delta, &self.debug) catch {};
+            self.crowd_total_time.addSample(timer.readMs());
+            self.crowd_sample_count.addSample(@floatFromInt(c.getVelocitySampleCount()));
             // Запись следа (как CrowdToolState::handleUpdate): кольцевой буфер позиций.
             for (0..self.agent_count) |i| {
                 const ag = c.getAgent(@intCast(i)) orelse continue;
@@ -292,6 +311,19 @@ pub const CrowdTool = struct {
                 t.trail[t.htrail * 3 + 2] = ag.npos[2];
             }
         }
+    }
+
+    /// Draw the crowd perf graphs (1:1 CrowdToolState::handleRenderOverlay,
+    /// showPerfGraph). Total update time (0..2 ms) + velocity sample count
+    /// (0..2000), anchored to the bottom of the viewport. dvui-frame only.
+    pub fn renderPerfGraph(self: *CrowdTool, fb_h: f32) void {
+        if (!self.show_perf_graph) return;
+        const x: f32 = 300;
+        const w: f32 = 500;
+        const pad: f32 = 8;
+        const bottom = fb_h - 10;
+        vh_mod.drawGraph(self.alloc, x, bottom - 200, w, 200, pad, 0.0, 2.0, "ms", &self.crowd_total_time, dbg.rgba(255, 128, 0, 255), "Total", 1, true);
+        vh_mod.drawGraph(self.alloc, x, bottom - 50, w, 50, pad, 0.0, 2000.0, "", &self.crowd_sample_count, dbg.rgba(96, 96, 96, 128), "Sample Count", 0, false);
     }
 
     /// Цвет агента по target_state (база светло-серая, тонируется) — 1-в-1 с CrowdTool.
@@ -561,6 +593,7 @@ pub const CrowdTool = struct {
             _ = dvui.checkbox(@src(), &self.show_labels, "Show Labels", .{});
             _ = dvui.checkbox(@src(), &self.show_grid, "Show Prox Grid", .{});
             _ = dvui.checkbox(@src(), &self.show_nodes, "Show Nodes", .{});
+            _ = dvui.checkbox(@src(), &self.show_perf_graph, "Show Perf Graph", .{});
             _ = dvui.checkbox(@src(), &self.show_detail_all, "Show Detail All", .{});
         }
 
