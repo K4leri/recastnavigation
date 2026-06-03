@@ -1619,8 +1619,10 @@ fn mergePolys(pa: []u16, pb: []u16, ea: i32, eb: i32) void {
     const na = countPolyVerts(pa);
     const nb = countPolyVerts(pb);
 
-    // Merge polygons
-    @memset(&tmp, 0xff);
+    // Merge polygons. Sentinel TILECACHE_NULL_IDX = 0xffff per u16 element.
+    // (Zig @memset writes the value per-element, not per-byte like C++ memset,
+    //  so the fill value is 0xffff, not 0xff.)
+    @memset(&tmp, 0xffff);
     var n: usize = 0;
     // Add pa
     var i: i32 = 0;
@@ -1801,7 +1803,7 @@ fn removeVertex(
             // Remove the polygon
             const p2 = mesh.polys[@as(usize, @intCast(mesh.npolys - 1)) * MAX_VERTS_PER_POLY * 2 ..];
             @memcpy(p[0..MAX_VERTS_PER_POLY], p2[0..MAX_VERTS_PER_POLY]);
-            @memset(p[MAX_VERTS_PER_POLY .. MAX_VERTS_PER_POLY * 2], 0xff);
+            @memset(p[MAX_VERTS_PER_POLY .. MAX_VERTS_PER_POLY * 2], 0xffff); // u16 sentinel
             mesh.areas[@intCast(i)] = mesh.areas[@intCast(mesh.npolys - 1)];
             mesh.npolys -= 1;
             i -= 1;
@@ -1920,7 +1922,7 @@ fn removeVertex(
 
     // Build initial polygons
     var npolys: i32 = 0;
-    @memset(&polys, 0xff);
+    @memset(&polys, 0xffff); // u16 sentinel TILECACHE_NULL_IDX
     var j: i32 = 0;
     while (j < ntris) : (j += 1) {
         const t = tris[@as(usize, @intCast(j)) * 3 ..];
@@ -2000,7 +2002,7 @@ fn removeVertex(
     while (i < npolys) : (i += 1) {
         if (mesh.npolys >= max_tris) break;
         const p = mesh.polys[@as(usize, @intCast(mesh.npolys)) * MAX_VERTS_PER_POLY * 2 ..];
-        @memset(p[0 .. MAX_VERTS_PER_POLY * 2], 0xff);
+        @memset(p[0 .. MAX_VERTS_PER_POLY * 2], 0xffff); // u16 sentinel
         j = 0;
         while (j < MAX_VERTS_PER_POLY) : (j += 1) {
             p[@intCast(j)] = polys[@as(usize, @intCast(i)) * MAX_VERTS_PER_POLY + @as(usize, @intCast(j))];
@@ -2271,7 +2273,9 @@ pub fn buildTileCachePolyMesh(
     mesh.npolys = 0;
 
     @memset(mesh.verts, 0);
-    @memset(mesh.polys, 0xff);
+    // u16 null-index sentinel = 0xffff (TILECACHE_NULL_IDX). C++ does a byte memset
+    // 0xff over `sizeof(unsigned short)*...`; Zig @memset is per-element, so 0xffff.
+    @memset(mesh.polys, 0xffff);
     @memset(mesh.areas, 0);
 
     var first_vert: [VERTEX_BUCKET_COUNT2]u16 = undefined;
@@ -2333,7 +2337,7 @@ pub fn buildTileCachePolyMesh(
 
         // Build initial polygons
         var npolys: i32 = 0;
-        @memset(polys, 0xff);
+        @memset(polys, 0xffff); // u16 sentinel TILECACHE_NULL_IDX
         j = 0;
         while (j < ntris) : (j += 1) {
             const t = tris[@as(usize, @intCast(j)) * 3 ..];
@@ -2370,7 +2374,10 @@ pub fn buildTileCachePolyMesh(
                         const v = getPolyMergeValue(
                             @constCast(pj[0..MAX_VERTS_PER_POLY]),
                             @constCast(pk[0..MAX_VERTS_PER_POLY]),
-                            mesh.verts[0 .. @as(usize, @intCast(mesh.nverts)) * 3],
+                            // Use the live vertex count: addVertex increments the
+                            // local `nverts_i32`; `mesh.nverts` is only synced after
+                            // the contour loop (below), so it is still 0 here.
+                            mesh.verts[0 .. @as(usize, @intCast(nverts_i32)) * 3],
                             &ea,
                             &eb,
                         );
@@ -2394,10 +2401,13 @@ pub fn buildTileCachePolyMesh(
                         best_ea,
                         best_eb,
                     );
-                    @memcpy(
-                        pb[0..MAX_VERTS_PER_POLY],
-                        polys[@as(usize, @intCast(npolys - 1)) * MAX_VERTS_PER_POLY ..][0..MAX_VERTS_PER_POLY],
-                    );
+                    // Overwrite pb with the last poly (unless pb already IS the last
+                    // poly — a self-copy, which @memcpy rejects as aliasing). Matches
+                    // the guarded copy in core rcBuildPolyMesh (src/recast/mesh.zig).
+                    const last = polys[@as(usize, @intCast(npolys - 1)) * MAX_VERTS_PER_POLY ..][0..MAX_VERTS_PER_POLY];
+                    if (pb.ptr != last.ptr) {
+                        @memcpy(pb[0..MAX_VERTS_PER_POLY], last);
+                    }
                     npolys -= 1;
                 } else {
                     // Could not merge any polygons, stop

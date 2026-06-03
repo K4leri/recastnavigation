@@ -1478,6 +1478,7 @@ pub const NavMesh = struct {
         // Save data before clearing
         const data = tile.data;
         const data_size = tile.data_size;
+        const owns_data = tile.flags.free_data;
 
         // Reset tile
         tile.header = null;
@@ -1501,6 +1502,14 @@ pub const NavMesh = struct {
         // Return to freelist
         tile.next = self.next_free;
         self.next_free = tile;
+
+        // DT_TILE_FREE_DATA: the navmesh owned the data, so free it here and hand
+        // back nothing (the caller must not free it). Otherwise return ownership to
+        // the caller. Matches upstream `dtNavMesh::removeTile`.
+        if (owns_data) {
+            if (data.len > 0) self.allocator.free(data);
+            return .{ .data = &[_]u8{}, .data_size = 0 };
+        }
 
         return .{ .data = data, .data_size = data_size };
     }

@@ -948,11 +948,15 @@ pub const TileCache = struct {
         // Note: In the original C++ version, temp allocator is reset here
         // For Zig, we rely on Arena allocator or defer cleanup
 
-        // Decompress tile layer data
+        // Decompress tile layer data. Pass the FULL buffer (`tile.data`, header at
+        // offset 0 + compressed payload after it) — `decompressTileCacheLayer`
+        // reads the header itself. `tile.compressed` is the header-stripped payload
+        // and would make the decompressor read the header from the wrong offset.
+        // Matches upstream `dtTileCache::buildNavMeshTile` passing `tile->data`.
         const layer = builder_mod.decompressTileCacheLayer(
             self.allocator,
             self.comp.?,
-            tile.compressed,
+            tile.data,
         ) catch {
             return Status{ .failure = true };
         };
@@ -1085,8 +1089,11 @@ pub const TileCache = struct {
             _ = try navmesh.removeTile(tile_ref);
         }
 
-        // Add new tile
-        const flags = common.TileFlags{}; // Default flags
+        // Add new tile. DT_TILE_FREE_DATA: the navmesh owns `nav_data` and frees it
+        // on removeTile/deinit, so the rebuild removeTile above releases the old
+        // tile's data instead of leaking it. Matches upstream `dtTileCache::
+        // buildNavMeshTile` (addTile with DT_TILE_FREE_DATA).
+        const flags = common.TileFlags{ .free_data = true };
         _ = try navmesh.addTile(nav_data, flags, 0);
 
         return Status{ .success = true };

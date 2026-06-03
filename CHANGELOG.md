@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- **The tile-cache → navmesh bake path now works** (`dtTileCache::buildNavMeshTile`).
+  It was unexercised by the existing tests (they add obstacles but never add layer
+  tiles), which hid five faithful-port bugs. Found and fixed while adding a real
+  end-to-end regression test (`test/integration/tilecache_navmesh_test.zig`):
+  1. `@memset` filled the `[]u16` polygon arrays with `0x00ff` instead of the
+     `0xffff` null-index sentinel — Zig's `@memset` writes per-element, not the
+     per-byte fill C++ `memset(...,0xff,...)` produces — so `createNavMeshData`
+     mis-parsed every polygon. Fixed at all six sites in
+     `src/detour_tilecache/builder.zig`.
+  2. `buildNavMeshTile` passed the header-stripped `tile.compressed` to the
+     decompressor, which reads the layer header from offset 0 (a double strip); now
+     passes the full `tile.data`, matching upstream.
+  3. `getPolyMergeValue` bounded its vertex slice with the not-yet-synced
+     `mesh.nverts` (still 0 inside the contour loop) instead of the live count.
+  4. The polygon-merge compaction did `@memcpy(pb, last)` which Zig rejects when
+     `pb` *is* the last poly (self-alias); added the same `pb.ptr != last.ptr`
+     guard core `rcBuildPolyMesh` already uses.
+  5. Tile-cache navmesh tiles were added with `free_data=false` and the rebuild
+     `removeTile` result was discarded, leaking the old tile every bake. They now
+     use `DT_TILE_FREE_DATA`, and `dtNavMesh::removeTile` frees owned data instead
+     of always handing it back (matching upstream).
 - **All 10 examples build and run again.** They had rotted against Zig 0.16 (the
   removed `std.heap.GeneralPurposeAllocator`) and against the current namespaced
   library API (`recast.recast.<step>.*` / `recast.detour.*`), so `zig build
