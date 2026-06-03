@@ -1802,7 +1802,7 @@ fn removeVertex(
             }
             // Remove the polygon
             const p2 = mesh.polys[@as(usize, @intCast(mesh.npolys - 1)) * MAX_VERTS_PER_POLY * 2 ..];
-            @memcpy(p[0..MAX_VERTS_PER_POLY], p2[0..MAX_VERTS_PER_POLY]);
+            if (p.ptr != p2.ptr) @memcpy(p[0..MAX_VERTS_PER_POLY], p2[0..MAX_VERTS_PER_POLY]); // p==p2 when removing the LAST poly (aliasing) -> skip
             @memset(p[MAX_VERTS_PER_POLY .. MAX_VERTS_PER_POLY * 2], 0xffff); // u16 sentinel
             mesh.areas[@intCast(i)] = mesh.areas[@intCast(mesh.npolys - 1)];
             mesh.npolys -= 1;
@@ -1984,10 +1984,8 @@ fn removeVertex(
                     best_ea,
                     best_eb,
                 );
-                @memcpy(
-                    pb[0..MAX_VERTS_PER_POLY],
-                    polys[@as(usize, @intCast(npolys - 1)) * MAX_VERTS_PER_POLY ..][0..MAX_VERTS_PER_POLY],
-                );
+                const last = polys[@as(usize, @intCast(npolys - 1)) * MAX_VERTS_PER_POLY ..][0..MAX_VERTS_PER_POLY];
+                if (pb.ptr != last.ptr) @memcpy(pb[0..MAX_VERTS_PER_POLY], last); // alias when best_pb == npolys-1
                 pareas[@intCast(best_pb)] = pareas[@intCast(npolys - 1)];
                 npolys -= 1;
             } else {
