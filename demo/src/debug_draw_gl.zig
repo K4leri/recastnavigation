@@ -114,8 +114,24 @@ pub const DebugDrawGL = struct {
     pub fn init(allocator: std.mem.Allocator) !DebugDrawGL {
         const program = try buildProgram(allocator);
 
-        const vao = zgl.createVertexArray();
-        const vbo = zgl.createBuffer();
+        // DSA где доступна (glCreate*, GL 4.5/ARB_DSA), иначе классика (glGen*, GL 3.0).
+        // zgl.createVertexArray/createBuffer = DSA-обёртки; на GL 3.3/4.1 их нет -> демо
+        // падало бы при инициализации. Ветвимся по фактической поддержке драйвера.
+        const use_dsa = hasDSA();
+        std.debug.print("[GL] DSA={s} — buffers/VAOs/textures via {s}\n", .{
+            if (use_dsa) "yes" else "no",
+            if (use_dsa) "glCreate* (GL 4.5 / ARB_direct_state_access)" else "glGen*+bind (core GL 3.3)",
+        });
+        const vao = if (use_dsa) zgl.createVertexArray() else blk: {
+            var arr: [1]zgl.VertexArray = undefined;
+            zgl.genVertexArrays(&arr);
+            break :blk arr[0];
+        };
+        const vbo = if (use_dsa) zgl.createBuffer() else blk: {
+            var arr: [1]zgl.Buffer = undefined;
+            zgl.genBuffers(&arr);
+            break :blk arr[0];
+        };
 
         zgl.bindVertexArray(vao);
         zgl.bindBuffer(vbo, .array_buffer);
@@ -130,7 +146,7 @@ pub const DebugDrawGL = struct {
 
         zgl.bindVertexArray(.invalid);
 
-        const tex = buildCheckerTexture();
+        const tex = buildCheckerTexture(use_dsa);
 
         return .{
             .program = program,
@@ -381,13 +397,35 @@ pub const DebugDrawGL = struct {
     }
 };
 
+/// Доступна ли Direct State Access (GL 4.5 core ИЛИ расширение
+/// GL_ARB_direct_state_access на 4.3/4.4). Если да — используем DSA-форму
+/// (glCreate*/glTextureParameteri); если нет — классическую GL 3.3
+/// (glGen*/bind/glTexParameteri). Так демо берёт современный путь там, где он
+/// есть, и остаётся совместимым со старыми драйверами (GL 3.3/4.1).
+fn hasDSA() bool {
+    const major = zgl.getInteger(.major_version);
+    const minor = zgl.getInteger(.minor_version);
+    if (major > 4 or (major == 4 and minor >= 5)) return true;
+    const n: usize = @intCast(@max(0, zgl.getInteger(.num_extensions)));
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        if (zgl.getStringi(.extensions, @intCast(i))) |ext| {
+            if (std.mem.eql(u8, ext, "GL_ARB_direct_state_access")) return true;
+        }
+    }
+    return false;
+}
+
 /// Checker/grid-текстура пола как в RecastDemo (GLCheckerTexture): 64x64, линия
 /// сетки (col0) на x==0||y==0, иначе заливка (col1). Мип-уровни строятся вручную,
 /// чтобы линии сетки оставались видимыми на расстоянии. REPEAT-обёртка.
-fn buildCheckerTexture() zgl.Texture {
+fn buildCheckerTexture(use_dsa: bool) zgl.Texture {
     const col0 = recast.debug.rgba(215, 215, 215, 255);
     const col1 = recast.debug.rgba(255, 255, 255, 255);
-    const tex = zgl.createTexture(.@"2d");
+    // DSA: glCreateTextures; классика: glGenTextures. Заливка мип-уровней идёт через
+    // классический glTexImage2D (по привязке) в обоих случаях — DSA-созданную текстуру
+    // тоже можно привязать и грузить классикой.
+    const tex = if (use_dsa) zgl.createTexture(.@"2d") else zgl.genTexture();
     zgl.bindTexture(tex, .@"2d");
 
     var data: [64 * 64]u32 = undefined;
@@ -404,10 +442,18 @@ fn buildCheckerTexture() zgl.Texture {
         }
         zgl.textureImage2D(.@"2d", level, .rgba8, size, size, .rgba, .unsigned_byte, @ptrCast(&data));
     }
-    zgl.textureParameter(tex, .min_filter, .linear_mipmap_nearest);
-    zgl.textureParameter(tex, .mag_filter, .linear);
-    zgl.textureParameter(tex, .wrap_s, .repeat);
-    zgl.textureParameter(tex, .wrap_t, .repeat);
+    // DSA: glTextureParameteri(tex,…); классика: glTexParameteri(target,…) по привязке.
+    if (use_dsa) {
+        zgl.textureParameter(tex, .min_filter, .linear_mipmap_nearest);
+        zgl.textureParameter(tex, .mag_filter, .linear);
+        zgl.textureParameter(tex, .wrap_s, .repeat);
+        zgl.textureParameter(tex, .wrap_t, .repeat);
+    } else {
+        zgl.texParameter(.@"2d", .min_filter, .linear_mipmap_nearest);
+        zgl.texParameter(.@"2d", .mag_filter, .linear);
+        zgl.texParameter(.@"2d", .wrap_s, .repeat);
+        zgl.texParameter(.@"2d", .wrap_t, .repeat);
+    }
     zgl.bindTexture(.invalid, .@"2d");
     return tex;
 }

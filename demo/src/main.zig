@@ -74,8 +74,16 @@ pub fn main(main_init: std.process.Init) !void {
     zglfw.swapInterval(0); // драйверный vsync busy-wait жжёт CPU -> кап вручную ниже
 
     // GL-функции для нашего собственного 3D-рендера.
+    // НЕ `try`: zgl.loadExtensions грузит ВЕСЬ набор GL до 4.6 и возвращает ошибку,
+    // если ХОТЬ ОДНА функция не найдена через wglGetProcAddress. На драйверах без
+    // GL 4.5 (Intel/старые GPU) отсутствуют robustness-функции (glGetnTexImage,
+    // glGetnUniformdv, …), которые мы НЕ используем — но `try` ронял весь демо на
+    // старте. Игнорируем: все нужные нам функции (GL 3.3/4.1 core: VBO/shader/texture/
+    // draw) грузятся независимо; недостающие 4.2+ просто остаются незагруженными.
     const proc: zglfw.GlProc = undefined;
-    try zgl.loadExtensions(proc, glGetProcAddress);
+    zgl.loadExtensions(proc, glGetProcAddress) catch |err| {
+        std.debug.print("[GL] zgl.loadExtensions: {s} — some GL >4.1 functions are unavailable on this driver (harmless: the demo does not use them; only core GL 3.3/4.1 is required)\n", .{@errorName(err)});
+    };
 
     // ВАЖНО: ставим свой scroll-колбэк (камера) ДО Backend.init. Бэкенд dvui
     // сохранит его как userScrollCallback и будет чейнить непотреблённый скролл

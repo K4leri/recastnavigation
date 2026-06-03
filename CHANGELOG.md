@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 _No unreleased changes._
 
+## [0.1.7] - 2026-06-03
+
+### Fixed
+- **Demo now runs on GPUs without OpenGL 4.5** (reported: "entry point
+  glGetnTexImage not found!" on a GL 4.1 driver). Two independent causes:
+  1. `zgl.loadExtensions` resolves the *entire* GL set up to 4.6 via
+     `wglGetProcAddress` and errors if **any** entry point is missing; the demo
+     called it with `try`, so a driver lacking the unused GL 4.5 robustness
+     functions (`glGetnTexImage`, `glGetnUniformdv`, …) was killed at startup.
+     The error is now ignored — every function the demo actually needs loads
+     independently. (`demo/src/main.zig`)
+  2. The 3D debug renderer used zgl wrappers that map to **GL 4.5 Direct State
+     Access** (`createBuffer`→`glCreateBuffers`, `createVertexArray`→
+     `glCreateVertexArrays`, `createTexture`→`glCreateTextures`,
+     `textureParameter`→`glTextureParameteri`). On a 4.1 driver those are null,
+     so the demo would have crashed at renderer init even after fix (1). They are
+     now behind a runtime `hasDSA()` check (GL ≥ 4.5 or `GL_ARB_direct_state_access`):
+     DSA is used where available, with a classic core GL 3.3 fallback
+     (`glGen*`+bind / `glTexParameteri`) otherwise. The chosen path is logged at
+     startup (`[GL] DSA=yes/no`). Verified by a full per-call GL-version audit:
+     the only remaining >3.3 calls are `glProgramUniform*` (GL 4.1 core), which
+     the reporting driver supports. (`demo/src/debug_draw_gl.zig`)
+
+### Performance
+- Comptime-unrolled the fixed 4-direction loops in `getHeightData`,
+  `erodeWalkableArea` and `medianFilterWalkableArea` (output-identical micro-opt).
+  (`src/recast/detail.zig`, `src/recast/area.zig`)
+
+### Changed
+- Crowd: `sampleVelocityAdaptive` now uses `usize` for `ndivs`/`nrings`
+  directly, dropping 4 redundant casts (byte-identical). (`src/detour_crowd/obstacle_avoidance.zig`)
+
 ## [0.1.6] - 2026-06-03
 
 ### Added
@@ -197,7 +229,8 @@ Related bug investigations: `docs/bug_fixes/github_issues/`
 - `Fixed` — bug fixes
 - `Security` — vulnerability fixes
 
-[Unreleased]: https://github.com/K4leri/recastnavigation/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/K4leri/recastnavigation/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/K4leri/recastnavigation/releases/tag/v0.1.7
 [0.1.6]: https://github.com/K4leri/recastnavigation/releases/tag/v0.1.6
 [0.1.5]: https://github.com/K4leri/recastnavigation/releases/tag/v0.1.5
 [0.1.4]: https://github.com/K4leri/recastnavigation/releases/tag/v0.1.4
