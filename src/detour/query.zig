@@ -838,7 +838,11 @@ pub const NavMeshQuery = struct {
             const best_ref = best_node.id;
             var best_tile: ?*const MeshTile = null;
             var best_poly: ?*const Poly = null;
-            nav.getTileAndPolyByRefUnsafe(best_ref, &best_tile, &best_poly);
+            {
+                const r = nav.getTileAndPolyByRef(best_ref) catch continue;
+                best_tile = r.tile;
+                best_poly = r.poly;
+            }
 
             // Get parent poly
             var parent_ref: PolyRef = 0;
@@ -848,7 +852,9 @@ pub const NavMeshQuery = struct {
                 const parent_node = node_pool.getNodeAtIdx(best_node.pidx);
                 if (parent_node) |pn| {
                     parent_ref = pn.id;
-                    nav.getTileAndPolyByRefUnsafe(parent_ref, &parent_tile, &parent_poly);
+                    const r = nav.getTileAndPolyByRef(parent_ref) catch continue;
+                    parent_tile = r.tile;
+                    parent_poly = r.poly;
                 }
             }
 
@@ -863,7 +869,11 @@ pub const NavMeshQuery = struct {
                 // Get neighbour poly and tile
                 var neighbour_tile: ?*const MeshTile = null;
                 var neighbour_poly: ?*const Poly = null;
-                nav.getTileAndPolyByRefUnsafe(neighbour_ref, &neighbour_tile, &neighbour_poly);
+                {
+                    const r = nav.getTileAndPolyByRef(neighbour_ref) catch continue;
+                    neighbour_tile = r.tile;
+                    neighbour_poly = r.poly;
+                }
 
                 // Check filter
                 if (!filter.passFilter(neighbour_ref, neighbour_tile.?, neighbour_poly.?)) continue;
@@ -1403,7 +1413,11 @@ pub const NavMeshQuery = struct {
             const cur_ref = cur_node.id;
             var cur_tile: ?*const MeshTile = null;
             var cur_poly: ?*const Poly = null;
-            nav.getTileAndPolyByRefUnsafe(cur_ref, &cur_tile, &cur_poly);
+            {
+                const r = nav.getTileAndPolyByRef(cur_ref) catch continue;
+                cur_tile = r.tile;
+                cur_poly = r.poly;
+            }
 
             // Collect vertices
             const nverts = cur_poly.?.vert_count;
@@ -1445,7 +1459,11 @@ pub const NavMeshQuery = struct {
                             if (link.ref != 0) {
                                 var nei_tile: ?*const MeshTile = null;
                                 var nei_poly: ?*const Poly = null;
-                                nav.getTileAndPolyByRefUnsafe(link.ref, &nei_tile, &nei_poly);
+                                {
+                                    const r = nav.getTileAndPolyByRef(link.ref) catch continue;
+                                    nei_tile = r.tile;
+                                    nei_poly = r.poly;
+                                }
                                 if (filter.passFilter(link.ref, nei_tile.?, nei_poly.?)) {
                                     if (nneis < MAX_NEIS) {
                                         neis[nneis] = link.ref;
@@ -1552,13 +1570,10 @@ pub const NavMeshQuery = struct {
         hit.path_count = 0;
         hit.path_cost = 0;
 
-        // Validate input
-        const valid_start = self.isValidPolyRef(start_ref, filter);
-        const finite_start = math.Vec3.fromArray(start_pos).isFinite();
-        const finite_end = math.Vec3.fromArray(end_pos).isFinite();
-        const valid_prev = (prev_ref == 0 or self.isValidPolyRef(prev_ref, filter));
-
-        if (!valid_start or !finite_start or !finite_end or !valid_prev) {
+        // Validate input. start_ref/prev_ref validity + filter are established by
+        // the single getTileAndPolyByRef below (result reused) — no second decode.
+        // Only the cheap finiteness check stays up front.
+        if (!math.Vec3.fromArray(start_pos).isFinite() or !math.Vec3.fromArray(end_pos).isFinite()) {
             return common.Status{ .failure = true, .invalid_param = true };
         }
 
@@ -1585,14 +1600,22 @@ pub const NavMeshQuery = struct {
 
         var prev_ref_mut = prev_ref;
         var cur_ref = start_ref;
-        nav.getTileAndPolyByRefUnsafe(cur_ref, &tile, &poly);
+        {
+            const r = nav.getTileAndPolyByRef(cur_ref) catch return common.Status{ .failure = true, .invalid_param = true };
+            if (!filter.passFilter(cur_ref, r.tile, r.poly)) return common.Status{ .failure = true, .invalid_param = true };
+            tile = r.tile;
+            poly = r.poly;
+        }
         next_tile = tile;
         next_poly = poly;
         prev_tile = tile;
         prev_poly = poly;
 
         if (prev_ref != 0) {
-            nav.getTileAndPolyByRefUnsafe(prev_ref, &prev_tile, &prev_poly);
+            const r = nav.getTileAndPolyByRef(prev_ref) catch return common.Status{ .failure = true, .invalid_param = true };
+            if (!filter.passFilter(prev_ref, r.tile, r.poly)) return common.Status{ .failure = true, .invalid_param = true };
+            prev_tile = r.tile;
+            prev_poly = r.poly;
         }
 
         while (cur_ref != 0) {
@@ -1658,7 +1681,11 @@ pub const NavMeshQuery = struct {
                 }
 
                 // Get pointer to the next polygon
-                nav.getTileAndPolyByRefUnsafe(link.ref, &next_tile, &next_poly);
+                {
+                    const r = nav.getTileAndPolyByRef(link.ref) catch continue;
+                    next_tile = r.tile;
+                    next_poly = r.poly;
+                }
 
                 // Skip off-mesh connections
                 if (next_poly.?.getType() == .offmesh_connection) {
@@ -1849,7 +1876,11 @@ pub const NavMeshQuery = struct {
             const best_ref = best_node.id;
             var best_tile: ?*const MeshTile = null;
             var best_poly: ?*const Poly = null;
-            nav.getTileAndPolyByRefUnsafe(best_ref, &best_tile, &best_poly);
+            {
+                const r = nav.getTileAndPolyByRef(best_ref) catch continue;
+                best_tile = r.tile;
+                best_poly = r.poly;
+            }
 
             // Get parent poly and tile
             var parent_ref: PolyRef = 0;
@@ -1862,7 +1893,9 @@ pub const NavMeshQuery = struct {
                 }
             }
             if (parent_ref != 0) {
-                nav.getTileAndPolyByRefUnsafe(parent_ref, &parent_tile, &parent_poly);
+                const r = nav.getTileAndPolyByRef(parent_ref) catch continue;
+                parent_tile = r.tile;
+                parent_poly = r.poly;
             }
 
             // Hit test walls
@@ -1881,12 +1914,11 @@ pub const NavMeshQuery = struct {
                         const link = &best_tile.?.links[k];
                         if (link.edge == j) {
                             if (link.ref != 0) {
-                                var nei_tile: ?*const MeshTile = null;
-                                var nei_poly: ?*const Poly = null;
-                                nav.getTileAndPolyByRefUnsafe(link.ref, &nei_tile, &nei_poly);
-                                if (filter.passFilter(link.ref, nei_tile.?, nei_poly.?)) {
-                                    solid = false;
-                                }
+                                if (nav.getTileAndPolyByRef(link.ref)) |r| {
+                                    if (filter.passFilter(link.ref, r.tile, r.poly)) {
+                                        solid = false;
+                                    }
+                                } else |_| {}
                             }
                             break;
                         }
@@ -1934,7 +1966,11 @@ pub const NavMeshQuery = struct {
                 // Expand to neighbour
                 var neighbour_tile: ?*const MeshTile = null;
                 var neighbour_poly: ?*const Poly = null;
-                nav.getTileAndPolyByRefUnsafe(neighbour_ref, &neighbour_tile, &neighbour_poly);
+                {
+                    const r = nav.getTileAndPolyByRef(neighbour_ref) catch continue;
+                    neighbour_tile = r.tile;
+                    neighbour_poly = r.poly;
+                }
 
                 // Skip off-mesh connections
                 if (neighbour_poly.?.getType() == .offmesh_connection) {
@@ -2092,7 +2128,11 @@ pub const NavMeshQuery = struct {
             const cur_ref = cur_node.id;
             var cur_tile: ?*const MeshTile = null;
             var cur_poly: ?*const Poly = null;
-            nav.getTileAndPolyByRefUnsafe(cur_ref, &cur_tile, &cur_poly);
+            {
+                const r = nav.getTileAndPolyByRef(cur_ref) catch continue;
+                cur_tile = r.tile;
+                cur_poly = r.poly;
+            }
 
             // Iterate through neighbours
             var link_idx = cur_poly.?.first_link;
@@ -2113,7 +2153,11 @@ pub const NavMeshQuery = struct {
                 // Expand to neighbour
                 var neighbour_tile: ?*const MeshTile = null;
                 var neighbour_poly: ?*const Poly = null;
-                nav.getTileAndPolyByRefUnsafe(neighbour_ref, &neighbour_tile, &neighbour_poly);
+                {
+                    const r = nav.getTileAndPolyByRef(neighbour_ref) catch continue;
+                    neighbour_tile = r.tile;
+                    neighbour_poly = r.poly;
+                }
 
                 // Skip off-mesh connections
                 if (neighbour_poly.?.getType() == .offmesh_connection) continue;
@@ -2169,7 +2213,11 @@ pub const NavMeshQuery = struct {
                     // Potentially overlapping
                     var past_tile: ?*const MeshTile = null;
                     var past_poly: ?*const Poly = null;
-                    nav.getTileAndPolyByRefUnsafe(past_ref, &past_tile, &past_poly);
+                    {
+                        const r = nav.getTileAndPolyByRef(past_ref) catch continue;
+                        past_tile = r.tile;
+                        past_poly = r.poly;
+                    }
 
                     // Get vertices and test overlap
                     const npb = past_poly.?.vert_count;
@@ -2367,12 +2415,14 @@ pub const NavMeshQuery = struct {
         const node_pool = self.node_pool orelse return error.NoNodePool;
         const open_list = self.open_list orelse return error.NoOpenList;
 
-        if (!nav.isValidPolyRef(start_ref) or !math.visfinite(center_pos) or
+        if (!math.visfinite(center_pos) or
             max_radius < 0 or !math.isfinite(max_radius))
         {
             return error.InvalidParam;
         }
 
+        // start_ref validity established by this fetch (was also checked via
+        // isValidPolyRef above — redundant second decode).
         const start_r = nav.getTileAndPolyByRef(start_ref) catch return error.InvalidParam;
         if (!filter.passFilter(start_ref, start_r.tile, start_r.poly)) return error.InvalidParam;
 
@@ -2444,7 +2494,11 @@ pub const NavMeshQuery = struct {
 
                 var neighbour_tile: ?*const MeshTile = null;
                 var neighbour_poly: ?*const Poly = null;
-                nav.getTileAndPolyByRefUnsafe(neighbour_ref, &neighbour_tile, &neighbour_poly);
+                {
+                    const r = nav.getTileAndPolyByRef(neighbour_ref) catch continue;
+                    neighbour_tile = r.tile;
+                    neighbour_poly = r.poly;
+                }
 
                 if (!filter.passFilter(neighbour_ref, neighbour_tile.?, neighbour_poly.?)) continue;
 
@@ -2643,7 +2697,11 @@ pub const NavMeshQuery = struct {
             const best_ref = best_node.id;
             var best_tile_o: ?*const MeshTile = null;
             var best_poly_o: ?*const Poly = null;
-            nav.getTileAndPolyByRefUnsafe(best_ref, &best_tile_o, &best_poly_o);
+            {
+                const r = nav.getTileAndPolyByRef(best_ref) catch continue;
+                best_tile_o = r.tile;
+                best_poly_o = r.poly;
+            }
             const best_tile = best_tile_o.?;
             const best_poly = best_poly_o.?;
 
@@ -2654,7 +2712,11 @@ pub const NavMeshQuery = struct {
             if (best_node.pidx != 0) {
                 const parent_node = node_pool.getNodeAtIdxConst(best_node.pidx).?;
                 parent_ref = parent_node.id;
-                nav.getTileAndPolyByRefUnsafe(parent_ref, &parent_tile, &parent_poly);
+                {
+                    const r = nav.getTileAndPolyByRef(parent_ref) catch continue;
+                    parent_tile = r.tile;
+                    parent_poly = r.poly;
+                }
             }
 
             // Add to result
@@ -2684,7 +2746,11 @@ pub const NavMeshQuery = struct {
                 // Expand to neighbour
                 var neighbour_tile: ?*const MeshTile = null;
                 var neighbour_poly: ?*const Poly = null;
-                nav.getTileAndPolyByRefUnsafe(neighbour_ref, &neighbour_tile, &neighbour_poly);
+                {
+                    const r = nav.getTileAndPolyByRef(neighbour_ref) catch continue;
+                    neighbour_tile = r.tile;
+                    neighbour_poly = r.poly;
+                }
 
                 // Do not advance if the polygon is excluded by the filter
                 if (!filter.passFilter(neighbour_ref, neighbour_tile.?, neighbour_poly.?)) continue;
@@ -2829,7 +2895,11 @@ pub const NavMeshQuery = struct {
             const best_ref = best_node.id;
             var best_tile_o: ?*const MeshTile = null;
             var best_poly_o: ?*const Poly = null;
-            nav.getTileAndPolyByRefUnsafe(best_ref, &best_tile_o, &best_poly_o);
+            {
+                const r = nav.getTileAndPolyByRef(best_ref) catch continue;
+                best_tile_o = r.tile;
+                best_poly_o = r.poly;
+            }
             const best_tile = best_tile_o.?;
             const best_poly = best_poly_o.?;
 
@@ -2840,7 +2910,11 @@ pub const NavMeshQuery = struct {
             if (best_node.pidx != 0) {
                 const parent_node = node_pool.getNodeAtIdxConst(best_node.pidx).?;
                 parent_ref = parent_node.id;
-                nav.getTileAndPolyByRefUnsafe(parent_ref, &parent_tile, &parent_poly);
+                {
+                    const r = nav.getTileAndPolyByRef(parent_ref) catch continue;
+                    parent_tile = r.tile;
+                    parent_poly = r.poly;
+                }
             }
 
             // Add to result
@@ -2870,7 +2944,11 @@ pub const NavMeshQuery = struct {
                 // Expand to neighbour
                 var neighbour_tile: ?*const MeshTile = null;
                 var neighbour_poly: ?*const Poly = null;
-                nav.getTileAndPolyByRefUnsafe(neighbour_ref, &neighbour_tile, &neighbour_poly);
+                {
+                    const r = nav.getTileAndPolyByRef(neighbour_ref) catch continue;
+                    neighbour_tile = r.tile;
+                    neighbour_poly = r.poly;
+                }
 
                 // Do not advance if the polygon is excluded by the filter
                 if (!filter.passFilter(neighbour_ref, neighbour_tile.?, neighbour_poly.?)) continue;
@@ -3070,7 +3148,10 @@ pub const NavMeshQuery = struct {
             const best_ref = best_node.id;
             var best_tile: ?*const MeshTile = null;
             var best_poly: ?*const Poly = null;
-            nav.getTileAndPolyByRefUnsafe(best_ref, &best_tile, &best_poly);
+            if (nav.getTileAndPolyByRef(best_ref)) |r| {
+                best_tile = r.tile;
+                best_poly = r.poly;
+            } else |_| {}
 
             if (best_tile == null or best_poly == null) {
                 // The polygon has disappeared during the sliced query, fail
@@ -3099,7 +3180,11 @@ pub const NavMeshQuery = struct {
                 // Get neighbour poly and tile
                 var neighbour_tile: ?*const MeshTile = null;
                 var neighbour_poly: ?*const Poly = null;
-                nav.getTileAndPolyByRefUnsafe(neighbour_ref, &neighbour_tile, &neighbour_poly);
+                {
+                    const r = nav.getTileAndPolyByRef(neighbour_ref) catch continue;
+                    neighbour_tile = r.tile;
+                    neighbour_poly = r.poly;
+                }
 
                 if (!filter.passFilter(neighbour_ref, neighbour_tile.?, neighbour_poly.?)) continue;
 
@@ -3628,13 +3713,11 @@ pub fn getPolyWallSegments(
                 const link = &tile_ptr.links[k];
                 if (link.edge == @as(u8, @intCast(j))) {
                     if (link.ref != 0) {
-                        var nei_tile: ?*const navmesh.MeshTile = null;
-                        var nei_poly: ?*const navmesh.Poly = null;
-                        nav.getTileAndPolyByRefUnsafe(link.ref, &nei_tile, &nei_poly);
-
-                        if (filter.passFilter(link.ref, nei_tile.?, nei_poly.?)) {
-                            insertInterval(&ints, &nints, @intCast(link.bmin), @intCast(link.bmax), link.ref);
-                        }
+                        if (nav.getTileAndPolyByRef(link.ref)) |r| {
+                            if (filter.passFilter(link.ref, r.tile, r.poly)) {
+                                insertInterval(&ints, &nints, @intCast(link.bmin), @intCast(link.bmax), link.ref);
+                            }
+                        } else |_| {}
                     }
                 }
                 k = link.next;
