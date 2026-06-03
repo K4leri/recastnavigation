@@ -338,36 +338,36 @@ fn floodRegion(
 
         // Check if any neighbor already has a valid region
         var ar: u16 = 0;
-        // inline for (dir comptime) + ar_found flag replaces a runtime `break`
-        // (inline for forbids runtime break/continue); the `continue`s are folded into
-        // nested ifs. Output-identical to the upstream 4-dir neighbor scan.
-        var ar_found = false;
-        inline for (0..4) |dir_i| {
+        // Runtime dir loop with genuine early `break` (1:1 with upstream
+        // RecastRegion.cpp floodRegion, which breaks the dir loop as soon as it
+        // finds an adjacent region with a different id). getDirOffsetX/Y are cheap
+        // table lookups, so a runtime dir is fine. Output-identical to the prior
+        // inline-for+flag form.
+        for (0..4) |dir_i| {
             const dir_u2: u2 = @intCast(dir_i);
-            if (!ar_found and cs.getCon(dir_u2) != NOT_CONNECTED) {
-                const ax = cx + comptime heightfield_mod.getDirOffsetX(dir_u2);
-                const ay = cy + comptime heightfield_mod.getDirOffsetY(dir_u2);
+            if (cs.getCon(dir_u2) != NOT_CONNECTED) {
+                const ax = cx + heightfield_mod.getDirOffsetX(dir_u2);
+                const ay = cy + heightfield_mod.getDirOffsetY(dir_u2);
                 const ai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax + ay * w))].index + cs.getCon(dir_u2)));
                 if (chf.areas[ai] == area) {
                     const nr = src_reg[ai];
                     if ((nr & BORDER_REG) == 0) {
                         if (nr != 0 and nr != r) {
                             ar = nr;
-                            ar_found = true;
-                        } else {
-                            const as = chf.spans[ai];
-                            // Check diagonal neighbor
-                            const dir2: u2 = comptime @intCast((dir_i + 1) & 0x3);
-                            if (as.getCon(dir2) != NOT_CONNECTED) {
-                                const ax2 = ax + comptime heightfield_mod.getDirOffsetX(dir2);
-                                const ay2 = ay + comptime heightfield_mod.getDirOffsetY(dir2);
-                                const ai2 = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax2 + ay2 * w))].index + as.getCon(dir2)));
-                                if (chf.areas[ai2] == area) {
-                                    const nr2 = src_reg[ai2];
-                                    if (nr2 != 0 and nr2 != r) {
-                                        ar = nr2;
-                                        ar_found = true;
-                                    }
+                            break;
+                        }
+                        const as = chf.spans[ai];
+                        // Check diagonal neighbor
+                        const dir2: u2 = @intCast((dir_i + 1) & 0x3);
+                        if (as.getCon(dir2) != NOT_CONNECTED) {
+                            const ax2 = ax + heightfield_mod.getDirOffsetX(dir2);
+                            const ay2 = ay + heightfield_mod.getDirOffsetY(dir2);
+                            const ai2 = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax2 + ay2 * w))].index + as.getCon(dir2)));
+                            if (chf.areas[ai2] == area) {
+                                const nr2 = src_reg[ai2];
+                                if (nr2 != 0 and nr2 != r) {
+                                    ar = nr2;
+                                    break;
                                 }
                             }
                         }
@@ -411,7 +411,7 @@ fn expandRegions(
     src_dist: []u16,
     stack: *std.array_list.Managed(LevelStackEntry),
     fill_stack: bool,
-    allocator: std.mem.Allocator,
+    dirty_entries: *std.array_list.Managed(DirtyEntry),
 ) !void {
     const w = chf.width;
     const h = chf.height;
@@ -445,8 +445,9 @@ fn expandRegions(
         }
     }
 
-    var dirty_entries = std.array_list.Managed(DirtyEntry).init(allocator);
-    defer dirty_entries.deinit();
+    // Reuse caller-owned scratch (hoisted out of the per-level call to avoid
+    // repeated alloc/free). Lifetime-only change; output-identical.
+    dirty_entries.clearRetainingCapacity();
 
     var iter: i32 = 0;
     while (stack.items.len > 0) {
@@ -1147,6 +1148,12 @@ pub fn buildRegions(
     defer stack.deinit();
     try stack.ensureTotalCapacity(256);
 
+    // Hoisted scratch for expandRegions (was alloc/free'd per call, many times
+    // per watershed level). Reused via clearRetainingCapacity inside the callee.
+    var dirty_entries = std.array_list.Managed(DirtyEntry).init(allocator);
+    defer dirty_entries.deinit();
+    try dirty_entries.ensureTotalCapacity(256);
+
     var s_id: i32 = -1;
 
     // Watershed partitioning with multi-stack system
@@ -1166,7 +1173,7 @@ pub fn buildRegions(
         const curr_stack_id: usize = @intCast(s_id);
 
         // Expand current regions
-        try expandRegions(expand_iters, level, chf, src_reg, src_dist, &lvl_stacks[curr_stack_id], false, allocator);
+        try expandRegions(expand_iters, level, chf, src_reg, src_dist, &lvl_stacks[curr_stack_id], false, &dirty_entries);
 
         // Flood fill new regions
         for (lvl_stacks[curr_stack_id].items) |current| {
@@ -1189,7 +1196,7 @@ pub fn buildRegions(
     }
 
     // Expand current regions to fill remaining gaps
-    try expandRegions(expand_iters * 8, 0, chf, src_reg, src_dist, &stack, true, allocator);
+    try expandRegions(expand_iters * 8, 0, chf, src_reg, src_dist, &stack, true, &dirty_entries);
 
     ctx.log(.progress, "buildRegions: max_distance={d}, level_start={d}", .{ chf.max_distance, (chf.max_distance +| 1) & ~@as(u16, 1) });
     ctx.log(.progress, "buildRegions: Watershed created {d} regions (before merging)", .{region_id - 1});

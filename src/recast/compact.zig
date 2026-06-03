@@ -16,10 +16,10 @@ const MAX_HEIGHTFIELD_HEIGHT: i32 = 0xffff;
 
 /// All four 6-bit direction slots packed with NOT_CONNECTED (0x3f) — the initial
 /// `con` value before any walkable neighbor is found in the connect loop.
-const ALL_DIRS_NOT_CONNECTED: u24 = (@as(u24, NOT_CONNECTED) << 18) |
-    (@as(u24, NOT_CONNECTED) << 12) |
-    (@as(u24, NOT_CONNECTED) << 6) |
-    @as(u24, NOT_CONNECTED);
+const ALL_DIRS_NOT_CONNECTED: u32 = (@as(u32, NOT_CONNECTED) << 18) |
+    (@as(u32, NOT_CONNECTED) << 12) |
+    (@as(u32, NOT_CONNECTED) << 6) |
+    @as(u32, NOT_CONNECTED);
 
 /// Returns the number of walkable spans in the heightfield.
 pub fn getHeightFieldSpanCount(ctx: *const Context, heightfield: *const Heightfield) usize {
@@ -159,59 +159,60 @@ pub fn buildCompactHeightfield(
                 // (8 RMWs/span); building con locally and storing once is a single
                 // masked store. Every slot starts at NOT_CONNECTED so unmatched
                 // directions keep the exact bits the old code wrote — output-identical.
-                var con_acc: u24 = ALL_DIRS_NOT_CONNECTED;
+                var con_acc: u32 = ALL_DIRS_NOT_CONNECTED;
 
-                // Check all 4 directions
-                var dir: u3 = 0;
-                while (dir < 4) : (dir += 1) {
-                    const dir_u2: u2 = @intCast(dir);
-
-                    const neighbor_x = x + heightfield_mod.getDirOffsetX(dir_u2);
-                    const neighbor_z = z + heightfield_mod.getDirOffsetY(dir_u2);
+                // Check all 4 directions. `inline for` makes `shift`/`mask`
+                // comptime constants (0/6/12/18 → 0x3f/0xfc0/0x3f000/0xfc0000).
+                // `inline for` forbids runtime break/continue, so the per-span
+                // search uses a `found` flag and an explicit early-out check to
+                // reproduce the old "first matching span wins, then stop" semantics
+                // EXACTLY (the same span index is selected per direction).
+                inline for ([4]u2{ 0, 1, 2, 3 }) |dir| {
+                    const neighbor_x = x + heightfield_mod.getDirOffsetX(dir);
+                    const neighbor_z = z + heightfield_mod.getDirOffsetY(dir);
 
                     // First check that the neighbor cell is in bounds
-                    if (neighbor_x < 0 or neighbor_z < 0 or neighbor_x >= x_size or neighbor_z >= z_size) {
-                        continue;
-                    }
+                    if (!(neighbor_x < 0 or neighbor_z < 0 or neighbor_x >= x_size or neighbor_z >= z_size)) {
+                        // Iterate over all neighbor spans and check if any is accessible from current cell
+                        const neighbor_cell_idx = @as(usize, @intCast(neighbor_x + neighbor_z * z_stride));
+                        const neighbor_cell = compact_hf.cells[neighbor_cell_idx];
 
-                    // Iterate over all neighbor spans and check if any is accessible from current cell
-                    const neighbor_cell_idx = @as(usize, @intCast(neighbor_x + neighbor_z * z_stride));
-                    const neighbor_cell = compact_hf.cells[neighbor_cell_idx];
+                        const k0: usize = neighbor_cell.index;
+                        const nk = k0 + neighbor_cell.count;
+                        var k: usize = k0;
+                        var found = false;
+                        while (k < nk and !found) : (k += 1) {
+                            // Reference (not a value copy) into the packed span array,
+                            // mirroring upstream `const rcCompactSpan& neighborSpan`.
+                            const neighbor_span = &compact_hf.spans[k];
+                            const ny: i32 = neighbor_span.y;
 
-                    const k0: usize = neighbor_cell.index;
-                    const nk = k0 + neighbor_cell.count;
-                    var k: usize = k0;
-                    while (k < nk) : (k += 1) {
-                        // Reference (not a value copy) into the packed span array,
-                        // mirroring upstream `const rcCompactSpan& neighborSpan`.
-                        const neighbor_span = &compact_hf.spans[k];
-                        const ny: i32 = neighbor_span.y;
+                            const bot = @max(span_y, ny);
+                            const top = @min(span_top, ny + neighbor_span.h);
 
-                        const bot = @max(span_y, ny);
-                        const top = @min(span_top, ny + neighbor_span.h);
-
-                        // Check that the gap between the spans is walkable,
-                        // and that the climb height between the gaps is not too high.
-                        // (top - bot) is signed here, so the upstream test needs no
-                        // separate top>=bot guard.
-                        if ((top - bot) >= walkable_height and
-                            @abs(ny - span_y) <= walkable_climb)
-                        {
-                            // Mark direction as walkable
-                            const layer_index: i32 = @as(i32, @intCast(k - k0));
-                            if (layer_index < 0 or layer_index > MAX_LAYERS) {
-                                max_layer_index = @max(max_layer_index, layer_index);
-                                continue;
+                            // Check that the gap between the spans is walkable,
+                            // and that the climb height between the gaps is not too high.
+                            // (top - bot) is signed here, so the upstream test needs no
+                            // separate top>=bot guard.
+                            if ((top - bot) >= walkable_height and
+                                @abs(ny - span_y) <= walkable_climb)
+                            {
+                                // Mark direction as walkable
+                                const layer_index: i32 = @as(i32, @intCast(k - k0));
+                                if (layer_index < 0 or layer_index > MAX_LAYERS) {
+                                    max_layer_index = @max(max_layer_index, layer_index);
+                                    continue;
+                                }
+                                const shift: u5 = @as(u5, dir) * 6;
+                                const mask: u32 = @as(u32, 0x3f) << shift;
+                                con_acc = (con_acc & ~mask) |
+                                    (@as(u32, @as(u6, @intCast(layer_index))) << shift);
+                                found = true;
                             }
-                            const shift: u5 = @as(u5, dir) * 6;
-                            const mask: u24 = @as(u24, 0x3f) << shift;
-                            con_acc = (con_acc & ~mask) |
-                                (@as(u24, @as(u6, @intCast(layer_index))) << shift);
-                            break;
                         }
                     }
                 }
-                span.con = con_acc;
+                span.con = @truncate(con_acc);
             }
         }
     }

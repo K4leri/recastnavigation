@@ -262,12 +262,12 @@ pub const CompactHeightfield = struct {
 };
 
 /// Direction offsets for neighbors
-pub fn getDirOffsetX(direction: u2) i32 {
+pub inline fn getDirOffsetX(direction: u2) i32 {
     const offsets = [4]i32{ -1, 0, 1, 0 };
     return offsets[direction];
 }
 
-pub fn getDirOffsetY(direction: u2) i32 {
+pub inline fn getDirOffsetY(direction: u2) i32 {
     const offsets = [4]i32{ 0, 1, 0, -1 };
     return offsets[direction];
 }
