@@ -1,14 +1,21 @@
 const std = @import("std");
 const math = @import("../math.zig");
 const Vec3 = math.Vec3;
+const build_config = @import("build_config");
 
-/// Polygon reference type
-/// For large worlds (>16×16 km), consider changing to u64 (see documentation)
-pub const PolyRef = u32; //                                               ┐
-//                                                   should be the same vallues ┤
-/// Tile reference type                                                         │
-/// For large worlds (>16×16 km), consider changing to u64 (see documentation)  │
-pub const TileRef = u32; //                                               ┘
+/// 64-bit poly/tile refs for very large worlds (1:1 with C++ `DT_POLYREF64`).
+/// Enabled by `zig build -Dpolyref64=true`; default is 32-bit. This single
+/// switch drives BOTH the ref types below AND the salt/tile/poly bit layout +
+/// shift/mask widths in `navmesh.zig` — flipping it by hand on the type alone
+/// would silently break encode/decode (shift overflow, wrong masks).
+pub const polyref64: bool = build_config.polyref64;
+
+/// Polygon reference type — u32 (default) or u64 (`-Dpolyref64`).
+pub const PolyRef = if (polyref64) u64 else u32;
+/// Tile reference type — same width as `PolyRef`.
+pub const TileRef = PolyRef;
+/// Shift-amount type for ref-width bit shifts (u5 for u32, u6 for u64).
+pub const RefShift = std.math.Log2Int(PolyRef);
 
 /// Status code for operations
 pub const Status = packed struct {

@@ -75,7 +75,12 @@ pub const PolyDetail = struct {
 
 /// Link between polygons
 pub const Link = struct {
-    ref: PolyRef, // Neighbor reference
+    // align(4): the tile-data link section is laid out on 4-byte boundaries
+    // (align4, 1:1 with C++ dtAlign4). With 64-bit refs a natural u64 would force
+    // 8-byte struct alignment and make the `@alignCast` to `[*]Link` over a
+    // 4-aligned offset panic. Lowering ref to 4-byte alignment keeps the byte
+    // layout (ref@0, next@8, …) and the access valid (no-op for 32-bit refs).
+    ref: PolyRef align(4), // Neighbor reference
     next: u32, // Index of next link
     edge: u8, // Polygon edge that owns this link
     side: u8, // Boundary link side
@@ -286,9 +291,12 @@ pub const NavMesh = struct {
     const Self = @This();
 
     pub fn init(allocator: std.mem.Allocator, params: NavMeshParams) !Self {
-        const tile_bits: u32 = @min(math.ilog2(math.nextPow2(@intCast(params.max_tiles))), 14);
-        const poly_bits: u32 = @min(math.ilog2(math.nextPow2(@intCast(params.max_polys))), 20);
-        const salt_bits: u32 = @min(32 - tile_bits - poly_bits, 16);
+        // Salt/tile/poly bit layout. With 64-bit refs (DT_POLYREF64) the layout is
+        // fixed at salt=16 / tile=28 / poly=20 (= 64), 1:1 with C++. With 32-bit
+        // refs it is derived from the requested tile/poly counts (fits in 32).
+        const tile_bits: u32 = if (common.polyref64) 28 else @min(math.ilog2(math.nextPow2(@intCast(params.max_tiles))), 14);
+        const poly_bits: u32 = if (common.polyref64) 20 else @min(math.ilog2(math.nextPow2(@intCast(params.max_polys))), 20);
+        const salt_bits: u32 = if (common.polyref64) 16 else @min(32 - tile_bits - poly_bits, 16);
 
         const tile_lut_size = math.nextPow2(@intCast(@divTrunc(params.max_tiles, 4)));
         const pos_lookup = try allocator.alloc(?*MeshTile, tile_lut_size);
@@ -335,27 +343,30 @@ pub const NavMesh = struct {
     }
 
     pub fn encodePolyId(self: *const Self, salt: u32, it: u32, ip: u32) PolyRef {
-        const salt_shift: u5 = @intCast(self.poly_bits + self.tile_bits);
-        const tile_shift: u5 = @intCast(self.poly_bits);
+        // Shift amounts are RefShift (u5 for 32-bit refs, u6 for 64-bit).
+        const salt_shift: common.RefShift = @intCast(self.poly_bits + self.tile_bits);
+        const tile_shift: common.RefShift = @intCast(self.poly_bits);
 
         return (@as(PolyRef, salt) << salt_shift) | (@as(PolyRef, it) << tile_shift) | @as(PolyRef, ip);
     }
 
     pub fn decodePolyId(self: *const Self, ref: PolyRef) struct { salt: u32, tile: u32, poly: u32 } {
-        const salt_shift: u5 = @intCast(self.poly_bits + self.tile_bits);
-        const tile_shift: u5 = @intCast(self.poly_bits);
-        const salt_bits_u5: u5 = @intCast(self.salt_bits);
-        const tile_bits_u5: u5 = @intCast(self.tile_bits);
-        const poly_bits_u5: u5 = @intCast(self.poly_bits);
+        const salt_shift: common.RefShift = @intCast(self.poly_bits + self.tile_bits);
+        const tile_shift: common.RefShift = @intCast(self.poly_bits);
+        const salt_bw: common.RefShift = @intCast(self.salt_bits);
+        const tile_bw: common.RefShift = @intCast(self.tile_bits);
+        const poly_bw: common.RefShift = @intCast(self.poly_bits);
 
-        const salt_mask: u32 = (@as(u32, 1) << salt_bits_u5) - 1;
-        const tile_mask: u32 = (@as(u32, 1) << tile_bits_u5) - 1;
-        const poly_mask: u32 = (@as(u32, 1) << poly_bits_u5) - 1;
+        // Masks are ref-width (u32 or u64); each field still fits in u32
+        // (salt<=16, tile<=28, poly<=20 bits) so the decoded values are @intCast back.
+        const salt_mask: PolyRef = (@as(PolyRef, 1) << salt_bw) - 1;
+        const tile_mask: PolyRef = (@as(PolyRef, 1) << tile_bw) - 1;
+        const poly_mask: PolyRef = (@as(PolyRef, 1) << poly_bw) - 1;
 
         return .{
-            .salt = (ref >> salt_shift) & salt_mask,
-            .tile = (ref >> tile_shift) & tile_mask,
-            .poly = ref & poly_mask,
+            .salt = @intCast((ref >> salt_shift) & salt_mask),
+            .tile = @intCast((ref >> tile_shift) & tile_mask),
+            .poly = @intCast(ref & poly_mask),
         };
     }
 

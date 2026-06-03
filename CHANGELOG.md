@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-_No unreleased changes._
+### Added
+- **64-bit poly/tile refs for very large worlds** (`zig build -Dpolyref64=true`),
+  the comptime equivalent of the C++ `DT_POLYREF64` compile flag. A single build
+  option flips `PolyRef`/`TileRef`/`CompressedTileRef` from `u32` to `u64` and the
+  salt/tile/poly bit layout (DT_POLYREF64: salt 16 / tile 28 / poly 20), deriving
+  the shift/mask widths from the ref type — no hand-editing of the source. Default
+  stays 32-bit. The whole thing is comptime-folded (no runtime cost). Note: the
+  tile-data layout differs between the two modes (the `Link` section grows), so
+  navmeshes are not interchangeable across `-Dpolyref64`; pick the mode at build
+  time and regenerate. (`build.zig`, `src/detour/common.zig`, `src/detour/navmesh.zig`,
+  `src/detour_tilecache/tilecache.zig`)
 
 ## [0.1.7] - 2026-06-03
 

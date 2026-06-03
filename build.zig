@@ -14,12 +14,21 @@ pub fn build(b: *std.Build) void {
     // -Ddemo-optimize=Debug; для максимума скорости (на свой риск) ReleaseFast.
     const demo_optimize = b.option(std.builtin.OptimizeMode, "demo-optimize", "Optimize mode for demo (default ReleaseSafe)") orelse .ReleaseSafe;
 
+    // 64-bit poly/tile refs for very large worlds (1:1 with the C++ DT_POLYREF64
+    // compile flag). Default: 32-bit. `zig build -Dpolyref64=true`. Threaded into
+    // the library as the `build_config` module (read by src/detour/common.zig).
+    const polyref64 = b.option(bool, "polyref64", "Use 64-bit dtPolyRef/dtTileRef (DT_POLYREF64) for very large worlds (default: 32-bit)") orelse false;
+    const build_config = b.addOptions();
+    build_config.addOption(bool, "polyref64", polyref64);
+    const config_mod = build_config.createModule();
+
     // Main library module
     const recast_nav = b.addModule("recast-nav", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
     });
+    recast_nav.addImport("build_config", config_mod);
 
     // Production library with safety checks enabled (ReleaseSafe mode)
     // This provides performance optimizations while maintaining runtime safety
@@ -28,6 +37,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = .ReleaseSafe, // Optimized but with safety checks
     });
+    recast_nav_safe.addImport("build_config", config_mod);
 
     const lib_safe = b.addLibrary(.{
         .name = "recast-nav-safe",

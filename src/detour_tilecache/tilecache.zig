@@ -16,7 +16,10 @@ pub const TileCachePolyMesh = builder_mod.TileCachePolyMesh;
 
 // Type aliases
 pub const ObstacleRef = u32;
-pub const CompressedTileRef = u32;
+/// Compressed-tile reference. u32 by default; u64 with `-Dpolyref64` (kept in sync
+/// with the navmesh PolyRef width for large-world consistency — note upstream C++
+/// keeps `dtCompressedTileRef` at 32-bit regardless of DT_POLYREF64).
+pub const CompressedTileRef = if (common.polyref64) u64 else u32;
 
 // Constants
 pub const MAX_TOUCHED_TILES: usize = 8;
@@ -271,8 +274,10 @@ pub const TileCache = struct {
 
         // Initialize ID generator values
         self.tile_bits = @intCast(math.ilog2(math.nextPow2(@as(u32, @intCast(max_tiles)))));
-        // Only allow 31 salt bits (overflow prevention)
-        self.salt_bits = @min(31, 32 - self.tile_bits);
+        // Salt is kept <=31 bits (so decoded salt/tile still fit u32). With 64-bit
+        // refs the extra width goes to tile capacity, not salt.
+        const total_bits: u32 = if (common.polyref64) 64 else 32;
+        self.salt_bits = @min(31, total_bits - self.tile_bits);
 
         if (self.salt_bits < 10) {
             return error.InvalidParams;
