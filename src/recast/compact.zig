@@ -83,7 +83,7 @@ pub fn buildCompactHeightfield(
 
     // Allocate spans
     compact_hf.spans = try compact_hf.allocator.alloc(CompactSpan, span_count);
-    @memset(compact_hf.spans, .{ .y = 0, .reg = 0, .con = 0, .h = 0 });
+    @memset(compact_hf.spans, .{ .y = 0, .reg = 0, .con = 0 });
 
     // Allocate areas
     compact_hf.areas = try compact_hf.allocator.alloc(u8, span_count);
@@ -111,15 +111,16 @@ pub fn buildCompactHeightfield(
                 const bot: i32 = @intCast(s.smax);
                 const top: i32 = if (s.next) |next| @intCast(next.smin) else MAX_HEIGHTFIELD_HEIGHT;
 
-                // Write the whole packed CompactSpan in ONE store instead of two
-                // partial-field stores (.y then .h), each of which lowers to a
-                // read-modify-write on the packed backing word. reg/con are 0 here
-                // (the connect phase overwrites con later) — byte-identical.
+                // Write the whole CompactSpan in ONE store. con now packs both the
+                // neighbor-connection bits (0-23, zero here; the connect phase fills
+                // them later) and the span height h (bits 24-31). Constructing con
+                // with h pre-shifted keeps this a single 8-byte store — byte-identical
+                // to the old { .y, .reg=0, .con=0, .h } layout.
+                const h_byte: u8 = @intCast(std.math.clamp(top - bot, 0, 0xff));
                 compact_hf.spans[current_cell_index] = .{
                     .y = @intCast(std.math.clamp(bot, 0, 0xffff)),
                     .reg = 0,
-                    .con = 0,
-                    .h = @intCast(std.math.clamp(top - bot, 0, 0xff)),
+                    .con = @as(u32, h_byte) << 24,
                 };
                 compact_hf.areas[current_cell_index] = s.area;
                 current_cell_index += 1;
@@ -151,7 +152,7 @@ pub fn buildCompactHeightfield(
                 // so the inner test is pure signed-int arithmetic — no per-neighbor
                 // re-read of the packed span and no unsigned-underflow guard.
                 const span_y: i32 = span.y;
-                const span_top: i32 = span_y + span.h;
+                const span_top: i32 = span_y + span.getH();
 
                 // Accumulate the 4 direction codes in a local u24 and write `con`
                 // ONCE after the loop. The per-direction setCon form does up to two
@@ -188,7 +189,7 @@ pub fn buildCompactHeightfield(
                             const ny: i32 = neighbor_span.y;
 
                             const bot = @max(span_y, ny);
-                            const top = @min(span_top, ny + neighbor_span.h);
+                            const top = @min(span_top, ny + neighbor_span.getH());
 
                             // Check that the gap between the spans is walkable,
                             // and that the climb height between the gaps is not too high.
@@ -212,7 +213,11 @@ pub fn buildCompactHeightfield(
                         }
                     }
                 }
-                span.con = @truncate(con_acc);
+                // con now also holds h in bits 24-31 (set at span construction
+                // above). con_acc only ever sets bits 0-23 (ALL_DIRS_NOT_CONNECTED
+                // and every per-dir slot live at shifts 0/6/12/18, max bit 23), so
+                // mask in the connection bits while PRESERVING the h byte.
+                span.con = (span.con & 0xFF000000) | (con_acc & 0x00FFFFFF);
             }
         }
     }

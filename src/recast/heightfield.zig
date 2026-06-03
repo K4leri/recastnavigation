@@ -149,37 +149,51 @@ pub const CompactCell = packed struct {
 };
 
 /// Span in compact heightfield
-pub const CompactSpan = packed struct {
-    // packed: u16+u16+u24+u8 = 64 bits = 8 bytes, matching upstream rcCompactSpan.
-    // A plain struct was 12 bytes (u24 aligns to 4), inflating the spans array ~50%
-    // and hurting cache density across every span-bound stage (distance field /
-    // compact heightfield / contours / regions): ~12-39% slower, worst on
-    // span-dense (vertical) maps.
+pub const CompactSpan = extern struct {
+    // extern: u16+u16+u32 = 64 bits = 8 bytes, byte-IDENTICAL to the old
+    // `packed { y:u16, reg:u16, con:u24, h:u8 }` (y@0, reg@2, con+h@4 as one
+    // 4-byte word). The former `h: u8` now lives in bits 24-31 of `con`.
+    //
+    // Why extern (not packed): reading the u24 `con` from a PACKED struct made
+    // LLVM load the full 8-byte qword and use `movabs` + 64-bit shifts in getCon
+    // (called in EVERY build stage). A u32 field gives a narrow native 32-bit
+    // dword load + `and`/`cmp`, matching MSVC codegen. Memory layout & output
+    // are unchanged — only the codegen for con access improves.
     y: u16, // Lower extent from heightfield base
     reg: u16, // Region ID (0 if not in region)
-    con: u24, // Packed neighbor connection data
-    h: u8, // Height of span
+    con: u32, // bits 0-23: packed neighbor connection data; bits 24-31: span height
 
     pub fn init() CompactSpan {
         return .{
             .y = 0,
             .reg = 0,
             .con = 0,
-            .h = 0,
         };
     }
 
-    /// Sets neighbor connection for direction (0-3)
+    /// Sets neighbor connection for direction (0-3). Operates on bits 0-23 only;
+    /// the h byte (bits 24-31) is preserved.
     pub fn setCon(self: *CompactSpan, direction: u2, neighbor_idx: u8) void {
         const shift: u5 = @as(u5, direction) * 6;
-        const mask: u24 = @as(u24, 0x3f) << shift;
-        self.con = (self.con & ~mask) | (@as(u24, neighbor_idx & 0x3f) << shift);
+        const mask: u32 = @as(u32, 0x3f) << shift;
+        self.con = (self.con & ~mask) | (@as(u32, neighbor_idx & 0x3f) << shift);
     }
 
-    /// Gets neighbor connection for direction (0-3)
+    /// Gets neighbor connection for direction (0-3). Reads bits 0-23 only
+    /// (shifts 0/6/12/18, each a 6-bit slot — max bit 23).
     pub fn getCon(self: *const CompactSpan, direction: u2) u8 {
         const shift: u5 = @as(u5, direction) * 6;
         return @intCast((self.con >> shift) & 0x3f);
+    }
+
+    /// Gets the span height (bits 24-31 of con).
+    pub inline fn getH(self: *const CompactSpan) u8 {
+        return @intCast(self.con >> 24);
+    }
+
+    /// Sets the span height (bits 24-31 of con), preserving connection bits 0-23.
+    pub inline fn setH(self: *CompactSpan, h: u8) void {
+        self.con = (self.con & 0x00FFFFFF) | (@as(u32, h) << 24);
     }
 };
 
