@@ -2637,11 +2637,15 @@ pub const NavMeshQuery = struct {
             best_node.flags.open = false;
             best_node.flags.closed = true;
 
-            // Get poly and tile
+            // Get poly and tile. best_ref came off the open list (validated when inserted),
+            // so use the unsafe fetch (no bounds/error-union) — 1:1 with C++ which calls
+            // getTileAndPolyByRefUnsafe here ("input has been checked already"). Output-preserving.
             const best_ref = best_node.id;
-            const best_r = nav.getTileAndPolyByRef(best_ref) catch continue;
-            const best_tile = best_r.tile;
-            const best_poly = best_r.poly;
+            var best_tile_o: ?*const MeshTile = null;
+            var best_poly_o: ?*const Poly = null;
+            nav.getTileAndPolyByRefUnsafe(best_ref, &best_tile_o, &best_poly_o);
+            const best_tile = best_tile_o.?;
+            const best_poly = best_poly_o.?;
 
             // Get parent poly and tile
             var parent_ref: PolyRef = 0;
@@ -2819,11 +2823,15 @@ pub const NavMeshQuery = struct {
             best_node.flags.open = false;
             best_node.flags.closed = true;
 
-            // Get poly and tile
+            // Get poly and tile. best_ref came off the open list (validated when inserted),
+            // so use the unsafe fetch (no bounds/error-union) — 1:1 with C++ which calls
+            // getTileAndPolyByRefUnsafe here ("input has been checked already"). Output-preserving.
             const best_ref = best_node.id;
-            const best_r = nav.getTileAndPolyByRef(best_ref) catch continue;
-            const best_tile = best_r.tile;
-            const best_poly = best_r.poly;
+            var best_tile_o: ?*const MeshTile = null;
+            var best_poly_o: ?*const Poly = null;
+            nav.getTileAndPolyByRefUnsafe(best_ref, &best_tile_o, &best_poly_o);
+            const best_tile = best_tile_o.?;
+            const best_poly = best_poly_o.?;
 
             // Get parent poly and tile
             var parent_ref: PolyRef = 0;

@@ -707,14 +707,14 @@ fn mergeRegions(reg_a: *Region, reg_b: *Region, allocator: std.mem.Allocator) !b
     const ni_a = @as(i32, @intCast(acon.items.len));
     var i: i32 = 0;
     while (i < ni_a - 1) : (i += 1) {
-        const idx = @mod((insa + 1 + i), ni_a);
+        const idx = @rem((insa + 1 + i), ni_a); // M3: operands >=0 -> @rem == @mod, no signed floor-correction
         try reg_a.connections.append(acon.items[@intCast(idx)]);
     }
 
     const ni_b = @as(i32, @intCast(reg_b.connections.items.len));
     i = 0;
     while (i < ni_b - 1) : (i += 1) {
-        const idx = @mod((insb + 1 + i), ni_b);
+        const idx = @rem((insb + 1 + i), ni_b); // M3: operands >=0 -> @rem == @mod, no signed floor-correction
         try reg_a.connections.append(reg_b.connections.items[@intCast(idx)]);
     }
 
