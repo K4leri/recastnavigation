@@ -77,9 +77,12 @@ fn getCornerHeight(
         }
     }
 
-    // Check if vertex is special edge vertex (will be removed later)
-    var j: usize = 0;
-    while (j < 4) : (j += 1) {
+    // Check if vertex is special edge vertex (will be removed later).
+    // inline for → j (and a/b/c/d = fixed rotations of it) are comptime, so regs[a..d]
+    // fold to fixed slots. The `!is_border_vertex.*` guard reproduces the original
+    // early-out (break) — once set true it stays true, so skipping the rest is
+    // output-identical. Called per contour-edge corner in walkContour (hot).
+    inline for (0..4) |j| {
         const a = j;
         const b = (j + 1) & 0x3;
         const c = (j + 2) & 0x3;
@@ -91,9 +94,8 @@ fn getCornerHeight(
         const ints_same_area = (regs[c] >> 16) == (regs[d] >> 16);
         const no_zeros = regs[a] != 0 and regs[b] != 0 and regs[c] != 0 and regs[d] != 0;
 
-        if (two_same_exts and two_ints and ints_same_area and no_zeros) {
+        if (!is_border_vertex.* and two_same_exts and two_ints and ints_same_area and no_zeros) {
             is_border_vertex.* = true;
-            break;
         }
     }
 

@@ -156,8 +156,11 @@ pub fn dividePoly(
         if (!same_side) {
             const s = in_vert_axis_delta[in_vert_b] / (in_vert_axis_delta[in_vert_b] - in_vert_axis_delta[in_vert_a]);
 
-            // Interpolate intersection point
-            for (0..3) |j| {
+            // Interpolate intersection point. inline for → j is comptime, so the
+            // x/y/z component offsets fold to constant displacements and the three
+            // interpolations issue back-to-back (ILP/SIMD). dividePoly is the inner
+            // loop of rcRasterizeTriangles (per grid row+col per triangle).
+            inline for (0..3) |j| {
                 const val = in_verts[in_vert_b * 3 + j] + (in_verts[in_vert_a * 3 + j] - in_verts[in_vert_b * 3 + j]) * s;
                 out_verts1[poly1_vert * 3 + j] = val;
                 out_verts2[poly2_vert * 3 + j] = val;

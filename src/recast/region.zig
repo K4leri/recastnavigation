@@ -903,13 +903,14 @@ fn mergeAndFilterRegions(
 
                 reg.area_type = chf.areas[i];
 
-                // Check if this cell is next to a border
+                // Check if this cell is next to a border.
+                // inline for (dir comptime) + ndir!=-1 guard replaces the runtime
+                // break; isSolidEdge's dir folds its getDirOffset/getCon. Picks the
+                // same first solid edge in 0..3 order — output-identical.
                 var ndir: i32 = -1;
-                var dir: u2 = 0;
-                while (dir < 4) : (dir += 1) {
-                    if (isSolidEdge(chf, src_reg, x, y, i, dir)) {
+                inline for (0..4) |dir| {
+                    if (ndir == -1 and isSolidEdge(chf, src_reg, x, y, i, dir)) {
                         ndir = dir;
-                        break;
                     }
                 }
 
@@ -1484,13 +1485,13 @@ fn mergeAndFilterLayerRegions(
                 try lregs.append(@intCast(ri));
 
                 // Update neighbours
-                for (0..4) |dir| {
+                inline for (0..4) |dir| {
                     const dir_u2: u2 = @intCast(dir);
                     if (s.getCon(dir_u2) != NOT_CONNECTED) {
                         const ax: i32 = @intCast(x);
                         const ay: i32 = @intCast(y);
-                        const neighbor_x = ax + heightfield_mod.getDirOffsetX(dir_u2);
-                        const neighbor_y = ay + heightfield_mod.getDirOffsetY(dir_u2);
+                        const neighbor_x = ax + comptime heightfield_mod.getDirOffsetX(dir_u2);
+                        const neighbor_y = ay + comptime heightfield_mod.getDirOffsetY(dir_u2);
                         const ai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(neighbor_x + neighbor_y * @as(i32, @intCast(w))))].index + s.getCon(dir_u2)));
                         const rai = src_reg[ai];
                         if (rai > 0 and rai < nreg and rai != ri) {

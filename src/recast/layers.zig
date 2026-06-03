@@ -242,10 +242,10 @@ pub fn buildHeightfieldLayers(
                 }
 
                 // Update neighbours
-                for (0..4) |dir| {
+                inline for (0..4) |dir| {
                     if (getCon(&s, dir) != NOT_CONNECTED) {
-                        const ax = x + getDirOffsetX(dir);
-                        const ay = y + getDirOffsetY(dir);
+                        const ax = x + comptime getDirOffsetX(dir);
+                        const ay = y + comptime getDirOffsetY(dir);
                         const ai = chf.cells[@intCast(ax + ay * w)].index + getCon(&s, dir);
                         const rai = src_reg[ai];
                         if (rai != 0xff and rai != ri) {
@@ -487,10 +487,10 @@ pub fn buildHeightfieldLayers(
 
                     var portal: u8 = 0;
                     var con: u8 = 0;
-                    for (0..4) |dir| {
+                    inline for (0..4) |dir| {
                         if (getCon(&s, dir) != NOT_CONNECTED) {
-                            const ax = cx + getDirOffsetX(dir);
-                            const ay = cy + getDirOffsetY(dir);
+                            const ax = cx + comptime getDirOffsetX(dir);
+                            const ay = cy + comptime getDirOffsetY(dir);
                             const ai = chf.cells[@intCast(ax + ay * w)].index + getCon(&s, dir);
                             const alid = if (src_reg[ai] != 0xff) regs[src_reg[ai]].layer_id else 0xff;
 
