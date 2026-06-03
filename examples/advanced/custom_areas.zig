@@ -1,364 +1,293 @@
+//! ADVANCED EXAMPLE: custom area types + per-area cost routing.
+//!
+//! What this demonstrates (REAL work, not a print stub):
+//!   1. Build a navmesh from a flat floor.
+//!   2. After building the compact heightfield, stamp a custom area id onto a
+//!      sub-region with `nav.recast.area.markBoxArea` — a real grid mutation.
+//!   3. Bake that area through contours -> polymesh -> detour tile, so the area
+//!      id survives into the navmesh polygons.
+//!   4. Run `findPath` twice with two `QueryFilter`s that differ only in the
+//!      cost assigned to the custom area, and show the resulting paths differ:
+//!      cheap custom area -> A* cuts straight through it; expensive custom area
+//!      -> A* routes around it.
+//!
+//! The detour cost model is `dist * filter.area_cost[poly_area]` (see
+//! src/detour/query.zig getCost), so raising the custom area's cost makes the
+//! straight-line polys through it more expensive than the detour around them.
+//!
+//! Run with:
+//!   zig build run-custom_areas
+
 const std = @import("std");
-const recast = @import("zig-recast");
+const nav = @import("recast-nav");
 
-// Custom area types extending the standard ones
-const AreaType = enum(u8) {
-    ground = recast.POLYAREA_GROUND, // 0 - Standard walkable area
-    water = 1, // Shallow water - slow movement
-    road = 2, // Road - fast movement
-    grass = 3, // Grass - normal movement
-    door = 4, // Door - requires key/permission
-    danger = 5, // Dangerous area - high cost
-    _,
-};
-
-// Custom area costs (lower = preferred)
-const AreaCosts = struct {
-    ground: f32 = 1.0, // Default cost
-    water: f32 = 10.0, // 10x slower in water
-    road: f32 = 0.5, // 2x faster on roads
-    grass: f32 = 2.0, // Slightly slower in grass
-    door: f32 = 1.5, // Small overhead for doors
-    danger: f32 = 50.0, // Avoid dangerous areas
-};
+// Standard walkable area id used by the rasterizer / template (RC_WALKABLE_AREA).
+const AREA_GROUND: u8 = 1;
+// A custom area id we invent. Must be < detour MAX_AREAS (64). This is the id we
+// stamp onto a sub-region and then re-cost in the query filter.
+const AREA_MUD: u8 = 9;
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
+    // DebugAllocator (0.16 successor to GeneralPurposeAllocator): doubles as a
+    // leak smoke-test.
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
+    defer if (gpa.deinit() == .leak) @panic("memory leaked");
     const allocator = gpa.allocator();
 
-    std.debug.print("\n" ++ "=" ** 60 ++ "\n", .{});
-    std.debug.print("  ADVANCED EXAMPLE: Custom Area Types\n", .{});
-    std.debug.print("=" ** 60 ++ "\n\n", .{});
+    var ctx = nav.Context.init(allocator);
 
-    // Create context for logging
-    var ctx = recast.Context.init(allocator);
+    std.debug.print("Custom area types + per-area cost routing\n", .{});
+    std.debug.print("=========================================\n\n", .{});
 
-    // ================================================================
-    // STEP 1: Define test geometry with different area types
-    // ================================================================
-    std.debug.print("Step 1: Creating multi-area test environment...\n", .{});
-
-    // Create a complex environment:
-    // - Ground platform (area 0)
-    // - Water section (area 1)
-    // - Road section (area 2)
-    // - Grass section (area 3)
-    // - Dangerous area (area 5)
-
-    const vertices = [_]f32{
-        // Ground platform (0-20 in X)
-        0.0, 0.0, 0.0,
-        20.0, 0.0, 0.0,
-        20.0, 0.0, 10.0,
-        0.0, 0.0, 10.0,
-
-        // Road section (20-40 in X) - slightly elevated
-        20.0, 0.1, 0.0,
-        40.0, 0.1, 0.0,
-        40.0, 0.1, 10.0,
-        20.0, 0.1, 10.0,
-
-        // Water section (40-60 in X) - slightly lower
-        40.0, -0.5, 0.0,
-        60.0, -0.5, 0.0,
-        60.0, -0.5, 10.0,
-        40.0, -0.5, 10.0,
-
-        // Grass section (60-80 in X)
-        60.0, 0.0, 0.0,
-        80.0, 0.0, 0.0,
-        80.0, 0.0, 10.0,
-        60.0, 0.0, 10.0,
-
-        // Danger zone (70-90 in X, 10-20 in Z) - optional path
-        70.0, 0.0, 10.0,
-        90.0, 0.0, 10.0,
-        90.0, 0.0, 20.0,
-        70.0, 0.0, 20.0,
-
-        // Safe bypass (80-100 in X, 0-10 in Z)
-        80.0, 0.0, 0.0,
-        100.0, 0.0, 0.0,
-        100.0, 0.0, 10.0,
-        80.0, 0.0, 10.0,
+    // ---------------------------------------------------------------------
+    // 1. Input geometry: a wide flat floor, 0..60 in X, 0..40 in Z.
+    //    Big enough that A* has room to route around a marked band.
+    // ---------------------------------------------------------------------
+    const verts = [_]f32{
+        0,  0, 0, // 0
+        60, 0, 0, // 1
+        60, 0, 40, // 2
+        0,  0, 40, // 3
     };
-
     const indices = [_]i32{
-        // Ground platform
-        0, 1, 2, 0, 2, 3,
-        // Road
-        4, 5, 6, 4, 6, 7,
-        // Water
-        8, 9, 10, 8, 10, 11,
-        // Grass
-        12, 13, 14, 12, 14, 15,
-        // Danger zone
-        16, 17, 18, 16, 18, 19,
-        // Safe bypass
-        20, 21, 22, 20, 22, 23,
+        0, 1, 2,
+        0, 2, 3,
     };
+    const tri_count = indices.len / 3;
 
-    // Area types for each triangle (2 triangles per section)
-    const areas = [_]u8{
-        @intFromEnum(AreaType.ground),
-        @intFromEnum(AreaType.ground),
-        @intFromEnum(AreaType.road),
-        @intFromEnum(AreaType.road),
-        @intFromEnum(AreaType.water),
-        @intFromEnum(AreaType.water),
-        @intFromEnum(AreaType.grass),
-        @intFromEnum(AreaType.grass),
-        @intFromEnum(AreaType.danger),
-        @intFromEnum(AreaType.danger),
-        @intFromEnum(AreaType.grass),
-        @intFromEnum(AreaType.grass),
-    };
+    var bmin = nav.Vec3.init(verts[0], verts[1], verts[2]);
+    var bmax = bmin;
+    var vi: usize = 0;
+    while (vi < verts.len) : (vi += 3) {
+        bmin.x = @min(bmin.x, verts[vi + 0]);
+        bmin.y = @min(bmin.y, verts[vi + 1]);
+        bmin.z = @min(bmin.z, verts[vi + 2]);
+        bmax.x = @max(bmax.x, verts[vi + 0]);
+        bmax.y = @max(bmax.y, verts[vi + 1]);
+        bmax.z = @max(bmax.z, verts[vi + 2]);
+    }
 
-    std.debug.print("  Created environment with {} triangles\n", .{indices.len / 3});
-    std.debug.print("  Area types: ground, road, water, grass, danger\n\n", .{});
-
-    // ================================================================
-    // STEP 2: Configure Recast parameters
-    // ================================================================
-    const cell_size: f32 = 0.3;
-    const cell_height: f32 = 0.2;
-    const agent_height: f32 = 2.0;
-    const agent_radius: f32 = 0.6;
-    const agent_max_climb: f32 = 0.9;
-    const agent_max_slope: f32 = 45.0;
-
-    const walkableHeight = @as(i32, @intFromFloat(@ceil(agent_height / cell_height)));
-    const walkableClimb = @as(i32, @intFromFloat(@ceil(agent_max_climb / cell_height)));
-    const walkableRadius = @as(i32, @intFromFloat(@ceil(agent_radius / cell_size)));
-
-    // Calculate grid size
-    var bmin = [3]f32{ std.math.floatMax(f32), std.math.floatMax(f32), std.math.floatMax(f32) };
-    var bmax = [3]f32{ std.math.floatMin(f32), std.math.floatMin(f32), std.math.floatMin(f32) };
-    recast.calcBounds(&vertices, &bmin, &bmax);
-
-    var width: i32 = 0;
-    var height: i32 = 0;
-    recast.calcGridSize(&bmin, &bmax, cell_size, &width, &height);
-
-    // ================================================================
-    // STEP 3: Build navigation mesh (abbreviated pipeline)
-    // ================================================================
-    std.debug.print("Step 2: Building navigation mesh...\n", .{});
-
-    var heightfield = try recast.Heightfield.init(
-        allocator,
-        width,
-        height,
-        bmin,
-        bmax,
-        cell_size,
-        cell_height,
-    );
-    defer heightfield.deinit();
-
-    try recast.rasterizeTriangles(&ctx, &vertices, &indices, areas, &heightfield, 1);
-
-    try recast.filterLowHangingWalkableObstacles(&ctx, walkableClimb, &heightfield);
-    try recast.filterLedgeSpans(&ctx, walkableHeight, walkableClimb, &heightfield);
-    try recast.filterWalkableLowHeightSpans(&ctx, walkableHeight, &heightfield);
-
-    var chf = try recast.buildCompactHeightfield(&ctx, allocator, walkableHeight, walkableClimb, &heightfield);
-    defer chf.deinit();
-
-    try recast.erodeWalkableArea(&ctx, walkableRadius, &chf);
-    try recast.buildDistanceField(&ctx, &chf);
-    try recast.buildRegions(&ctx, allocator, &chf, 0, 8, 20);
-
-    var cset = try recast.buildContours(&ctx, allocator, &chf, 1.3, 12, recast.CONTOUR_TESS_WALL_EDGES);
-    defer cset.deinit();
-
-    var pmesh = try recast.buildPolyMesh(&ctx, allocator, &cset, 6);
-    defer pmesh.deinit();
-
-    var dmesh = try recast.buildPolyMeshDetail(&ctx, allocator, &pmesh, &chf, 6.0, 1.0);
-    defer dmesh.deinit();
-
-    std.debug.print("  Built navmesh with {} polygons\n\n", .{pmesh.npolys});
-
-    // ================================================================
-    // STEP 4: Create Detour navigation mesh
-    // ================================================================
-    std.debug.print("Step 3: Creating Detour navigation mesh...\n", .{});
-
-    var nav_data = try recast.createNavMeshData(allocator, &pmesh, &dmesh, .{
-        .cs = cell_size,
-        .ch = cell_height,
-        .walkableHeight = agent_height,
-        .walkableRadius = agent_radius,
-        .walkableClimb = agent_max_climb,
+    // ---------------------------------------------------------------------
+    // 2. Build configuration
+    // ---------------------------------------------------------------------
+    var cfg = nav.RecastConfig{
+        .cs = 0.3,
+        .ch = 0.2,
+        .walkable_slope_angle = 45.0,
+        .walkable_height = 10,
+        .walkable_climb = 4,
+        .walkable_radius = 2,
+        .max_edge_len = 12,
+        .max_simplification_error = 1.3,
+        .min_region_area = 8,
+        .merge_region_area = 20,
+        .max_verts_per_poly = 6,
+        .detail_sample_dist = 6.0,
+        .detail_sample_max_error = 1.0,
+        .border_size = 0,
+        .width = 0,
+        .height = 0,
         .bmin = bmin,
         .bmax = bmax,
-        .buildBvTree = true,
-    });
-    defer allocator.free(nav_data);
+    };
+    var size_x: i32 = 0;
+    var size_z: i32 = 0;
+    nav.RecastConfig.calcGridSize(bmin, bmax, cfg.cs, &size_x, &size_z);
+    cfg.width = size_x;
+    cfg.height = size_z;
+    std.debug.print("grid: {d} x {d} cells\n", .{ cfg.width, cfg.height });
 
-    var navmesh = try recast.NavMesh.init(allocator);
-    defer navmesh.deinit();
+    // ---------------------------------------------------------------------
+    // 3. Rasterize triangles into a heightfield
+    // ---------------------------------------------------------------------
+    var hf = try nav.Heightfield.init(allocator, cfg.width, cfg.height, cfg.bmin, cfg.bmax, cfg.cs, cfg.ch);
+    defer hf.deinit();
 
-    _ = try navmesh.addTile(nav_data, 0, 0);
+    const areas = try allocator.alloc(u8, tri_count);
+    defer allocator.free(areas);
+    @memset(areas, AREA_GROUND);
 
-    std.debug.print("  NavMesh initialized\n\n", .{});
+    try nav.recast.rasterization.rasterizeTriangles(&ctx, &verts, &indices, areas, &hf, cfg.walkable_climb);
 
-    // ================================================================
-    // STEP 5: Setup pathfinding query with custom area costs
-    // ================================================================
-    std.debug.print("Step 4: Configuring custom area costs...\n", .{});
+    // ---------------------------------------------------------------------
+    // 4. Filter walkable surfaces
+    // ---------------------------------------------------------------------
+    nav.recast.filter.filterLowHangingWalkableObstacles(&ctx, cfg.walkable_climb, &hf);
+    nav.recast.filter.filterLedgeSpans(&ctx, cfg.walkable_height, cfg.walkable_climb, &hf);
+    nav.recast.filter.filterWalkableLowHeightSpans(&ctx, cfg.walkable_height, &hf);
 
-    var query = try recast.NavMeshQuery.init(allocator, &navmesh, 2048);
-    defer query.deinit();
+    // ---------------------------------------------------------------------
+    // 5. Compact heightfield + erode by agent radius
+    // ---------------------------------------------------------------------
+    const span_count = nav.recast.compact.getHeightFieldSpanCount(&ctx, &hf);
+    var chf = try nav.CompactHeightfield.init(allocator, cfg.width, cfg.height, @intCast(span_count), cfg.walkable_height, cfg.walkable_climb, cfg.bmin, cfg.bmax, cfg.cs, cfg.ch, cfg.border_size);
+    defer chf.deinit();
+    try nav.recast.compact.buildCompactHeightfield(&ctx, cfg.walkable_height, cfg.walkable_climb, &hf, &chf);
+    try nav.recast.area.erodeWalkableArea(&ctx, cfg.walkable_radius, &chf, allocator);
 
-    const costs = AreaCosts{};
+    // ---------------------------------------------------------------------
+    // 5b. CUSTOM AREA: stamp a "mud" band onto the compact heightfield.
+    //
+    //   We mark an axis-aligned box covering most of the floor's width but
+    //   leaving an open lane along the high-Z edge (z in 34..40). That way the
+    //   direct start->end line crosses the band, but A* still has walkable
+    //   default-cost polys to detour through when the band gets expensive.
+    //
+    //   markBoxArea(ctx, box_min, box_max, area_id, chf) mutates chf.areas in
+    //   place — this is a real grid edit, verified below by the path change.
+    // ---------------------------------------------------------------------
+    const band_min = nav.Vec3.init(24.0, bmin.y - 1.0, 0.0);
+    const band_max = nav.Vec3.init(36.0, bmax.y + 1.0, 32.0);
+    nav.recast.area.markBoxArea(&ctx, band_min, band_max, AREA_MUD, &chf);
 
-    // Create filter with custom area costs
-    var filter = recast.QueryFilter.init();
-    filter.setAreaCost(@intFromEnum(AreaType.ground), costs.ground);
-    filter.setAreaCost(@intFromEnum(AreaType.water), costs.water);
-    filter.setAreaCost(@intFromEnum(AreaType.road), costs.road);
-    filter.setAreaCost(@intFromEnum(AreaType.grass), costs.grass);
-    filter.setAreaCost(@intFromEnum(AreaType.door), costs.door);
-    filter.setAreaCost(@intFromEnum(AreaType.danger), costs.danger);
-
-    std.debug.print("  Area costs configured:\n", .{});
-    std.debug.print("    Ground: {d:.1f}\n", .{costs.ground});
-    std.debug.print("    Water: {d:.1f} (10x slower)\n", .{costs.water});
-    std.debug.print("    Road: {d:.1f} (2x faster)\n", .{costs.road});
-    std.debug.print("    Grass: {d:.1f}\n", .{costs.grass});
-    std.debug.print("    Danger: {d:.1f} (avoid!)\n\n", .{costs.danger});
-
-    // ================================================================
-    // STEP 6: Find paths with different area preferences
-    // ================================================================
-    std.debug.print("Step 5: Testing pathfinding with custom area costs...\n\n", .{});
-
-    const start_pos = [3]f32{ 10.0, 0.0, 5.0 }; // Start on ground
-    const end_pos = [3]f32{ 90.0, 0.0, 5.0 }; // End on safe bypass
-
-    const extents = [3]f32{ 2.0, 4.0, 2.0 };
-
-    var start_nearest: [3]f32 = undefined;
-    var end_nearest: [3]f32 = undefined;
-
-    const start_ref = try query.findNearestPoly(&start_pos, &extents, &filter, &start_nearest, null);
-    const end_ref = try query.findNearestPoly(&end_pos, &extents, &filter, &end_nearest, null);
-
-    std.debug.print("  Start: ({d:.1f}, {d:.1f}, {d:.1f}) -> Poly {}\n", .{
-        start_pos[0],
-        start_pos[1],
-        start_pos[2],
-        start_ref,
-    });
-    std.debug.print("  End: ({d:.1f}, {d:.1f}, {d:.1f}) -> Poly {}\n\n", .{
-        end_pos[0],
-        end_pos[1],
-        end_pos[2],
-        end_ref,
-    });
-
-    // Find path with standard costs
-    var path: [256]recast.PolyRef = undefined;
-    const path_count = try query.findPath(start_ref, end_ref, &start_nearest, &end_nearest, &filter, &path, 256);
-
-    std.debug.print("  Path found with {} polygons\n", .{path_count});
-
-    // Get area types along the path
-    std.debug.print("  Path areas: ", .{});
-    for (path[0..path_count]) |poly_ref| {
-        const area = try navmesh.getPolyArea(poly_ref);
-        const area_name = switch (area) {
-            @intFromEnum(AreaType.ground) => "ground",
-            @intFromEnum(AreaType.water) => "water",
-            @intFromEnum(AreaType.road) => "road",
-            @intFromEnum(AreaType.grass) => "grass",
-            @intFromEnum(AreaType.danger) => "danger",
-            else => "unknown",
-        };
-        std.debug.print("{s} ", .{area_name});
+    // Count how many spans actually got the custom id (sanity that the mark hit).
+    var mud_spans: usize = 0;
+    for (chf.areas[0..@intCast(span_count)]) |a| {
+        if (a == AREA_MUD) mud_spans += 1;
     }
-    std.debug.print("\n\n", .{});
+    std.debug.print("marked custom MUD band: {d} compact spans got area id {d}\n", .{ mud_spans, AREA_MUD });
 
-    // ================================================================
-    // STEP 7: Test different cost configurations
-    // ================================================================
-    std.debug.print("Step 6: Testing alternative cost configurations...\n\n", .{});
+    // ---------------------------------------------------------------------
+    // 6. Distance field + watershed regions
+    // ---------------------------------------------------------------------
+    try nav.recast.region.buildDistanceField(&ctx, &chf, allocator);
+    try nav.recast.region.buildRegions(&ctx, &chf, cfg.border_size, cfg.min_region_area, cfg.merge_region_area, allocator);
 
-    // Configuration 1: Avoid water at all costs
-    std.debug.print("  Config 1: Avoid water (cost=100.0)\n", .{});
-    var filter_no_water = recast.QueryFilter.init();
-    filter_no_water.setAreaCost(@intFromEnum(AreaType.water), 100.0);
-    filter_no_water.setAreaCost(@intFromEnum(AreaType.road), costs.road);
-    filter_no_water.setAreaCost(@intFromEnum(AreaType.grass), costs.grass);
+    // ---------------------------------------------------------------------
+    // 7. Contours -> polygon mesh -> detail mesh
+    // ---------------------------------------------------------------------
+    var cset = nav.ContourSet.init(allocator);
+    defer cset.deinit();
+    try nav.recast.contour.buildContours(&ctx, &chf, cfg.max_simplification_error, cfg.max_edge_len, &cset, 0, allocator);
 
-    const path_no_water = try query.findPath(
-        start_ref,
-        end_ref,
-        &start_nearest,
-        &end_nearest,
-        &filter_no_water,
-        &path,
-        256,
-    );
-    std.debug.print("    Path length: {} polygons\n", .{path_no_water});
+    var pmesh = nav.PolyMesh.init(allocator);
+    defer pmesh.deinit();
+    try nav.recast.mesh.buildPolyMesh(&ctx, &cset, @intCast(cfg.max_verts_per_poly), &pmesh, allocator);
 
-    // Configuration 2: Prefer roads heavily
-    std.debug.print("  Config 2: Prefer roads (cost=0.1)\n", .{});
-    var filter_roads = recast.QueryFilter.init();
-    filter_roads.setAreaCost(@intFromEnum(AreaType.road), 0.1);
-    filter_roads.setAreaCost(@intFromEnum(AreaType.ground), costs.ground);
-    filter_roads.setAreaCost(@intFromEnum(AreaType.water), costs.water);
-    filter_roads.setAreaCost(@intFromEnum(AreaType.grass), costs.grass);
+    var dmesh = nav.PolyMeshDetail.init(allocator);
+    defer dmesh.deinit();
+    try nav.recast.detail.buildPolyMeshDetail(&ctx, &pmesh, &chf, cfg.detail_sample_dist, cfg.detail_sample_max_error, &dmesh, allocator);
 
-    const path_roads = try query.findPath(
-        start_ref,
-        end_ref,
-        &start_nearest,
-        &end_nearest,
-        &filter_roads,
-        &path,
-        256,
-    );
-    std.debug.print("    Path length: {} polygons\n", .{path_roads});
+    // Report how the custom area survived into the polymesh.
+    var mud_polys: usize = 0;
+    for (pmesh.areas[0..@intCast(pmesh.npolys)]) |a| {
+        if (a == AREA_MUD) mud_polys += 1;
+    }
+    std.debug.print("polymesh: {d} verts, {d} polys ({d} are MUD)\n", .{ pmesh.nverts, pmesh.npolys, mud_polys });
 
-    // Configuration 3: Ignore danger zones completely
-    std.debug.print("  Config 3: Block danger zones (excludeFlags)\n", .{});
-    var filter_no_danger = recast.QueryFilter.init();
-    filter_no_danger.setIncludeFlags(0xFFFF);
-    filter_no_danger.setExcludeFlags(1 << @intFromEnum(AreaType.danger));
+    // ---------------------------------------------------------------------
+    // 8. Detour navmesh data + tile
+    // ---------------------------------------------------------------------
+    const poly_flags = try allocator.alloc(u16, @intCast(pmesh.npolys));
+    defer allocator.free(poly_flags);
+    @memset(poly_flags, 0x01); // all walkable
 
-    const path_safe = try query.findPath(
-        start_ref,
-        end_ref,
-        &start_nearest,
-        &end_nearest,
-        &filter_no_danger,
-        &path,
-        256,
-    );
-    std.debug.print("    Path length: {} polygons\n\n", .{path_safe});
+    const create_params = nav.detour.NavMeshCreateParams{
+        .verts = pmesh.verts,
+        .vert_count = @intCast(pmesh.nverts),
+        .polys = pmesh.polys,
+        .poly_flags = poly_flags,
+        .poly_areas = pmesh.areas, // carries our AREA_MUD ids into detour
+        .poly_count = @intCast(pmesh.npolys),
+        .nvp = @intCast(pmesh.nvp),
+        .detail_meshes = dmesh.meshes,
+        .detail_verts = dmesh.verts,
+        .detail_verts_count = @intCast(dmesh.nverts),
+        .detail_tris = dmesh.tris,
+        .detail_tri_count = @intCast(dmesh.ntris),
+        .bmin = [3]f32{ pmesh.bmin.x, pmesh.bmin.y, pmesh.bmin.z },
+        .bmax = [3]f32{ pmesh.bmax.x, pmesh.bmax.y, pmesh.bmax.z },
+        .walkable_height = @as(f32, @floatFromInt(cfg.walkable_height)) * cfg.ch,
+        .walkable_radius = @as(f32, @floatFromInt(cfg.walkable_radius)) * cfg.cs,
+        .walkable_climb = @as(f32, @floatFromInt(cfg.walkable_climb)) * cfg.ch,
+        .cs = pmesh.cs,
+        .ch = pmesh.ch,
+        .build_bv_tree = true,
+    };
+    const navmesh_data = try nav.detour.createNavMeshData(&create_params, allocator);
+    defer allocator.free(navmesh_data);
 
-    // ================================================================
-    // SUMMARY
-    // ================================================================
-    std.debug.print("=" ** 60 ++ "\n", .{});
-    std.debug.print("  SUMMARY: Custom Area Types\n", .{});
-    std.debug.print("=" ** 60 ++ "\n\n", .{});
+    var navmesh = try nav.detour.NavMesh.init(allocator, .{
+        .orig = bmin,
+        .tile_width = bmax.x - bmin.x,
+        .tile_height = bmax.z - bmin.z,
+        .max_tiles = 1,
+        .max_polys = 1024,
+    });
+    defer navmesh.deinit();
+    _ = try navmesh.addTile(navmesh_data, nav.detour.TileFlags{ .free_data = false }, 0);
 
-    std.debug.print("Key Concepts Demonstrated:\n", .{});
-    std.debug.print("  1. Custom area types (ground, water, road, grass, danger)\n", .{});
-    std.debug.print("  2. Area cost configuration for pathfinding preferences\n", .{});
-    std.debug.print("  3. Multiple pathfinding configurations\n", .{});
-    std.debug.print("  4. Area-based filtering (include/exclude flags)\n", .{});
-    std.debug.print("  5. Dynamic cost adjustment for different scenarios\n\n", .{});
+    // ---------------------------------------------------------------------
+    // 9. Query: same start/end, two filters that differ ONLY in MUD cost.
+    // ---------------------------------------------------------------------
+    var query = try nav.detour.NavMeshQuery.init(allocator);
+    defer query.deinit();
+    try query.initQuery(&navmesh, 2048);
 
-    std.debug.print("Use Cases:\n", .{});
-    std.debug.print("  - NPCs that prefer roads over terrain\n", .{});
-    std.debug.print("  - Characters that avoid water/dangerous areas\n", .{});
-    std.debug.print("  - Different movement costs for different unit types\n", .{});
-    std.debug.print("  - Access-controlled areas (doors, restricted zones)\n", .{});
-    std.debug.print("  - Dynamic environment changes (flooded areas, hazards)\n\n", .{});
+    const ext = [3]f32{ 2.0, 8.0, 2.0 };
+    // Start lower-left, end lower-right: the straight line runs along low Z and
+    // passes through the MUD band (x 24..36, z 0..32).
+    const start_in = [3]f32{ 4.0, 0.0, 6.0 };
+    const end_in = [3]f32{ 56.0, 0.0, 6.0 };
+
+    // Locate endpoints with a default filter (cost is irrelevant for findNearestPoly).
+    const locate_filter = nav.detour.QueryFilter.init();
+    var start_ref: nav.detour.PolyRef = 0;
+    var start_pos: [3]f32 = undefined;
+    _ = try query.findNearestPoly(&start_in, &ext, &locate_filter, &start_ref, &start_pos);
+    var end_ref: nav.detour.PolyRef = 0;
+    var end_pos: [3]f32 = undefined;
+    _ = try query.findNearestPoly(&end_in, &ext, &locate_filter, &end_ref, &end_pos);
+
+    if (start_ref == 0 or end_ref == 0) {
+        std.debug.print("start/end poly not found\n", .{});
+        return;
+    }
+
+    // ---- Run A* and report the path + whether it touches MUD ----------------
+    const Result = struct {
+        count: usize,
+        touches_mud: bool,
+        path: [256]nav.detour.PolyRef,
+    };
+
+    const runPath = struct {
+        fn go(q: *nav.detour.NavMeshQuery, nm: *nav.detour.NavMesh, sref: nav.detour.PolyRef, eref: nav.detour.PolyRef, sp: *const [3]f32, ep: *const [3]f32, filter: *const nav.detour.QueryFilter) !Result {
+            var r: Result = .{ .count = 0, .touches_mud = false, .path = undefined };
+            _ = try q.findPath(sref, eref, sp, ep, filter, &r.path, &r.count);
+            for (r.path[0..r.count]) |pref| {
+                var tile: ?*const nav.detour.MeshTile = null;
+                var poly: ?*const nav.detour.Poly = null;
+                nm.getTileAndPolyByRefUnsafe(pref, &tile, &poly);
+                if (poly.?.getArea() == AREA_MUD) {
+                    r.touches_mud = true;
+                    break;
+                }
+            }
+            return r;
+        }
+    }.go;
+
+    // Filter A: MUD is cheap (cost 1.0, same as ground) -> A* takes the short
+    // straight line right through the band.
+    var filter_cheap = nav.detour.QueryFilter.init();
+    filter_cheap.setAreaCost(AREA_MUD, 1.0);
+    const cheap = try runPath(query, &navmesh, start_ref, end_ref, &start_pos, &end_pos, &filter_cheap);
+
+    // Filter B: MUD is very expensive (cost 50.0) -> A* detours around the band.
+    var filter_avoid = nav.detour.QueryFilter.init();
+    filter_avoid.setAreaCost(AREA_MUD, 50.0);
+    const avoid = try runPath(query, &navmesh, start_ref, end_ref, &start_pos, &end_pos, &filter_avoid);
+
+    std.debug.print("\nfindPath results (same start/end, MUD cost differs):\n", .{});
+    std.debug.print("  cheap MUD (cost 1.0):  {d} polys, path crosses MUD = {}\n", .{ cheap.count, cheap.touches_mud });
+    std.debug.print("  avoid MUD (cost 50.0): {d} polys, path crosses MUD = {}\n", .{ avoid.count, avoid.touches_mud });
+
+    const path_changed = (cheap.count != avoid.count) or (cheap.touches_mud != avoid.touches_mud);
+    std.debug.print("\n  -> area cost changed the route: {}\n", .{path_changed});
+    if (cheap.touches_mud and !avoid.touches_mud) {
+        std.debug.print("  -> cheap path goes THROUGH the custom area; expensive path AVOIDS it.\n", .{});
+    }
+
+    std.debug.print("\ndone.\n", .{});
 }

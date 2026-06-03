@@ -158,60 +158,49 @@ pub fn build(b: *std.Build) void {
     // EXAMPLES - Unchanged
     // ====================================================================
 
-    const example_simple_module = b.createModule(.{
-        .root_source_file = b.path("examples/simple_navmesh.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    example_simple_module.addImport("recast-nav", recast_nav);
-    const example_simple = b.addExecutable(.{
-        .name = "simple_navmesh",
-        .root_module = example_simple_module,
-    });
+    // Data-driven: each example becomes an executable, an `examples`-aggregate
+    // dependency, and its own `run-<name>` step. The flagship full_pathfinding is
+    // also aliased as `run-example`.
+    const Example = struct { name: []const u8, path: []const u8 };
+    const examples = [_]Example{
+        .{ .name = "full_pathfinding", .path = "examples/03_full_pathfinding.zig" },
+        .{ .name = "tiled_navmesh", .path = "examples/02_tiled_navmesh.zig" },
+        .{ .name = "offmesh_connections", .path = "examples/06_offmesh_connections.zig" },
+        .{ .name = "simple_navmesh", .path = "examples/simple_navmesh.zig" },
+        .{ .name = "pathfinding_demo", .path = "examples/pathfinding_demo.zig" },
+        .{ .name = "crowd_simulation", .path = "examples/crowd_simulation.zig" },
+        .{ .name = "dynamic_obstacles", .path = "examples/dynamic_obstacles.zig" },
+        .{ .name = "custom_areas", .path = "examples/advanced/custom_areas.zig" },
+        .{ .name = "hierarchical_pathfinding", .path = "examples/advanced/hierarchical_pathfinding.zig" },
+        .{ .name = "streaming_world", .path = "examples/advanced/streaming_world.zig" },
+    };
 
-    const example_pathfinding_module = b.createModule(.{
-        .root_source_file = b.path("examples/pathfinding_demo.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    example_pathfinding_module.addImport("recast-nav", recast_nav);
-    const example_pathfinding = b.addExecutable(.{
-        .name = "pathfinding_demo",
-        .root_module = example_pathfinding_module,
-    });
+    const example_step = b.step("examples", "Build all examples");
+    const run_examples_step = b.step("run-examples", "Build and run all examples (CI smoke test)");
+    for (examples) |ex| {
+        const mod = b.createModule(.{
+            .root_source_file = b.path(ex.path),
+            .target = target,
+            .optimize = optimize,
+        });
+        mod.addImport("recast-nav", recast_nav);
+        const exe = b.addExecutable(.{ .name = ex.name, .root_module = mod });
+        example_step.dependOn(&b.addInstallArtifact(exe, .{}).step);
 
-    const example_crowd_module = b.createModule(.{
-        .root_source_file = b.path("examples/crowd_simulation.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    example_crowd_module.addImport("recast-nav", recast_nav);
-    const example_crowd = b.addExecutable(.{
-        .name = "crowd_simulation",
-        .root_module = example_crowd_module,
-    });
+        const run = b.addRunArtifact(exe);
+        const run_step = b.step(
+            b.fmt("run-{s}", .{ex.name}),
+            b.fmt("Run example: {s}", .{ex.name}),
+        );
+        run_step.dependOn(&run.step);
+        run_examples_step.dependOn(&run.step);
 
-    const example_dynamic_obstacles_module = b.createModule(.{
-        .root_source_file = b.path("examples/dynamic_obstacles.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    example_dynamic_obstacles_module.addImport("recast-nav", recast_nav);
-    const example_dynamic_obstacles = b.addExecutable(.{
-        .name = "dynamic_obstacles",
-        .root_module = example_dynamic_obstacles_module,
-    });
-
-    const install_example_simple = b.addInstallArtifact(example_simple, .{});
-    const install_example_pathfinding = b.addInstallArtifact(example_pathfinding, .{});
-    const install_example_crowd = b.addInstallArtifact(example_crowd, .{});
-    const install_example_dynamic_obstacles = b.addInstallArtifact(example_dynamic_obstacles, .{});
-
-    const example_step = b.step("examples", "Build examples");
-    example_step.dependOn(&install_example_simple.step);
-    example_step.dependOn(&install_example_pathfinding.step);
-    example_step.dependOn(&install_example_crowd.step);
-    example_step.dependOn(&install_example_dynamic_obstacles.step);
+        // `zig build run-example` -> the flagship full pipeline demo
+        if (std.mem.eql(u8, ex.name, "full_pathfinding")) {
+            const alias = b.step("run-example", "Run the full pathfinding example");
+            alias.dependOn(&run.step);
+        }
+    }
 
     // ====================================================================
     // PERFORMANCE BENCHMARKS - Unchanged

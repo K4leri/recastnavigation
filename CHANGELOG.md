@@ -7,7 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **All 10 examples build and run again.** They had rotted against Zig 0.16 (the
+  removed `std.heap.GeneralPurposeAllocator`) and against the current namespaced
+  library API (`recast.recast.<step>.*` / `recast.detour.*`), so `zig build
+  examples` did not even compile and most examples were print-only stubs. Every
+  example was rewritten to the current API and now does real work — full bake +
+  pathfinding, tiled/stitched navmesh, off-mesh connections, crowd steering,
+  tile-cache obstacles, custom area costs, sliced pathfinding, tile streaming —
+  each with a `DebugAllocator` leak check. (`examples/`, `build.zig`)
+- **Release binaries are now portable across CPUs.** The release CI built the demo
+  with native CPU features of the GitHub Actions runner, so ReleaseFast could emit
+  AVX-512 / newer instructions that crash with an illegal-instruction *and no log*
+  on user machines with a different CPU. The release now builds with an explicit
+  baseline target (`-Dtarget=x86_64-windows` / `x86_64-linux` / `aarch64-macos`),
+  so the binary runs on any x86_64 / arm64. (`.github/workflows/release.yml`)
+
 ### Added
+- **CI workflow** (`.github/workflows/ci.yml`): on every push/PR it runs the
+  library tests, the integration tests, and builds **and runs** all 10 examples
+  (`zig build run-examples`) as a runtime smoke test, so the examples can't
+  silently rot against the API again.
 - **64-bit poly/tile refs for very large worlds** (`zig build -Dpolyref64=true`),
   the comptime equivalent of the C++ `DT_POLYREF64` compile flag. A single build
   option flips `PolyRef`/`TileRef`/`CompressedTileRef` from `u32` to `u64` and the

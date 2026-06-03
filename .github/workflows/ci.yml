@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: tests + examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Zig 0.16.0 via direct download (binary releases live on ziglang.org/download;
+      # the setup-action index is dead). Mirrors release.yml.
+      - name: Setup Zig
+        run: |
+          curl -fL -o zig.tar.xz "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz"
+          mkdir -p "$HOME/zig"
+          tar -xf zig.tar.xz -C "$HOME/zig" --strip-components=1
+          echo "$HOME/zig" >> "$GITHUB_PATH"
+
+      - name: Verify Zig
+        run: zig version
+
+      - name: Library tests
+        run: zig build test
+
+      - name: Integration tests
+        run: zig build test-integration
+
+      # Compiles AND runs all 10 examples — the runtime smoke test guards against the
+      # examples silently rotting against the library API (they did once: stale flat
+      # API + the removed std.heap.GeneralPurposeAllocator). Each runs to exit 0 with
+      # a DebugAllocator leak check.
+      - name: Examples (build + run)
+        run: zig build run-examples

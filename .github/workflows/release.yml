@@ -25,14 +25,17 @@ jobs:
           - os: windows-latest
             asset: recast_demo-windows-x86_64
             ext: zip
+            target: x86_64-windows
             zig_url: https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip
           - os: ubuntu-latest
             asset: recast_demo-linux-x86_64
             ext: tar.gz
+            target: x86_64-linux
             zig_url: https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
           - os: macos-latest
             asset: recast_demo-macos-aarch64
             ext: tar.gz
+            target: aarch64-macos
             zig_url: https://ziglang.org/download/0.16.0/zig-aarch64-macos-0.16.0.tar.xz
     steps:
       - uses: actions/checkout@v4
@@ -67,8 +70,11 @@ jobs:
             libgl1-mesa-dev libx11-dev libxrandr-dev libxinerama-dev \
             libxcursor-dev libxi-dev libwayland-dev libxkbcommon-dev
 
-      - name: Build demo (ReleaseFast)
-        run: zig build demo-fast
+      # baseline CPU (-Dtarget без cpu-фич раннера) → бинарь крутится на ЛЮБОМ x86_64/arm64.
+      # Без этого ReleaseFast зашивал AVX-512/новые инструкции CI-раннера → illegal instruction
+      # и молчаливый вылет на машинах юзеров с другим CPU.
+      - name: Build demo (ReleaseFast, baseline CPU)
+        run: zig build demo-fast -Dtarget=${{ matrix.target }}
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
