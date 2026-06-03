@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 _No unreleased changes._
 
+## [0.1.6] - 2026-06-03
+
+### Added
+- **Demo crowd: "Show Perf Graph".** Re-implemented the upstream graph renderer
+  (left `#if 0` in RecastDemo) on dvui — a `ValueHistory` ring buffer plus a 2D
+  line graph (background, sample polyline, legend with running average). Plots
+  the crowd update time (ms) and the velocity sample count per tick.
+
+### Fixed
+- **Demo crowd: new agents now join the active move target.** Creating an agent
+  while the crowd already has a target left the new agent standing still; it now
+  immediately requests the current target, 1:1 with `CrowdToolState::addAgent`
+  (`if (targetPolyRef) requestMoveTarget(...)`).
+
 ## [0.1.5] - 2026-06-03
 
 ### Fixed
@@ -183,7 +197,8 @@ Related bug investigations: `docs/bug_fixes/github_issues/`
 - `Fixed` — bug fixes
 - `Security` — vulnerability fixes
 
-[Unreleased]: https://github.com/K4leri/recastnavigation/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/K4leri/recastnavigation/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/K4leri/recastnavigation/releases/tag/v0.1.6
 [0.1.5]: https://github.com/K4leri/recastnavigation/releases/tag/v0.1.5
 [0.1.4]: https://github.com/K4leri/recastnavigation/releases/tag/v0.1.4
 [0.1.3]: https://github.com/K4leri/recastnavigation/releases/tag/v0.1.3
