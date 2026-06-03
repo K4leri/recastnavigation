@@ -554,12 +554,11 @@ pub const ObstacleAvoidanceQuery = struct {
         var pat: [(MAX_PATTERN_DIVS * MAX_PATTERN_RINGS + 1) * 2]f32 = undefined;
         var npat: usize = 0;
 
-        const ndivs = math.clamp(i32, @as(i32, @intCast(self.params.adaptive_divs)), 1, MAX_PATTERN_DIVS);
-        const nrings = math.clamp(i32, @as(i32, @intCast(self.params.adaptive_rings)), 1, MAX_PATTERN_RINGS);
+        // usize from the start (adaptive_divs/rings are u8, clamped >=1) — removes
+        // the i32 round-trip and the two @as(usize,@intCast) below. Byte-identical.
+        const nd = math.clamp(usize, @intCast(self.params.adaptive_divs), 1, MAX_PATTERN_DIVS);
+        const nr = math.clamp(usize, @intCast(self.params.adaptive_rings), 1, MAX_PATTERN_RINGS);
         const depth = self.params.adaptive_depth;
-
-        const nd = @as(usize, @intCast(ndivs));
-        const nr = @as(usize, @intCast(nrings));
         const da = (1.0 / @as(f32, @floatFromInt(nd))) * PI * 2.0;
         const ca = @cos(da);
         const sa = @sin(da);
