@@ -925,17 +925,15 @@ fn getHeightData(
                         empty = false;
 
                         var border = false;
-                        var dir: i32 = 0;
-                        while (dir < 4) : (dir += 1) {
-                            if (getCon(&s, dir) != NOT_CONNECTED) {
-                                const ax = x + getDirOffsetX(dir);
-                                const ay = y + getDirOffsetY(dir);
+                        inline for (0..4) |dir| {
+                            if (!border and getCon(&s, dir) != NOT_CONNECTED) {
+                                const ax = x + comptime getDirOffsetX(dir);
+                                const ay = y + comptime getDirOffsetY(dir);
                                 const ai_idx = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax + ay * chf.width))].index)) +
                                     @as(usize, @intCast(getCon(&s, dir)));
                                 const as = chf.spans[ai_idx];
                                 if (as.reg != region) {
                                     border = true;
-                                    break;
                                 }
                             }
                         }
@@ -976,28 +974,30 @@ fn getHeightData(
         }
 
         const cs = chf.spans[@as(usize, @intCast(ci))];
-        var dir: i32 = 0;
-        while (dir < 4) : (dir += 1) {
-            if (getCon(&cs, dir) == NOT_CONNECTED) continue;
+        inline for (0..4) |dir| {
+            if (getCon(&cs, dir) != NOT_CONNECTED) {
+                const ax = cx + comptime getDirOffsetX(dir);
+                const ay = cy + comptime getDirOffsetY(dir);
+                const hx = ax - hp.xmin - bs;
+                const hy = ay - hp.ymin - bs;
 
-            const ax = cx + getDirOffsetX(dir);
-            const ay = cy + getDirOffsetY(dir);
-            const hx = ax - hp.xmin - bs;
-            const hy = ay - hp.ymin - bs;
+                // bounds + unset-height guards folded from three runtime `continue`s
+                // (inline for forbids them); `and` short-circuits so hp.data is only
+                // read when hx/hy are in range — output-identical.
+                if (hx >= 0 and hx < hp.width and hy >= 0 and hy < hp.height and
+                    hp.data[@as(usize, @intCast(hx + hy * hp.width))] == RC_UNSET_HEIGHT)
+                {
+                    const ai_idx = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax + ay * chf.width))].index)) +
+                        @as(usize, @intCast(getCon(&cs, dir)));
+                    const as = chf.spans[ai_idx];
 
-            if (hx < 0 or hx >= hp.width or hy < 0 or hy >= hp.height) continue;
+                    hp.data[@as(usize, @intCast(hx + hy * hp.width))] = as.y;
 
-            if (hp.data[@as(usize, @intCast(hx + hy * hp.width))] != RC_UNSET_HEIGHT) continue;
-
-            const ai_idx = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax + ay * chf.width))].index)) +
-                @as(usize, @intCast(getCon(&cs, dir)));
-            const as = chf.spans[ai_idx];
-
-            hp.data[@as(usize, @intCast(hx + hy * hp.width))] = as.y;
-
-            try queue.append(ax);
-            try queue.append(ay);
-            try queue.append(@as(i32, @intCast(ai_idx)));
+                    try queue.append(ax);
+                    try queue.append(ay);
+                    try queue.append(@as(i32, @intCast(ai_idx)));
+                }
+            }
         }
     }
 }

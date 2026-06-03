@@ -113,23 +113,28 @@ pub fn erodeWalkableArea(
                 const span = chf.spans[span_idx];
 
                 // Check that there is a non-null adjacent span in each of the 4 cardinal directions
+                // inline for + `stopped` flag replaces two runtime `break`s: count the
+                // leading directions that have a connected, non-null neighbour, stopping
+                // at the first that fails — output-identical.
                 var neighbor_count: u32 = 0;
-                var dir: u8 = 0;
-                while (dir < 4) : (dir += 1) {
-                    const neighbor_con = span.getCon(@intCast(dir));
-                    if (neighbor_con == NOT_CONNECTED) {
-                        break;
+                var stopped = false;
+                inline for (0..4) |dir| {
+                    if (!stopped) {
+                        const neighbor_con = span.getCon(dir);
+                        if (neighbor_con == NOT_CONNECTED) {
+                            stopped = true;
+                        } else {
+                            const neighbor_x = x + comptime heightfield_mod.getDirOffsetX(dir);
+                            const neighbor_z = z + comptime heightfield_mod.getDirOffsetY(dir);
+                            const neighbor_cell_idx = @as(usize, @intCast(neighbor_x + neighbor_z * z_stride));
+                            const neighbor_span_idx = chf.cells[neighbor_cell_idx].index + neighbor_con;
+                            if (chf.areas[neighbor_span_idx] == NULL_AREA) {
+                                stopped = true;
+                            } else {
+                                neighbor_count += 1;
+                            }
+                        }
                     }
-
-                    const neighbor_x = x + heightfield_mod.getDirOffsetX(@intCast(dir));
-                    const neighbor_z = z + heightfield_mod.getDirOffsetY(@intCast(dir));
-                    const neighbor_cell_idx = @as(usize, @intCast(neighbor_x + neighbor_z * z_stride));
-                    const neighbor_span_idx = chf.cells[neighbor_cell_idx].index + neighbor_con;
-
-                    if (chf.areas[neighbor_span_idx] == NULL_AREA) {
-                        break;
-                    }
-                    neighbor_count += 1;
                 }
 
                 // At least one missing neighbour, so this is a boundary cell
@@ -315,31 +320,28 @@ pub fn medianFilterWalkableArea(
                     neighbor_areas[i] = chf.areas[span_idx];
                 }
 
-                var dir: u2 = 0;
-                while (dir < 4) : (dir += 1) {
-                    if (span.getCon(dir) == NOT_CONNECTED) {
-                        continue;
-                    }
+                inline for (0..4) |dir| {
+                    if (span.getCon(dir) != NOT_CONNECTED) {
+                        const ax = x + comptime heightfield_mod.getDirOffsetX(dir);
+                        const az = z + comptime heightfield_mod.getDirOffsetY(dir);
+                        const ai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax + az * z_stride))].index + span.getCon(dir)));
 
-                    const ax = x + heightfield_mod.getDirOffsetX(dir);
-                    const az = z + heightfield_mod.getDirOffsetY(dir);
-                    const ai = @as(usize, @intCast(chf.cells[@as(usize, @intCast(ax + az * z_stride))].index + span.getCon(dir)));
+                        if (chf.areas[ai] != NULL_AREA) {
+                            neighbor_areas[dir * 2 + 0] = chf.areas[ai];
+                        }
 
-                    if (chf.areas[ai] != NULL_AREA) {
-                        neighbor_areas[dir * 2 + 0] = chf.areas[ai];
-                    }
+                        const a_span = chf.spans[ai];
+                        const dir2: u2 = comptime @intCast((dir + 1) & 0x3);
+                        const neighbor_con2 = a_span.getCon(dir2);
 
-                    const a_span = chf.spans[ai];
-                    const dir2: u2 = @intCast((dir + 1) & 0x3);
-                    const neighbor_con2 = a_span.getCon(dir2);
+                        if (neighbor_con2 != NOT_CONNECTED) {
+                            const bx = ax + comptime heightfield_mod.getDirOffsetX(dir2);
+                            const bz = az + comptime heightfield_mod.getDirOffsetY(dir2);
+                            const bi = @as(usize, @intCast(chf.cells[@as(usize, @intCast(bx + bz * z_stride))].index + neighbor_con2));
 
-                    if (neighbor_con2 != NOT_CONNECTED) {
-                        const bx = ax + heightfield_mod.getDirOffsetX(dir2);
-                        const bz = az + heightfield_mod.getDirOffsetY(dir2);
-                        const bi = @as(usize, @intCast(chf.cells[@as(usize, @intCast(bx + bz * z_stride))].index + neighbor_con2));
-
-                        if (chf.areas[bi] != NULL_AREA) {
-                            neighbor_areas[dir * 2 + 1] = chf.areas[bi];
+                            if (chf.areas[bi] != NULL_AREA) {
+                                neighbor_areas[dir * 2 + 1] = chf.areas[bi];
+                            }
                         }
                     }
                 }
