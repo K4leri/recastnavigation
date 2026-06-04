@@ -28,6 +28,9 @@ pub const ConvexVolumeTool = struct {
     box_height: f32 = 6.0,
     box_descent: f32 = 1.0,
     poly_offset: f32 = 0.0,
+    new_mode: @import("input_geom.zig").VolumeMode = .surface,
+    band_above: f32 = 1.0,
+    band_below: f32 = 1.0,
     dirty: bool = false,
     editor: ?Edit = null, // open add/edit dialog for an area type
 
@@ -91,8 +94,14 @@ pub const ConvexVolumeTool = struct {
                     minh = @min(minh, y);
                     maxh = @max(maxh, y);
                 }
-                minh -= self.box_descent;
-                maxh += self.box_height;
+                if (self.new_mode == .surface) {
+                    // Generous bbox so the surface marker's column-cull doesn't clip.
+                    minh -= self.band_below + 1.0;
+                    maxh += self.band_above + 1.0;
+                } else {
+                    minh -= self.box_descent;
+                    maxh += self.box_height;
+                }
 
                 if (self.poly_offset > 0.01) {
                     var offset: [MAX_PTS * 2 * 3]f32 = undefined;
@@ -116,6 +125,12 @@ pub const ConvexVolumeTool = struct {
                             maxh,
                             self.area,
                         ) catch {};
+                        if (self.geom.volumes.items.len > 0) {
+                            const last = &self.geom.volumes.items[self.geom.volumes.items.len - 1];
+                            last.mode = self.new_mode;
+                            last.band_below = self.band_below;
+                            last.band_above = self.band_above;
+                        }
                         self.dirty = true;
                     }
                 } else {
@@ -126,6 +141,12 @@ pub const ConvexVolumeTool = struct {
                         maxh,
                         self.area,
                     ) catch {};
+                    if (self.geom.volumes.items.len > 0) {
+                        const last = &self.geom.volumes.items[self.geom.volumes.items.len - 1];
+                        last.mode = self.new_mode;
+                        last.band_below = self.band_below;
+                        last.band_above = self.band_above;
+                    }
                     self.dirty = true;
                 }
             }
@@ -194,8 +215,15 @@ pub const ConvexVolumeTool = struct {
     }
 
     pub fn drawMenu(self: *ConvexVolumeTool) void {
-        ui.slider(@src(), "Shape Ascent = {d:.1}", &self.box_height, 0.1, 20.0);
-        ui.slider(@src(), "Shape Descent = {d:.1}", &self.box_descent, 0.1, 20.0);
+        if (ui.radio(@src(), self.new_mode == .surface, "Mode: Surface", 320)) self.new_mode = .surface;
+        if (ui.radio(@src(), self.new_mode == .prism, "Mode: Prism", 321)) self.new_mode = .prism;
+        if (self.new_mode == .surface) {
+            ui.slider(@src(), "Band Above = {d:.1}", &self.band_above, 0.1, 10.0);
+            ui.slider(@src(), "Band Below = {d:.1}", &self.band_below, 0.1, 10.0);
+        } else {
+            ui.slider(@src(), "Shape Ascent = {d:.1}", &self.box_height, 0.1, 20.0);
+            ui.slider(@src(), "Shape Descent = {d:.1}", &self.box_descent, 0.1, 20.0);
+        }
         ui.slider(@src(), "Poly Offset = {d:.1}", &self.poly_offset, 0.0, 10.0);
 
         // Area Type — pick the type painted into the next volume (radio), plus a
