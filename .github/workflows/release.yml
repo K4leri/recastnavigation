@@ -70,11 +70,14 @@ jobs:
             libgl1-mesa-dev libx11-dev libxrandr-dev libxinerama-dev \
             libxcursor-dev libxi-dev libwayland-dev libxkbcommon-dev
 
-      # baseline CPU (-Dtarget без cpu-фич раннера) → бинарь крутится на ЛЮБОМ x86_64/arm64.
-      # Без этого ReleaseFast зашивал AVX-512/новые инструкции CI-раннера → illegal instruction
-      # и молчаливый вылет на машинах юзеров с другим CPU.
+      # baseline CPU (-Dcpu=baseline): the NATIVE target (so the GUI demo links the
+      # runner's system OpenGL / windowing — a full -Dtarget triple would treat this
+      # as a cross-compile and break that linking), but with baseline CPU features so
+      # the binary runs on ANY x86_64 / arm64 instead of the runner's exact CPU.
+      # Without it ReleaseFast baked AVX-512/newer instructions of the CI runner ->
+      # illegal-instruction silent crash on user machines with a different CPU.
       - name: Build demo (ReleaseFast, baseline CPU)
-        run: zig build demo-fast -Dtarget=${{ matrix.target }}
+        run: zig build demo-fast -Dcpu=baseline
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
