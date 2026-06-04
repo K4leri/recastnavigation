@@ -9,6 +9,7 @@ test {
     _ = @import("app_state.zig");
     _ = @import("io_util.zig");
     _ = @import("input_geom.zig");
+    _ = @import("convex_surface.zig");
     _ = @import("render/color_scheme.zig");
     _ = @import("persist/registry_io.zig");
     _ = @import("persist/scene_io.zig");
