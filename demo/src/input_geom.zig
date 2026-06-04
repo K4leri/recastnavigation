@@ -16,6 +16,10 @@ pub const ConvexVolume = struct {
     hmin: f32 = 0,
     hmax: f32 = 0,
     area: u8 = 0,
+    /// Stable identity, assigned monotonically by InputGeom.addConvexVolume.
+    /// Never reused, so selection/undo (cluster F) and repro (cluster I) can
+    /// reference a volume across add/remove. 0 = unassigned.
+    id: u32 = 0,
 };
 
 pub const InputGeom = struct {
@@ -36,6 +40,9 @@ pub const InputGeom = struct {
     off_area: Managed(u8),
     off_flags: Managed(u16),
     off_id: Managed(u32),
+    /// Next stable convex-volume id (monotonic; never reused). Starts at 1 so 0
+    /// stays the "unassigned" sentinel.
+    next_volume_id: u32 = 1,
 
     pub fn init(alloc: std.mem.Allocator) InputGeom {
         return .{
@@ -186,7 +193,8 @@ pub const InputGeom = struct {
 
     // --- convex volumes ---
     pub fn addConvexVolume(self: *InputGeom, verts: []const f32, nverts: i32, minh: f32, maxh: f32, area: u8) !void {
-        var vol = ConvexVolume{ .nverts = nverts, .hmin = minh, .hmax = maxh, .area = area };
+        var vol = ConvexVolume{ .nverts = nverts, .hmin = minh, .hmax = maxh, .area = area, .id = self.next_volume_id };
+        self.next_volume_id += 1;
         const n: usize = @intCast(nverts);
         @memcpy(vol.verts[0 .. n * 3], verts[0 .. n * 3]);
         try self.volumes.append(vol);
@@ -334,6 +342,21 @@ inline fn cross(a: [3]f32, b: [3]f32) [3]f32 {
 }
 inline fn dot(a: [3]f32, b: [3]f32) f32 {
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+test "addConvexVolume assigns monotonic non-reused ids" {
+    var geom = InputGeom.init(std.testing.allocator);
+    defer geom.deinit();
+
+    const tri = [_]f32{ 0, 0, 0, 1, 0, 0, 0, 0, 1 }; // 3 verts
+    try geom.addConvexVolume(&tri, 3, 0.0, 1.0, 0);
+    try geom.addConvexVolume(&tri, 3, 0.0, 1.0, 0);
+    try geom.addConvexVolume(&tri, 3, 0.0, 1.0, 0);
+
+    try std.testing.expectEqual(@as(u32, 1), geom.volumes.items[0].id);
+    try std.testing.expectEqual(@as(u32, 2), geom.volumes.items[1].id);
+    try std.testing.expectEqual(@as(u32, 3), geom.volumes.items[2].id);
+    try std.testing.expectEqual(@as(u32, 4), geom.next_volume_id);
 }
 
 test "raycast hits a quad on the ground" {
