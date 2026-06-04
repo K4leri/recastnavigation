@@ -63,7 +63,7 @@ pub const Scene = struct {
         return self.geom.volumes.items.len;
     }
     pub fn offMeshCount(self: *const Scene) usize {
-        return self.geom.off_id.items.len;
+        return self.geom.offMeshCount();
     }
 };
 
