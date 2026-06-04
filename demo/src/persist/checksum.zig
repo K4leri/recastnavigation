@@ -39,6 +39,7 @@ pub const HEADER_LEN: usize = 4 + 4 + 2 + 8 + 8;
 comptime {
     // Lock the on-disk header size; a field-encoding change must be deliberate.
     std.debug.assert(HEADER_LEN == 26);
+    std.debug.assert(HEADER_PREFIX_LEN == HEADER_LEN - 8); // header minus the u64 checksum
 }
 
 /// Header-prefix length (header WITHOUT the trailing checksum field).
@@ -134,35 +135,63 @@ pub const Record = struct {
 ///
 /// Success: returns Record (payload no-copy slice into buf, `next` = HEADER_LEN+payload_len).
 ///
-/// ChecksumMismatch: the header itself was structurally valid (magic/version/length
-/// all fit), but the payload bytes do not match the stored checksum. The caller MUST
-/// be able to skip this corrupt record and continue with the next one. To enable that,
-/// the *recoverable* skip offset is delivered out-of-band via `skip_out.*` (set to
-/// HEADER_LEN + payload_len) whenever a non-null `skip_out` is supplied. On any other
-/// error (Truncated/WrongMagic/WrongVersion) `skip_out.*` is left 0 because the record
-/// boundary is unknown/untrusted and the stream cannot be safely resynchronized.
+/// `skip_out` semantics (boundary trust):
+///   - Truncated (header too short, or payload doesn't fit): boundary unknown →
+///     `skip_out.*` left at 0.
+///   - WrongMagic: boundary untrusted → `skip_out.*` left at 0.
+///   - WrongVersion: boundary IS trusted (magic ok, payload fits) → `skip_out.*` = end,
+///     so a version-aware scanner can advance to the next record.
+///   - ChecksumMismatch: boundary trusted → `skip_out.*` = end.
+///   - Success: `skip_out.*` = end (same value as Record.next).
+///
+/// Ordering of checks:
+///   1. decode raw header fields; if buf too short → Truncated (skip_out stays 0).
+///   2. check magic; mismatch → WrongMagic (skip_out stays 0).
+///   3. compute plen / end with overflow guard; if payload doesn't fit → Truncated
+///      (skip_out stays 0 — boundary untrusted).
+///   4. boundary is now trusted: set skip_out.* = end.
+///   5. check version; mismatch → WrongVersion (skip_out already = end).
+///   6. verify checksum; mismatch → ChecksumMismatch (skip_out already = end).
+///   7. success → return Record{...}.
 pub fn readRecord(
     buf: []const u8,
     expect_magic: u32,
     expect_version: u32,
     skip_out: ?*usize,
 ) ChunkError!Record {
+    // Step 0: clear skip_out (boundary unknown until proven otherwise).
     if (skip_out) |p| p.* = 0;
 
-    const hdr = try unpackHeader(buf, expect_magic, expect_version);
+    // Step 1: decode raw header; requires HEADER_LEN bytes.
+    if (buf.len < HEADER_LEN) return error.Truncated;
+    const hdr = ChunkHeader{
+        .magic = std.mem.readInt(u32, buf[0..4], .little),
+        .version = std.mem.readInt(u32, buf[4..8], .little),
+        .type_flags = std.mem.readInt(u16, buf[8..10], .little),
+        .payload_len = std.mem.readInt(u64, buf[10..18], .little),
+        .checksum = std.mem.readInt(u64, buf[18..26], .little),
+    };
+
+    // Step 2: check magic; boundary untrusted on mismatch.
+    if (hdr.magic != expect_magic) return error.WrongMagic;
+
+    // Step 3: compute end; if payload doesn't fit, boundary untrusted.
     const plen = std.math.cast(usize, hdr.payload_len) orelse return error.Truncated;
     const end = std.math.add(usize, HEADER_LEN, plen) catch return error.Truncated;
     if (buf.len < end) return error.Truncated;
 
-    const payload = buf[HEADER_LEN..end];
-
-    // Declared length is consistent with the buffer: the record boundary IS known,
-    // so even on checksum failure the caller can skip exactly `end` bytes.
+    // Step 4: boundary is now trusted (magic ok, payload fits).
     if (skip_out) |p| p.* = end;
 
+    // Step 5: check version; skip_out already holds the trusted boundary.
+    if (hdr.version != expect_version) return error.WrongVersion;
+
+    // Step 6: verify checksum.
+    const payload = buf[HEADER_LEN..end];
     const want = ChunkHeader.computeChecksum(hdr.magic, hdr.version, hdr.type_flags, payload);
     if (want != hdr.checksum) return error.ChecksumMismatch;
 
+    // Step 7: success.
     return .{ .header = hdr, .payload = payload, .next = end };
 }
 
@@ -261,6 +290,32 @@ test "truncated header and truncated payload" {
     var skip: usize = 999;
     _ = readRecord(chunk[0 .. HEADER_LEN - 1], MAGIC, 1, &skip) catch {};
     try std.testing.expectEqual(@as(usize, 0), skip);
+}
+
+test "readRecord WrongMagic leaves skip_out at 0 (boundary untrusted)" {
+    const a = std.testing.allocator;
+    const MAGIC: u32 = 0x41524541;
+    const body = [_]u8{ 1, 2, 3, 4 };
+    // Build a valid chunk then corrupt the magic bytes in the serialized header.
+    const chunk = try buildChunk(a, MAGIC, 1, 0x00, &body);
+    defer a.free(chunk);
+    // Flip low 16 bits of the magic field (bytes 0..4, LE).
+    std.mem.writeInt(u32, chunk[0..4], MAGIC ^ 0xFFFF, .little);
+    var skip: usize = 12345;
+    try std.testing.expectError(error.WrongMagic, readRecord(chunk, MAGIC, 1, &skip));
+    try std.testing.expectEqual(@as(usize, 0), skip);
+}
+
+test "readRecord WrongVersion reports skip offset for version-aware scan" {
+    const a = std.testing.allocator;
+    const MAGIC: u32 = 0x41524541;
+    const body = [_]u8{ 1, 2, 3, 4 };
+    // Write version 2 on disk; reader expects version 1.
+    const chunk = try buildChunk(a, MAGIC, 2, 0x00, &body);
+    defer a.free(chunk);
+    var skip: usize = 0;
+    try std.testing.expectError(error.WrongVersion, readRecord(chunk, MAGIC, 1, &skip));
+    try std.testing.expectEqual(@as(usize, HEADER_LEN + body.len), skip);
 }
 
 test "readRecord success reports next offset for sequential scan" {
