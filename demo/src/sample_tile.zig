@@ -13,6 +13,7 @@ const ddgl = @import("debug_draw_gl.zig");
 const io_util = @import("io_util.zig");
 const ui = @import("ui.zig");
 const nav_io = @import("navmesh_io.zig");
+const convex_surface = @import("convex_surface.zig");
 
 const rc = recast.recast;
 const dt = recast.detour;
@@ -164,7 +165,10 @@ pub const SampleTile = struct {
         rc.area.erodeWalkableArea(ctx, walkable_radius, &chf, a) catch return false;
         for (geom.volumes.items) |*vol| {
             const nv: usize = @intCast(vol.nverts);
-            rc.area.markConvexPolyArea(ctx, vol.verts[0 .. nv * 3], nv, vol.hmin, vol.hmax, vol.area, &chf);
+            switch (vol.mode) {
+                .prism => rc.area.markConvexPolyArea(ctx, vol.verts[0 .. nv * 3], nv, vol.hmin, vol.hmax, vol.area, &chf),
+                .surface => convex_surface.markConvexPolyAreaSurface(vol.verts[0 .. nv * 3], nv, vol.band_below, vol.band_above, vol.area, &chf),
+            }
         }
         // Partitioning (ветвление по типу, 1-в-1 Sample_TileMesh::buildTileMesh).
         switch (s.partition_type) {

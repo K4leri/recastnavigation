@@ -15,6 +15,7 @@ const ui = @import("ui.zig");
 const nav_io = @import("navmesh_io.zig");
 const poly_visit = @import("render/poly_visit.zig");
 const scheme_state = @import("render/scheme_state.zig");
+const convex_surface = @import("convex_surface.zig");
 
 const rc = recast.recast;
 const dt = recast.detour;
@@ -264,7 +265,10 @@ pub const SampleSolo = struct {
         try rc.area.erodeWalkableArea(ctx, cfg.walkable_radius, &chf, a);
         for (geom.volumes.items) |*vol| {
             const nv: usize = @intCast(vol.nverts);
-            rc.area.markConvexPolyArea(ctx, vol.verts[0 .. nv * 3], nv, vol.hmin, vol.hmax, vol.area, &chf);
+            switch (vol.mode) {
+                .prism => rc.area.markConvexPolyArea(ctx, vol.verts[0 .. nv * 3], nv, vol.hmin, vol.hmax, vol.area, &chf),
+                .surface => convex_surface.markConvexPolyAreaSurface(vol.verts[0 .. nv * 3], nv, vol.band_below, vol.band_above, vol.area, &chf),
+            }
         }
         // Partitioning (ветвление по типу, 1-в-1 Sample_SoloMesh::handleBuild).
         switch (s.partition_type) {
