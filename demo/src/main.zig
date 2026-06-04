@@ -211,7 +211,10 @@ pub fn main(main_init: std.process.Init) !void {
     var log_rect: dvui.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
     var test_rect: dvui.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
     var rebuild_rect: dvui.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
-    var show_rebuild: bool = true; // the area-type rebuild mini-tool
+    // The rebuild mini-tool is hidden by default so it doesn't sit over the 3D view
+    // and swallow the mouse wheel; it pops up when a rebuild is actually needed, and
+    // can be pinned open from the panel checkbox.
+    var show_rebuild: bool = false;
     var test_choice: usize = 0;
 
     // bench-режим (--bench): камера крутится на 360°, без idle/cap, фикс число
@@ -734,7 +737,7 @@ pub fn main(main_init: std.process.Init) !void {
 
         // --- Rebuild mini-tool: notifies when an area-type *flags* / type-list
         //     change needs a navmesh rebuild, and lets the dev pick auto vs manual.
-        if (show_rebuild) {
+        if (show_rebuild or area_types.rebuild_needed) {
             var fw = dvui.floatingWindow(@src(), .{ .rect = &rebuild_rect, .resize = .none, .window_avoid = .none }, .{ .id_extra = 7 });
             defer fw.deinit();
             _ = dvui.windowHeader("Rebuild", "", &show_rebuild);
