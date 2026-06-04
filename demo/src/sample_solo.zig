@@ -441,17 +441,17 @@ pub const SampleSolo = struct {
             },
             .navmesh, .navmesh_trans => if (self.navmesh) |*n| {
                 dbg.debugDrawNavMesh(dd, n, 0);
-                if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active);
+                if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
             },
             // BVTree/Nodes: оригинал рисует САМ навмеш + overlay поверх (Sample_SoloMesh::render).
             .navmesh_bvtree => if (self.navmesh) |*n| {
                 dbg.debugDrawNavMesh(dd, n, 0);
-                if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active);
+                if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
                 dbg.debugDrawNavMeshBVTree(dd, n);
             },
             .navmesh_nodes => if (self.navmesh) |*n| {
                 dbg.debugDrawNavMesh(dd, n, 0);
-                if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active);
+                if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
             },
         }
 

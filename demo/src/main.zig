@@ -765,6 +765,7 @@ pub fn main(main_init: std.process.Init) !void {
             if (ui.radio(@src(), scheme_state.active == .area, "Area", 310)) scheme_state.active = .area;
             if (ui.radio(@src(), scheme_state.active == .flags, "Flags", 311)) scheme_state.active = .flags;
             if (ui.radio(@src(), scheme_state.active == .height, "Height", 312)) scheme_state.active = .height;
+            if (ui.radio(@src(), scheme_state.active == .component, "Component", 313)) scheme_state.active = .component;
 
             ui.section(@src(), "Debug Settings");
             switch (sample_kind) {

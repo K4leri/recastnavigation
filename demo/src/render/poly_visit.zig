@@ -11,6 +11,7 @@ const dt = recast.detour;
 const dbg = recast.debug;
 const sample = @import("../sample.zig");
 const cs = @import("color_scheme.zig");
+const components = @import("components.zig");
 
 const NavMesh = dt.NavMesh;
 
@@ -43,9 +44,11 @@ fn heightRange(mesh: *const NavMesh) HeightRange {
     return if (found) .{ .lo = lo, .hi = hi } else .{ .lo = 0, .hi = 0 };
 }
 
-pub fn fillNavMesh(dd: dbg.DebugDraw, mesh: *const NavMesh, scheme: cs.ColorScheme) void {
+pub fn fillNavMesh(dd: dbg.DebugDraw, mesh: *const NavMesh, scheme: cs.ColorScheme, alloc: std.mem.Allocator) void {
     // Height range needs a full extra traversal; only pay it for the height ramp.
     const hr: HeightRange = if (scheme == .height) heightRange(mesh) else .{ .lo = 0, .hi = 0 };
+    var comps: ?components.Components = if (scheme == .component) (components.compute(mesh, alloc) catch null) else null;
+    defer if (comps) |*c| c.deinit();
 
     dd.depthMask(false);
     dd.begin(.tris, 1.0);
@@ -65,6 +68,7 @@ pub fn fillNavMesh(dd: dbg.DebugDraw, mesh: *const NavMesh, scheme: cs.ColorSche
                 .height = polyHeight(tile, p),
                 .height_min = hr.lo,
                 .height_max = hr.hi,
+                .component = if (comps) |*c| @as(i32, c.getByIndex(ti, i)) else 0,
             };
             const col = cs.colorForPoly(scheme, ctx);
 
