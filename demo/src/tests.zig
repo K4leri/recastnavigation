@@ -12,4 +12,7 @@ test {
     _ = @import("render/color_scheme.zig");
     _ = @import("persist/registry_io.zig");
     _ = @import("persist/scene_io.zig");
+    _ = @import("persist/tile_store.zig");
+    _ = @import("persist/manifest.zig");
+    _ = @import("persist/scene_container.zig");
 }
