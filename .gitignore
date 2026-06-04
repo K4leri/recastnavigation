@@ -44,3 +44,6 @@ zig-pkg/
 *.ps1
 query_diff/
 ref_harness.cpp
+
+# reference test-case fixtures must be tracked (used by integration tests)
+!test_data/TestCases/*.txt
