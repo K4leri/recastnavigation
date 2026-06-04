@@ -23,6 +23,7 @@ const Camera = @import("camera.zig").Camera;
 const BuildContext = @import("build_context.zig").BuildContext;
 const AppState = @import("app_state.zig").AppState;
 const io_util = @import("io_util.zig");
+const scene_container = @import("persist/scene_container.zig");
 const InputGate = @import("input_gate.zig").InputGate;
 const tool_registry = @import("tool_registry.zig");
 const InputGeom = @import("input_geom.zig").InputGeom;
@@ -761,6 +762,20 @@ pub fn main(main_init: std.process.Init) !void {
             // a red "rebuild needed" notice is drawn bottom-left (see below).
             _ = dvui.checkbox(@src(), &area_types.auto_rebuild, "Auto-rebuild on changes", .{});
 
+            // --- Scene persistence (.recastscene container) ---
+            // Save only (Load is a follow-up). Solo sample only; reads geom + navmesh
+            // and writes files, never mutates live state.
+            if (sample_kind == .solo) {
+                ui.section(@src(), "Scene Persistence");
+                if (dvui.button(@src(), "Save Scene", .{}, .{ .id_extra = 998 })) {
+                    const cur_name: []const u8 = if (mesh_files.len > 0 and mesh_choice < mesh_files.len)
+                        mesh_files[mesh_choice]
+                    else
+                        "scene.obj";
+                    saveSceneNow(main_init.gpa, &geom, &solo, app.meshes_folder, cur_name, &bctx);
+                }
+            }
+
             ui.section(@src(), "Navmesh Colouring");
             if (ui.radio(@src(), scheme_state.active == .area, "Area", 310)) scheme_state.active = .area;
             if (ui.radio(@src(), scheme_state.active == .flags, "Flags", 311)) scheme_state.active = .flags;
@@ -1085,6 +1100,65 @@ fn loadMeshIndex(
     tester.setNavMesh(solo.navMesh());
     crowd_tool.setNavMesh(solo.navMesh());
     bctx.context().log(.progress, "Loaded {s}", .{files[idx]});
+}
+
+/// Save the current editable scene into a `<mesh>.recastscene/` container using the
+/// finished persistence layer (scene_container.saveScene). READ-ONLY w.r.t. live state:
+/// it only reads `geom` + the built navmesh and writes files. Errors are caught and
+/// logged (never propagated to a crash). Solo sample only.
+fn saveSceneNow(
+    gpa: std.mem.Allocator,
+    geom: *const InputGeom,
+    solo: *SampleSolo,
+    folder: []const u8,
+    mesh_name: []const u8,
+    bctx: *BuildContext,
+) void {
+    const dt = recast.detour;
+
+    // 1) Derive a deterministic container path: "<folder>/<stem>.recastscene".
+    //    Strip the mesh extension; fall back to "scene" if the name is empty.
+    const stem_full = if (mesh_name.len > 0) mesh_name else "scene";
+    const dot = std.mem.lastIndexOfScalar(u8, stem_full, '.');
+    const stem = if (dot) |d| stem_full[0..d] else stem_full;
+    const container_path = std.fmt.allocPrint(gpa, "{s}/{s}.recastscene", .{ folder, stem }) catch |e| {
+        bctx.context().log(.err, "Save Scene: path alloc failed: {s}", .{@errorName(e)});
+        return;
+    };
+    defer gpa.free(container_path);
+
+    // 2) Acquire io exactly like io_util.zig / the persist tests (Threaded backend).
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // 3) The .gset geometry reference written into scene.gset.
+    const gset_name = if (mesh_name.len > 0) mesh_name else "mesh.obj";
+
+    // 4) Tiles come from the live built navmesh (scene_container/tile_store walk
+    //    mesh.tiles, take data[0..data_size] per valid tile, kind=mset). If there is
+    //    no built navmesh, persist an empty one (geometry + registries + .gset still
+    //    written, zero tiles) — never mutate live state.
+    if (solo.navMesh()) |nm| {
+        scene_container.saveScene(io, gpa, container_path, geom, nm, gset_name, null) catch |e| {
+            bctx.context().log(.err, "Save Scene failed ({s}): {s}", .{ container_path, @errorName(e) });
+            return;
+        };
+        bctx.context().log(.progress, "Saved scene to {s}", .{container_path});
+    } else {
+        // No built navmesh: build a throwaway empty navmesh just to satisfy the
+        // *const dt.NavMesh param; saveAllTiles finds zero valid tiles.
+        var empty = dt.NavMesh.init(gpa, dt.NavMeshParams.init()) catch |e| {
+            bctx.context().log(.err, "Save Scene: empty navmesh init failed: {s}", .{@errorName(e)});
+            return;
+        };
+        defer empty.deinit();
+        scene_container.saveScene(io, gpa, container_path, geom, &empty, gset_name, null) catch |e| {
+            bctx.context().log(.err, "Save Scene failed ({s}): {s}", .{ container_path, @errorName(e) });
+            return;
+        };
+        bctx.context().log(.progress, "Saved scene to {s} (no navmesh built; 0 tiles)", .{container_path});
+    }
 }
 
 /// Точка пикинга: пересечение с мешем (если есть), иначе с плоскостью y=0.
