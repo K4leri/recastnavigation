@@ -761,6 +761,8 @@ pub fn main(main_init: std.process.Init) !void {
                     .tile => _ = tile.build(),
                     .temp => _ = temp.build(),
                 }
+                // Manual Build satisfies any pending rebuild -> clear the red notice.
+                area_types.rebuild_needed = false;
             }
 
             // Area-type *flag*/type changes are baked into tile data, so they need a
