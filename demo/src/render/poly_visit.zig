@@ -42,7 +42,8 @@ fn heightRange(mesh: *const NavMesh) struct { lo: f32, hi: f32 } {
 }
 
 pub fn fillNavMesh(dd: dbg.DebugDraw, mesh: *const NavMesh, scheme: cs.ColorScheme) void {
-    const hr = heightRange(mesh);
+    // Height range needs a full extra traversal; only pay it for the height ramp.
+    const hr = if (scheme == .height) heightRange(mesh) else .{ .lo = @as(f32, 0), .hi = @as(f32, 0) };
 
     dd.depthMask(false);
     dd.begin(.tris, 1.0);
@@ -73,7 +74,7 @@ pub fn fillNavMesh(dd: dbg.DebugDraw, mesh: *const NavMesh, scheme: cs.ColorSche
                         const v_idx = @as(usize, p.verts[t[k]]) * 3;
                         dd.vertex(@ptrCast(&tile.verts[v_idx]), col);
                     } else {
-                        const d_idx = @as(usize, pd.vert_base + (t[k] - p.vert_count)) * 3;
+                        const d_idx = (@as(usize, pd.vert_base) + @as(usize, t[k] - p.vert_count)) * 3;
                         dd.vertex(@ptrCast(&tile.detail_verts[d_idx]), col);
                     }
                 }
