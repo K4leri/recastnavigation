@@ -229,6 +229,12 @@ pub fn main(main_init: std.process.Init) !void {
     var gate = InputGate{}; // курсор над панелью / фокус в textfield (с прошлого кадра)
     var prev_esc = false; // фронт Esc (чтобы Esc в редакторе не закрывал приложение)
     var new_flag_name: [20]u8 = [_]u8{0} ** 20; // поле ввода имени нового poly-флага
+    var variant_name: [32]u8 = [_]u8{0} ** 32; // поле ввода тега варианта сцены (Save Scene)
+    // Кэш списка вариантов сцены (Load): сканируется по требованию (кнопка Refresh и
+    // при смене меша), не каждый кадр. Освобождается через freeVariants.
+    var variants: []SceneVariant = &.{};
+    var variants_stem: []const u8 = ""; // stem, для которого построен кэш (owned)
+    defer freeVariants(main_init.gpa, &variants, &variants_stem);
     var pick_hit: ?Vec3 = null; // последняя точка пикинга по земле
     const dt: f32 = 1.0 / 60.0;
 
@@ -767,19 +773,61 @@ pub fn main(main_init: std.process.Init) !void {
             // and writes files, never mutates live state.
             if (sample_kind == .solo) {
                 ui.section(@src(), "Scene Persistence");
-                if (dvui.button(@src(), "Save Scene", .{}, .{ .id_extra = 998 })) {
-                    const cur_name: []const u8 = if (mesh_files.len > 0 and mesh_choice < mesh_files.len)
-                        mesh_files[mesh_choice]
-                    else
-                        "scene.obj";
-                    saveSceneNow(main_init.gpa, &geom, &solo, app.meshes_folder, cur_name, &bctx);
+                const cur_name: []const u8 = if (mesh_files.len > 0 and mesh_choice < mesh_files.len)
+                    mesh_files[mesh_choice]
+                else
+                    "scene.obj";
+                const cur_stem = stemOf(cur_name);
+
+                // Rebuild the variant cache when it is stale (different mesh stem) or
+                // empty. Per-frame scanning would be wasteful + leak-prone, so the list
+                // is cached and only refreshed here (stem change) or via Refresh below.
+                if (!std.mem.eql(u8, variants_stem, cur_stem)) {
+                    rebuildVariants(main_init.gpa, app.meshes_folder, cur_stem, &variants, &variants_stem, &bctx);
                 }
-                if (dvui.button(@src(), "Load Scene", .{}, .{ .id_extra = 997 })) {
-                    const cur_name: []const u8 = if (mesh_files.len > 0 and mesh_choice < mesh_files.len)
-                        mesh_files[mesh_choice]
-                    else
-                        "scene.obj";
-                    loadSceneNow(main_init.gpa, app.meshes_folder, cur_name, &geom, &solo, &tile, &temp, &tester, &crowd_tool, &prune_tool, &cam, &bctx);
+
+                // --- Save: Variant text field + Save Scene button ---
+                {
+                    var row = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
+                    defer row.deinit();
+                    dvui.labelNoFmt(@src(), "Variant", .{}, .{ .gravity_y = 0.5 });
+                    {
+                        var te = dvui.textEntry(@src(), .{ .text = .{ .buffer = &variant_name } }, .{ .expand = .horizontal });
+                        te.deinit();
+                    }
+                }
+                if (dvui.button(@src(), "Save Scene", .{}, .{ .id_extra = 998 })) {
+                    const variant_in = std.mem.sliceTo(&variant_name, 0);
+                    saveSceneNow(main_init.gpa, &geom, &solo, app.meshes_folder, cur_name, variant_in, &bctx);
+                    // Refresh the list so the just-saved variant appears (and newest-first).
+                    rebuildVariants(main_init.gpa, app.meshes_folder, cur_stem, &variants, &variants_stem, &bctx);
+                }
+
+                // --- Load: scrollable selectable list of this mesh's variants ---
+                {
+                    var row = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
+                    defer row.deinit();
+                    dvui.labelNoFmt(@src(), "Variants (newest first)", .{}, .{ .gravity_y = 0.5 });
+                    if (dvui.button(@src(), "Refresh", .{}, .{ .id_extra = 996, .gravity_x = 1.0 })) {
+                        rebuildVariants(main_init.gpa, app.meshes_folder, cur_stem, &variants, &variants_stem, &bctx);
+                    }
+                }
+                if (variants.len == 0) {
+                    dvui.labelNoFmt(@src(), "(no saved variants)", .{}, .{});
+                } else {
+                    var vsc = dvui.scrollArea(@src(), .{}, .{ .expand = .horizontal, .min_size_content = .{ .h = 120 } });
+                    defer vsc.deinit();
+                    for (variants, 0..) |v, vi| {
+                        // index 0 = newest -> highlighted as the default selection.
+                        const lbl = if (vi == 0)
+                            std.fmt.allocPrint(main_init.gpa, "{s}  (newest)", .{v.variant}) catch v.variant
+                        else
+                            v.variant;
+                        defer if (vi == 0 and lbl.ptr != v.variant.ptr) main_init.gpa.free(lbl);
+                        if (dvui.button(@src(), lbl, .{}, .{ .id_extra = 5000 + vi, .expand = .horizontal })) {
+                            loadSceneNow(main_init.gpa, app.meshes_folder, v.path, cur_name, &geom, &solo, &tile, &temp, &tester, &crowd_tool, &prune_tool, &cam, &bctx);
+                        }
+                    }
                 }
             }
 
@@ -1109,6 +1157,161 @@ fn loadMeshIndex(
     bctx.context().log(.progress, "Loaded {s}", .{files[idx]});
 }
 
+// ===========================================================================
+// Named scene variants (Save/Load): one mesh -> many `<stem>__<variant>.recastscene`
+// containers, listed newest-first. UI-only helpers (the persist layer is untouched).
+// ===========================================================================
+
+/// Max sanitized variant length (file-name safe; keeps container names short).
+const VARIANT_MAX = 24;
+
+/// One saved variant of the current mesh: its display tag, the OWNED full container
+/// path to pass to loadSceneNow, and the manifest mtime (ns) used to sort newest-first.
+const SceneVariant = struct {
+    variant: []const u8, // owned
+    path: []const u8, // owned ("<folder>/<stem>__<variant>.recastscene")
+    mtime_ns: i128,
+};
+
+/// Strip a mesh file's extension: "dungeon.obj" -> "dungeon" (last '.').
+fn stemOf(mesh_name: []const u8) []const u8 {
+    const dot = std.mem.lastIndexOfScalar(u8, mesh_name, '.');
+    return if (dot) |d| mesh_name[0..d] else mesh_name;
+}
+
+/// Sanitize a user variant tag into a safe file-name fragment: keep [A-Za-z0-9-_],
+/// replace anything else with '_', cap at VARIANT_MAX. Empty/all-stripped -> "default".
+fn sanitizeVariant(in: []const u8, buf: *[VARIANT_MAX]u8) []const u8 {
+    var n: usize = 0;
+    for (in) |c| {
+        if (n >= VARIANT_MAX) break;
+        const ok = (c >= 'A' and c <= 'Z') or (c >= 'a' and c <= 'z') or
+            (c >= '0' and c <= '9') or c == '-' or c == '_';
+        buf[n] = if (ok) c else '_';
+        n += 1;
+    }
+    if (n == 0) return "default";
+    return buf[0..n];
+}
+
+/// Parse a container directory name back into its variant tag, given the current stem.
+/// Rules (per design): the name must end with ".recastscene"; strip that. If what
+/// remains is exactly `<stem>` -> legacy variant "default". Otherwise it must be
+/// `<stem>__<variant>` (split on the LAST "__"; the prefix before it must equal stem).
+/// Returns null if the name does not belong to this stem.
+fn variantOf(dir_name: []const u8, stem: []const u8) ?[]const u8 {
+    const ext = ".recastscene";
+    if (!std.mem.endsWith(u8, dir_name, ext)) return null;
+    const base = dir_name[0 .. dir_name.len - ext.len];
+    if (std.mem.eql(u8, base, stem)) return "default"; // legacy "<stem>.recastscene"
+    if (std.mem.lastIndexOf(u8, base, "__")) |i| {
+        if (std.mem.eql(u8, base[0..i], stem)) return base[i + 2 ..];
+    }
+    return null;
+}
+
+/// Free a variant cache slice + its remembered stem; reset both to empty.
+fn freeVariants(gpa: std.mem.Allocator, variants: *[]SceneVariant, stem: *[]const u8) void {
+    for (variants.*) |v| {
+        gpa.free(v.variant);
+        gpa.free(v.path);
+    }
+    if (variants.len > 0) gpa.free(variants.*);
+    variants.* = &.{};
+    if (stem.len > 0) gpa.free(stem.*);
+    stem.* = "";
+}
+
+/// (Re)scan `folder` for directories matching `<stem>__*.recastscene` (and the legacy
+/// `<stem>.recastscene`), build the variant list sorted by manifest mtime DESC
+/// (newest first), and replace the cache. All errors are caught + logged (never crash);
+/// on any failure the cache is left empty. Caps at 32 variants.
+fn rebuildVariants(
+    gpa: std.mem.Allocator,
+    folder: []const u8,
+    stem: []const u8,
+    variants: *[]SceneVariant,
+    stem_cache: *[]const u8,
+    bctx: *BuildContext,
+) void {
+    // Drop the old cache first (always re-points stem_cache to the requested stem so we
+    // don't rescan the same stem every frame even when it yields zero variants).
+    freeVariants(gpa, variants, stem_cache);
+    stem_cache.* = gpa.dupe(u8, stem) catch {
+        bctx.context().log(.err, "Variants: stem dup failed", .{});
+        return;
+    };
+
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var list = std.array_list.Managed(SceneVariant).init(gpa);
+    defer list.deinit(); // items moved into the cache on success
+    var ok = false;
+    defer if (!ok) for (list.items) |v| {
+        gpa.free(v.variant);
+        gpa.free(v.path);
+    };
+
+    var dir = std.Io.Dir.cwd().openDir(io, folder, .{ .iterate = true }) catch |e| {
+        bctx.context().log(.err, "Variants: open {s}: {s}", .{ folder, @errorName(e) });
+        return;
+    };
+    defer dir.close(io);
+
+    var it = dir.iterate();
+    while (it.next(io) catch |e| {
+        bctx.context().log(.err, "Variants: iterate {s}: {s}", .{ folder, @errorName(e) });
+        return;
+    }) |entry| {
+        if (entry.kind != .directory) continue;
+        const variant = variantOf(entry.name, stem) orelse continue;
+        if (list.items.len >= 32) break;
+
+        const path = std.fmt.allocPrint(gpa, "{s}/{s}", .{ folder, entry.name }) catch continue;
+        // mtime from the manifest file (written LAST on save -> best "last-edited"
+        // signal); fall back to the container dir's mtime if the manifest is absent.
+        const manifest_sub = std.fmt.allocPrint(gpa, "{s}/manifest", .{path}) catch {
+            gpa.free(path);
+            continue;
+        };
+        defer gpa.free(manifest_sub);
+        const mtime_ns: i128 = blk: {
+            if (std.Io.Dir.cwd().statFile(io, manifest_sub, .{})) |st| {
+                break :blk @intCast(st.mtime.nanoseconds);
+            } else |_| {}
+            if (std.Io.Dir.cwd().statFile(io, path, .{})) |st| {
+                break :blk @intCast(st.mtime.nanoseconds);
+            } else |_| {}
+            break :blk 0; // unknown mtime -> sorts oldest (name tiebreak below)
+        };
+
+        const vdup = gpa.dupe(u8, variant) catch {
+            gpa.free(path);
+            continue;
+        };
+        list.append(.{ .variant = vdup, .path = path, .mtime_ns = mtime_ns }) catch {
+            gpa.free(vdup);
+            gpa.free(path);
+            continue;
+        };
+    }
+
+    std.mem.sort(SceneVariant, list.items, {}, struct {
+        fn lessThan(_: void, a: SceneVariant, b: SceneVariant) bool {
+            if (a.mtime_ns != b.mtime_ns) return a.mtime_ns > b.mtime_ns; // newest first
+            return std.mem.lessThan(u8, a.variant, b.variant); // stable name tiebreak
+        }
+    }.lessThan);
+
+    variants.* = list.toOwnedSlice() catch {
+        bctx.context().log(.err, "Variants: toOwnedSlice failed", .{});
+        return;
+    };
+    ok = true;
+}
+
 /// Save the current editable scene into a `<mesh>.recastscene/` container using the
 /// finished persistence layer (scene_container.saveScene). READ-ONLY w.r.t. live state:
 /// it only reads `geom` + the built navmesh and writes files. Errors are caught and
@@ -1119,16 +1322,19 @@ fn saveSceneNow(
     solo: *SampleSolo,
     folder: []const u8,
     mesh_name: []const u8,
+    variant_in: []const u8,
     bctx: *BuildContext,
 ) void {
     const dt = recast.detour;
 
-    // 1) Derive a deterministic container path: "<folder>/<stem>.recastscene".
-    //    Strip the mesh extension; fall back to "scene" if the name is empty.
-    const stem_full = if (mesh_name.len > 0) mesh_name else "scene";
-    const dot = std.mem.lastIndexOfScalar(u8, stem_full, '.');
-    const stem = if (dot) |d| stem_full[0..d] else stem_full;
-    const container_path = std.fmt.allocPrint(gpa, "{s}/{s}.recastscene", .{ folder, stem }) catch |e| {
+    // 1) Derive a deterministic container path with a variant tag:
+    //    "<folder>/<stem>__<variant>.recastscene". Strip the mesh extension; fall back
+    //    to "scene" if the name is empty. The variant is sanitized to a safe filename
+    //    ([A-Za-z0-9-_], others -> '_', capped ~24); empty -> "default".
+    const stem = stemOf(if (mesh_name.len > 0) mesh_name else "scene");
+    var vbuf: [VARIANT_MAX]u8 = undefined;
+    const variant = sanitizeVariant(variant_in, &vbuf);
+    const container_path = std.fmt.allocPrint(gpa, "{s}/{s}__{s}.recastscene", .{ folder, stem, variant }) catch |e| {
         bctx.context().log(.err, "Save Scene: path alloc failed: {s}", .{@errorName(e)});
         return;
     };
@@ -1179,6 +1385,7 @@ fn saveSceneNow(
 fn loadSceneNow(
     gpa: std.mem.Allocator,
     folder: []const u8,
+    container_path: []const u8,
     mesh_name: []const u8,
     geom: *InputGeom,
     solo: *SampleSolo,
@@ -1190,15 +1397,8 @@ fn loadSceneNow(
     cam: *Camera,
     bctx: *BuildContext,
 ) void {
-    // 1) Same container path scheme as Save: "<folder>/<stem>.recastscene".
-    const stem_full = if (mesh_name.len > 0) mesh_name else "scene";
-    const dot = std.mem.lastIndexOfScalar(u8, stem_full, '.');
-    const stem = if (dot) |d| stem_full[0..d] else stem_full;
-    const container_path = std.fmt.allocPrint(gpa, "{s}/{s}.recastscene", .{ folder, stem }) catch |e| {
-        bctx.context().log(.err, "Load Scene: path alloc failed: {s}", .{@errorName(e)});
-        return;
-    };
-    defer gpa.free(container_path);
+    // 1) The caller passes the full "<folder>/<stem>__<variant>.recastscene" container
+    //    path of the selected variant (legacy "<stem>.recastscene" also accepted as-is).
 
     // 2) io acquisition mirrors saveSceneNow / io_util (Threaded backend).
     var threaded: std.Io.Threaded = .init(gpa, .{});
