@@ -18,9 +18,10 @@ const PF = sample.SamplePolyFlags;
 const MAX_POLYS = 256;
 const MAX_SMOOTH = 2048;
 
-// Цвета подсветки как в оригинале Tool_NavMeshTester.
-const startCol = dbg.rgba(128, 25, 0, 192);
-const endCol = dbg.rgba(51, 102, 0, 129);
+// Цвета подсветки. NB: цвета относительно upstream поменяны местами — start
+// рисуется зелёным, end красным (интуитивнее: LMB ставит зелёный старт).
+const startCol = dbg.rgba(51, 102, 0, 192);
+const endCol = dbg.rgba(128, 25, 0, 129);
 const pathCol = dbg.rgba(0, 0, 0, 64);
 
 pub const ToolMode = enum {
