@@ -7,6 +7,7 @@ const dvui = @import("dvui");
 const recast = @import("recast-nav");
 const ddgl = @import("debug_draw_gl.zig");
 const sample = @import("sample.zig");
+const area_types = @import("area_types.zig");
 const ui = @import("ui.zig");
 
 const dt = recast.detour;
@@ -94,6 +95,7 @@ pub const NavMeshTesterTool = struct {
     pub fn init(alloc: std.mem.Allocator, dd_gl: *ddgl.DebugDrawGL) NavMeshTesterTool {
         var self = NavMeshTesterTool{ .alloc = alloc, .dd_gl = dd_gl, .filter = dt.QueryFilter.init() };
         self.applyFlags();
+        area_types.applyCosts(&self.filter); // per-area movement cost from the registry
         return self;
     }
 

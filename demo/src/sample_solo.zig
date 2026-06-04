@@ -6,6 +6,7 @@ const dvui = @import("dvui");
 const zgl = @import("zgl");
 const recast = @import("recast-nav");
 const sample = @import("sample.zig");
+const area_types = @import("area_types.zig");
 const InputGeom = @import("input_geom.zig").InputGeom;
 const BuildContext = @import("build_context.zig").BuildContext;
 const ddgl = @import("debug_draw_gl.zig");
@@ -287,19 +288,14 @@ pub const SampleSolo = struct {
         const poly_flags = try a.alloc(u16, npolys);
         defer a.free(poly_flags);
         for (0..npolys) |i| {
-            // RecastDemo: walkable area (63) -> ground. Также нормализуем area > 5
-            // (валидные SamplePolyAreas = 0..5): WIP-сборка местами оставляет area
-            // неинициализированной (0xAA) -> иначе навмеш красится мусорными цветами.
-            if (pm.areas[i] == rc.config.AreaId.WALKABLE_AREA or pm.areas[i] > @intFromEnum(sample.SamplePolyAreas.jump)) {
+            // RecastDemo: walkable sentinel (63) -> ground. Also normalize areas the
+            // registry doesn't know (uninitialised 0xAA from WIP builds) -> ground,
+            // so the navmesh doesn't paint with garbage colours. Flags come from the
+            // area-type registry (area -> poly flags), supporting custom types.
+            if (pm.areas[i] == rc.config.AreaId.WALKABLE_AREA or area_types.get(pm.areas[i]) == null) {
                 pm.areas[i] = @intFromEnum(sample.SamplePolyAreas.ground);
             }
-            const area = pm.areas[i];
-            poly_flags[i] = switch (area) {
-                @intFromEnum(sample.SamplePolyAreas.ground), @intFromEnum(sample.SamplePolyAreas.grass), @intFromEnum(sample.SamplePolyAreas.road) => sample.SamplePolyFlags.walk,
-                @intFromEnum(sample.SamplePolyAreas.water) => sample.SamplePolyFlags.swim,
-                @intFromEnum(sample.SamplePolyAreas.door) => sample.SamplePolyFlags.walk | sample.SamplePolyFlags.door,
-                else => sample.SamplePolyFlags.walk,
-            };
+            poly_flags[i] = area_types.flagsFor(pm.areas[i]);
         }
 
         // 9. navmesh data

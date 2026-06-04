@@ -7,6 +7,7 @@ const recast = @import("recast-nav");
 const ddgl = @import("debug_draw_gl.zig");
 const ui = @import("ui.zig");
 const sample = @import("sample.zig");
+const area_types = @import("area_types.zig");
 const vh_mod = @import("value_history.zig");
 const ValueHistory = vh_mod.ValueHistory;
 const io_util = @import("io_util.zig");
@@ -106,6 +107,7 @@ pub const CrowdTool = struct {
                 if (cc.getEditableFilter(0)) |f| {
                     f.setIncludeFlags(0xffff ^ sample.SamplePolyFlags.disabled);
                     f.setExcludeFlags(sample.SamplePolyFlags.disabled);
+                    area_types.applyCosts(f); // per-area movement cost — agents avoid expensive areas
                 }
                 // 4 пресета obstacle-avoidance (Avoidance Quality 0..3) — 1-в-1
                 // CrowdToolState::init (Tool_Crowd.cpp:134-165). Базируются на дефолте dtCrowd,

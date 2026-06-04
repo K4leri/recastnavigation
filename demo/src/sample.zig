@@ -48,18 +48,10 @@ pub const SampleToolType = enum(u8) {
 };
 
 /// Цвет области для отрисовки navmesh (Sample::SampleDebugDraw::areaToCol).
-/// Switch по числу (не enum) — устойчив к областям вне SamplePolyAreas.
+/// Теперь берётся из рантайм-реестра типов (area_types) — цвет редактируемый,
+/// поддержаны пользовательские типы. Неизвестная область -> красный (как оригинал).
 pub fn sampleAreaToCol(area: u32) u32 {
-    return switch (area) {
-        @intFromEnum(SamplePolyAreas.ground) => recast.debug.rgba(0, 192, 255, 255),
-        @intFromEnum(SamplePolyAreas.water) => recast.debug.rgba(0, 0, 255, 255),
-        @intFromEnum(SamplePolyAreas.road) => recast.debug.rgba(50, 20, 12, 255),
-        @intFromEnum(SamplePolyAreas.door) => recast.debug.rgba(0, 255, 255, 255),
-        @intFromEnum(SamplePolyAreas.grass) => recast.debug.rgba(0, 255, 0, 255),
-        @intFromEnum(SamplePolyAreas.jump) => recast.debug.rgba(255, 255, 0, 255),
-        else => recast.debug.rgba(255, 0, 0, 255), // оригинал: unexpected -> red
-
-    };
+    return @import("area_types.zig").colorFor(area);
 }
 
 // ============================================================================

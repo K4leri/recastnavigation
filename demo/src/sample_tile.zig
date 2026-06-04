@@ -6,6 +6,7 @@ const std = @import("std");
 const dvui = @import("dvui");
 const recast = @import("recast-nav");
 const sample = @import("sample.zig");
+const area_types = @import("area_types.zig");
 const InputGeom = @import("input_geom.zig").InputGeom;
 const BuildContext = @import("build_context.zig").BuildContext;
 const ddgl = @import("debug_draw_gl.zig");
@@ -183,8 +184,9 @@ pub const SampleTile = struct {
         const poly_flags = a.alloc(u16, npolys) catch return false;
         defer a.free(poly_flags);
         for (0..npolys) |i| {
-            if (pmesh.areas[i] == rc.config.AreaId.WALKABLE_AREA) pmesh.areas[i] = @intFromEnum(sample.SamplePolyAreas.ground);
-            poly_flags[i] = sample.SamplePolyFlags.walk;
+            if (pmesh.areas[i] == rc.config.AreaId.WALKABLE_AREA or area_types.get(pmesh.areas[i]) == null)
+                pmesh.areas[i] = @intFromEnum(sample.SamplePolyAreas.ground);
+            poly_flags[i] = area_types.flagsFor(pmesh.areas[i]);
         }
 
         const params = dt.NavMeshCreateParams{

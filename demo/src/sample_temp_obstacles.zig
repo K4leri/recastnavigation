@@ -5,6 +5,7 @@ const std = @import("std");
 const dvui = @import("dvui");
 const recast = @import("recast-nav");
 const sample = @import("sample.zig");
+const area_types = @import("area_types.zig");
 const InputGeom = @import("input_geom.zig").InputGeom;
 const BuildContext = @import("build_context.zig").BuildContext;
 const ddgl = @import("debug_draw_gl.zig");
@@ -46,8 +47,9 @@ const comp_vtable = tc.TileCacheCompressor.VTable{
 // --- MeshProcess: помечает полигоны тайла как проходимые ---
 fn meshProcess(_: *anyopaque, _: *anyopaque, poly_areas: []u8, poly_flags: []u16) void {
     for (poly_areas, 0..) |*ar, i| {
-        if (ar.* == tc.TILECACHE_WALKABLE_AREA) ar.* = @intFromEnum(sample.SamplePolyAreas.ground);
-        poly_flags[i] = sample.SamplePolyFlags.walk;
+        if (ar.* == tc.TILECACHE_WALKABLE_AREA or area_types.get(ar.*) == null)
+            ar.* = @intFromEnum(sample.SamplePolyAreas.ground);
+        poly_flags[i] = area_types.flagsFor(ar.*);
     }
 }
 
