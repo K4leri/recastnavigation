@@ -9,4 +9,5 @@ test {
     _ = @import("app_state.zig");
     _ = @import("io_util.zig");
     _ = @import("input_geom.zig");
+    _ = @import("render/color_scheme.zig");
 }
