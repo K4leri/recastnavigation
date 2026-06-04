@@ -24,6 +24,7 @@ const BuildContext = @import("build_context.zig").BuildContext;
 const AppState = @import("app_state.zig").AppState;
 const io_util = @import("io_util.zig");
 const InputGate = @import("input_gate.zig").InputGate;
+const tool_registry = @import("tool_registry.zig");
 const InputGeom = @import("input_geom.zig").InputGeom;
 const SampleSolo = @import("sample_solo.zig").SampleSolo;
 const SampleTile = @import("sample_tile.zig").SampleTile;
@@ -35,7 +36,7 @@ const CrowdTool = @import("tool_crowd.zig").CrowdTool;
 const NavMeshPruneTool = @import("tool_prune.zig").NavMeshPruneTool;
 const Vec3 = recast.math.Vec3;
 
-const ActiveTool = enum { none, tester, prune, offmesh, convex, crowd };
+const ActiveTool = tool_registry.ToolId; // { none, tester, prune, offmesh, convex, crowd }
 
 // Управление обработкой ошибок OpenGL в zgl.
 pub const opengl_error_handling = zgl.ErrorHandling.assert;
@@ -671,12 +672,9 @@ pub fn main(main_init: std.process.Init) !void {
                 dvui.labelNoFmt(@src(), "LMB: add  Shift+LMB: remove", .{}, .{});
             } else {
                 ui.section(@src(), "Tool Selection");
-                if (ui.radio(@src(), active_tool == .tester, "Test Navmesh", 201)) active_tool = .tester;
-                if (ui.radio(@src(), active_tool == .prune, "Prune NavMesh", 206)) active_tool = .prune;
-                if (ui.radio(@src(), active_tool == .offmesh, "Create Off-Mesh Connections", 202)) active_tool = .offmesh;
-                if (ui.radio(@src(), active_tool == .convex, "Create Convex Volumes", 203)) active_tool = .convex;
-                if (ui.radio(@src(), active_tool == .crowd, "Create Crowds", 204)) active_tool = .crowd;
-                if (ui.radio(@src(), active_tool == .none, "Disabled", 205)) active_tool = .none;
+                for (tool_registry.entries) |e| {
+                    if (ui.radio(@src(), active_tool == e.id, e.label, e.radio_id)) active_tool = e.id;
+                }
 
                 ui.section(@src(), "Tool Settings");
                 switch (active_tool) {
@@ -966,14 +964,7 @@ pub fn main(main_init: std.process.Init) !void {
             }
 
             // экранные подсказки (нижний левый угол)
-            const hint = switch (active_tool) {
-                .tester => "LMB: set start   Shift+LMB: set end",
-                .prune => "LMB: click fill area",
-                .convex => "LMB: add point, click red point to build   Shift+LMB: delete volume",
-                .offmesh => "LMB: 1st=start, 2nd=end",
-                .crowd => "Create/Move/Select via Tools panel",
-                .none => "RMB: rotate   WASD/QE: move   wheel: zoom   F: reset view",
-            };
+            const hint = tool_registry.hintFor(active_tool);
             // Controls hint — top-centre (white).
             ui.screenTextEx(@as(f32, @floatFromInt(fb[0])) * 0.5, 16, hint, white, true);
             // Red "rebuild needed" notice — bottom-centre. Shown only when a baked
