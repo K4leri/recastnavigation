@@ -31,9 +31,10 @@ const NavMeshTesterTool = @import("tool_navmesh_tester.zig").NavMeshTesterTool;
 const OffMeshConnectionTool = @import("tool_offmesh.zig").OffMeshConnectionTool;
 const ConvexVolumeTool = @import("tool_convex.zig").ConvexVolumeTool;
 const CrowdTool = @import("tool_crowd.zig").CrowdTool;
+const NavMeshPruneTool = @import("tool_prune.zig").NavMeshPruneTool;
 const Vec3 = recast.math.Vec3;
 
-const ActiveTool = enum { none, tester, offmesh, convex, crowd };
+const ActiveTool = enum { none, tester, prune, offmesh, convex, crowd };
 
 // Управление обработкой ошибок OpenGL в zgl.
 pub const opengl_error_handling = zgl.ErrorHandling.assert;
@@ -167,6 +168,8 @@ pub fn main(main_init: std.process.Init) !void {
     defer convex_tool.deinit();
     var crowd_tool = CrowdTool.init(main_init.gpa, &dd_gl);
     defer crowd_tool.deinit();
+    var prune_tool = NavMeshPruneTool.init(main_init.gpa, &dd_gl);
+    defer prune_tool.deinit();
     var active_tool: ActiveTool = .tester;
     var prev_lmb = false;
 
@@ -488,6 +491,7 @@ pub fn main(main_init: std.process.Init) !void {
                             }
                         },
                         .tester => tester.onClick(&rs, &hp, shift),
+                        .prune => prune_tool.onClick(&rs, &hp, shift),
                         .offmesh => offmesh_tool.onClick(&rs, &hp, shift),
                         .convex => convex_tool.onClick(&rs, &hp, shift),
                         .crowd => crowd_tool.onClick(&rs, &hp, shift),
@@ -544,12 +548,14 @@ pub fn main(main_init: std.process.Init) !void {
                 };
                 tester.setNavMesh(nm);
                 crowd_tool.setNavMesh(nm);
+                prune_tool.setNavMesh(nm);
                 const st = switch (sample_kind) {
                     .solo => solo.settings,
                     .tile => tile.settings,
                     .temp => temp.settings,
                 };
                 tester.setAgent(st.agent_radius, st.agent_height, st.agent_max_climb);
+                prune_tool.setAgent(st.agent_radius);
                 crowd_tool.agent_radius = st.agent_radius;
                 crowd_tool.agent_height = st.agent_height;
             }
@@ -593,6 +599,7 @@ pub fn main(main_init: std.process.Init) !void {
         switch (active_tool) {
             .none => {},
             .tester => tester.render(),
+            .prune => prune_tool.render(),
             .offmesh => offmesh_tool.render(),
             .convex => convex_tool.render(),
             .crowd => crowd_tool.render(),
@@ -665,6 +672,7 @@ pub fn main(main_init: std.process.Init) !void {
             } else {
                 ui.section(@src(), "Tool Selection");
                 if (ui.radio(@src(), active_tool == .tester, "Test Navmesh", 201)) active_tool = .tester;
+                if (ui.radio(@src(), active_tool == .prune, "Prune NavMesh", 206)) active_tool = .prune;
                 if (ui.radio(@src(), active_tool == .offmesh, "Create Off-Mesh Connections", 202)) active_tool = .offmesh;
                 if (ui.radio(@src(), active_tool == .convex, "Create Convex Volumes", 203)) active_tool = .convex;
                 if (ui.radio(@src(), active_tool == .crowd, "Create Crowds", 204)) active_tool = .crowd;
@@ -674,6 +682,7 @@ pub fn main(main_init: std.process.Init) !void {
                 switch (active_tool) {
                     .none => {},
                     .tester => tester.drawMenu(),
+                    .prune => prune_tool.drawMenu(),
                     .offmesh => offmesh_tool.drawMenu(),
                     .convex => convex_tool.drawMenu(),
                     .crowd => crowd_tool.drawMenu(),
@@ -959,6 +968,7 @@ pub fn main(main_init: std.process.Init) !void {
             // экранные подсказки (нижний левый угол)
             const hint = switch (active_tool) {
                 .tester => "LMB: set start   Shift+LMB: set end",
+                .prune => "LMB: click fill area",
                 .convex => "LMB: add point, click red point to build   Shift+LMB: delete volume",
                 .offmesh => "LMB: 1st=start, 2nd=end",
                 .crowd => "Create/Move/Select via Tools panel",
