@@ -25,12 +25,17 @@ pub const entries = [_]ToolEntry{
     .{ .id = .none, .label = "Disabled", .radio_id = 205, .hint = "RMB: rotate   WASD/QE: move   wheel: zoom   F: reset view" },
 };
 
+comptime {
+    if (entries.len != @typeInfo(ToolId).@"enum".fields.len)
+        @compileError("tool_registry.entries must have one entry per ToolId variant");
+}
+
 /// Control hint for the active tool. Every ToolId has an entry.
 pub fn hintFor(id: ToolId) []const u8 {
     for (entries) |e| {
         if (e.id == id) return e.hint;
     }
-    return "";
+    unreachable; // every ToolId has an entry (enforced by the test + comptime check below)
 }
 
 test "every ToolId has exactly one entry, ids unique, hints non-empty" {
@@ -46,6 +51,7 @@ test "every ToolId has exactly one entry, ids unique, hints non-empty" {
     for (entries, 0..) |a, i| {
         for (entries[i + 1 ..]) |b| {
             try std.testing.expect(a.radio_id != b.radio_id);
+            try std.testing.expect(!std.mem.eql(u8, a.label, b.label));
         }
     }
 }
