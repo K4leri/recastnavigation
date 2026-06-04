@@ -1,8 +1,11 @@
 //! Persist Module 2 — registry_io: serialize/deserialize area-type and poly-flag
 //! registries to edits/areas.reg and edits/flags.reg inside a .recastscene container.
 //!
-//! Format: [FileHeader][Record...] (little-endian, fixed-size records).
-//! FileHeader checksum covers the entire file body (all record bytes).
+//! Format: [ChunkHeader][Record...] (little-endian, fixed-size records).
+//! The file header IS the canonical Module 1 ChunkHeader (26 bytes):
+//!   magic(u32) + version(u32) + type_flags(u16) + payload_len(u64) + checksum(u64)
+//! payload_len = BYTE length of the body (all record bytes); checksum uses the
+//! canonical XXH3 domain from checksum.zig (type_flags ‖ header-prefix ‖ payload).
 //! Each record carries its own XXH3 checksum for graceful per-record degradation:
 //! a corrupt record is skipped, the rest load normally.
 //!
@@ -12,6 +15,9 @@
 //! Builds on Persist Module 1:
 //!   - write_atomic.writeAtomic(io, dir: Dir, sub_path, bytes) — durable atomic write
 //!   - checksum.checksum(bytes) u64 — XXH3 (seed=0)
+//!   - checksum.ChunkHeader — canonical self-describing chunk header
+//!   - checksum.unpackHeader — parse and magic/version-validate header bytes
+//!   - checksum.HEADER_LEN — 26 bytes (locked)
 
 const std = @import("std");
 const area_types = @import("../area_types.zig");
@@ -24,6 +30,9 @@ const Dir = std.Io.Dir;
 
 /// Checksum shorthand: XXH3 over arbitrary bytes.
 const checksum = cs_mod.checksum;
+const ChunkHeader = cs_mod.ChunkHeader;
+const unpackHeader = cs_mod.unpackHeader;
+const HEADER_LEN = cs_mod.HEADER_LEN;
 
 pub const Error = error{
     Truncated,
@@ -57,11 +66,6 @@ const FLAG_REC_LEN: usize = 33;
 ///       = 2 + 1 + 1 + 1 + 1 + 1 + 1 + 2 + 4 + 1 + 24 + 8 = 47
 const AREA_REC_LEN: usize = 47;
 
-/// File header serialized size:
-/// magic(u32) + version(u32) + type_flags(u16) + rec_count(u64) + body_csum(u64)
-/// = 4 + 4 + 2 + 8 + 8 = 26
-const FILE_HDR_LEN: usize = 26;
-
 // ---------------------------------------------------------------------------
 // Write helpers — little-endian, append to ArrayList
 // ---------------------------------------------------------------------------
@@ -87,6 +91,7 @@ fn putU64(b: *Buf, v: u64) !void {
     try b.appendSlice(&tmp);
 }
 fn putF32(b: *Buf, v: f32) !void {
+    // @bitCast preserves the IEEE-754 bit pattern; writeInt LE makes it portable.
     try putU32(b, @bitCast(v));
 }
 
@@ -141,15 +146,15 @@ const Reader = struct {
 // ---------------------------------------------------------------------------
 
 /// Serialize the poly-flags registry into an owned buffer.
-/// Format: [FileHeader][FlagRecord...] — all fixed-size, little-endian.
+/// Format: [ChunkHeader][FlagRecord...] — all fixed-size, little-endian.
 pub fn serializeFlags(alloc: std.mem.Allocator) !Buf {
     poly_flags.ensureInit();
 
-    // Build body (all records) first so we can checksum it for the file header.
+    // Build body (all records) first so we can feed it to ChunkHeader.init.
     var body = Buf.init(alloc);
     defer body.deinit();
 
-    var rec_count: u64 = 0;
+    var rec_count: usize = 0;
     for (0..poly_flags.MAX_FLAGS) |i| {
         const f = poly_flags.get(i) orelse continue; // skips unused AND reserved (bit 4)
 
@@ -171,17 +176,16 @@ pub fn serializeFlags(alloc: std.mem.Allocator) !Buf {
         rec_count += 1;
     }
 
-    // Assemble final output: file header + body.
+    // Assemble final output: canonical ChunkHeader + body.
+    // ChunkHeader.init sets payload_len = body.items.len (bytes, not record count)
+    // and computes the canonical XXH3 checksum over the locked domain.
     var out = Buf.init(alloc);
     errdefer out.deinit();
-    try putU32(&out, FLAGS_MAGIC);
-    try putU32(&out, REG_VERSION);
-    try putU16(&out, TYPE_FILE_HEADER);
-    try putU64(&out, rec_count); // number of records (not bytes)
-    try putU64(&out, checksum(body.items)); // file-level body checksum
+    const hdr_bytes = ChunkHeader.init(FLAGS_MAGIC, REG_VERSION, TYPE_FILE_HEADER, body.items).pack();
+    try out.appendSlice(&hdr_bytes);
     try out.appendSlice(body.items);
 
-    std.debug.assert(out.items.len == FILE_HDR_LEN + rec_count * FLAG_REC_LEN);
+    std.debug.assert(out.items.len == HEADER_LEN + rec_count * FLAG_REC_LEN);
     return out;
 }
 
@@ -189,19 +193,25 @@ pub fn serializeFlags(alloc: std.mem.Allocator) !Buf {
 /// Calls resetToBuiltins() first, then restoreFlag() for each valid record.
 /// Corrupt records are skipped (graceful degradation). Returns count applied.
 pub fn deserializeFlags(data: []const u8) Error!usize {
-    var r = Reader{ .data = data };
+    // Parse canonical chunk header: validates magic, version, truncation.
+    const hdr = try unpackHeader(data, FLAGS_MAGIC, REG_VERSION);
 
-    // Parse file header.
-    if (try r.readU32() != FLAGS_MAGIC) return error.WrongMagic;
-    if (try r.readU32() != REG_VERSION) return error.WrongVersion;
-    if (try r.readU16() != TYPE_FILE_HEADER) return error.WrongMagic;
-    const rec_count = try r.readU64();
-    const file_csum = try r.readU64();
-    const body = data[r.pos..];
-    if (checksum(body) != file_csum) {
+    // Verify the canonical file-level checksum over the body.
+    // On mismatch: warn and attempt per-record recovery (graceful degradation).
+    const plen = std.math.cast(usize, hdr.payload_len) orelse return error.Truncated;
+    const body_end = std.math.add(usize, HEADER_LEN, plen) catch return error.Truncated;
+    if (body_end > data.len) return error.Truncated;
+    const body = data[HEADER_LEN..body_end];
+    const want_csum = ChunkHeader.computeChecksum(FLAGS_MAGIC, REG_VERSION, TYPE_FILE_HEADER, body);
+    if (want_csum != hdr.checksum) {
         std.log.warn("flags.reg: file checksum mismatch — attempting per-record recovery", .{});
     }
 
+    // Validate body length is an exact multiple of FLAG_REC_LEN.
+    if (plen % FLAG_REC_LEN != 0) return error.Truncated;
+    const rec_count = plen / FLAG_REC_LEN;
+
+    var r = Reader{ .data = body };
     poly_flags.resetToBuiltins();
     var applied: usize = 0;
     for (0..rec_count) |n| {
@@ -218,7 +228,7 @@ pub fn deserializeFlags(data: []const u8) Error!usize {
         const rec_csum = try r.readU64();
 
         // Per-record validation: type_flags, name_len in range, checksum.
-        const rec_no_csum = data[rec_start .. r.pos - 8];
+        const rec_no_csum = body[rec_start .. r.pos - 8];
         if (tf != TYPE_RECORD or name_len > FLAG_NAME_CAP or checksum(rec_no_csum) != rec_csum) {
             std.log.warn("flags.reg: bad record {d} (skipped)", .{n});
             continue;
@@ -230,6 +240,7 @@ pub fn deserializeFlags(data: []const u8) Error!usize {
 }
 
 /// Write the poly-flags registry to `dir/edits/flags.reg` durably (atomic).
+/// `dir` must be the .recastscene container ROOT (the "edits/" subpath is created/read relative to it).
 pub fn saveFlags(alloc: std.mem.Allocator, io: Io, dir: Dir) !void {
     var out = try serializeFlags(alloc);
     defer out.deinit();
@@ -238,6 +249,7 @@ pub fn saveFlags(alloc: std.mem.Allocator, io: Io, dir: Dir) !void {
 
 /// Load poly-flags from `dir/edits/flags.reg`. If the file does not exist,
 /// resets to builtins and returns 0. Returns the count of records applied.
+/// `dir` must be the .recastscene container ROOT (the "edits/" subpath is created/read relative to it).
 pub fn loadFlags(alloc: std.mem.Allocator, io: Io, dir: Dir) !usize {
     const data = dir.readFileAlloc(io, "edits/flags.reg", alloc, .unlimited) catch |e| switch (e) {
         error.FileNotFound => {
@@ -255,14 +267,14 @@ pub fn loadFlags(alloc: std.mem.Allocator, io: Io, dir: Dir) !usize {
 // ---------------------------------------------------------------------------
 
 /// Serialize the area-types registry into an owned buffer.
-/// Format: [FileHeader][AreaRecord...] — all fixed-size, little-endian.
+/// Format: [ChunkHeader][AreaRecord...] — all fixed-size, little-endian.
 pub fn serializeAreas(alloc: std.mem.Allocator) !Buf {
     area_types.ensureInit();
 
     var body = Buf.init(alloc);
     defer body.deinit();
 
-    var rec_count: u64 = 0;
+    var rec_count: usize = 0;
     for (0..area_types.MAX_AREA_TYPES) |id| {
         const t = area_types.get(id) orelse continue;
 
@@ -288,16 +300,16 @@ pub fn serializeAreas(alloc: std.mem.Allocator) !Buf {
         rec_count += 1;
     }
 
+    // Assemble final output: canonical ChunkHeader + body.
+    // ChunkHeader.init sets payload_len = body.items.len (bytes, not record count)
+    // and computes the canonical XXH3 checksum over the locked domain.
     var out = Buf.init(alloc);
     errdefer out.deinit();
-    try putU32(&out, AREAS_MAGIC);
-    try putU32(&out, REG_VERSION);
-    try putU16(&out, TYPE_FILE_HEADER);
-    try putU64(&out, rec_count);
-    try putU64(&out, checksum(body.items));
+    const hdr_bytes = ChunkHeader.init(AREAS_MAGIC, REG_VERSION, TYPE_FILE_HEADER, body.items).pack();
+    try out.appendSlice(&hdr_bytes);
     try out.appendSlice(body.items);
 
-    std.debug.assert(out.items.len == FILE_HDR_LEN + rec_count * AREA_REC_LEN);
+    std.debug.assert(out.items.len == HEADER_LEN + rec_count * AREA_REC_LEN);
     return out;
 }
 
@@ -305,18 +317,25 @@ pub fn serializeAreas(alloc: std.mem.Allocator) !Buf {
 /// Calls resetToBuiltins() first. Corrupt records are skipped. Returns count applied.
 /// IMPORTANT: call after loadFlags/deserializeFlags (area.flags references flag bits).
 pub fn deserializeAreas(data: []const u8) Error!usize {
-    var r = Reader{ .data = data };
+    // Parse canonical chunk header: validates magic, version, truncation.
+    const hdr = try unpackHeader(data, AREAS_MAGIC, REG_VERSION);
 
-    if (try r.readU32() != AREAS_MAGIC) return error.WrongMagic;
-    if (try r.readU32() != REG_VERSION) return error.WrongVersion;
-    if (try r.readU16() != TYPE_FILE_HEADER) return error.WrongMagic;
-    const rec_count = try r.readU64();
-    const file_csum = try r.readU64();
-    const body = data[r.pos..];
-    if (checksum(body) != file_csum) {
+    // Verify the canonical file-level checksum over the body.
+    // On mismatch: warn and attempt per-record recovery (graceful degradation).
+    const plen = std.math.cast(usize, hdr.payload_len) orelse return error.Truncated;
+    const body_end = std.math.add(usize, HEADER_LEN, plen) catch return error.Truncated;
+    if (body_end > data.len) return error.Truncated;
+    const body = data[HEADER_LEN..body_end];
+    const want_csum = ChunkHeader.computeChecksum(AREAS_MAGIC, REG_VERSION, TYPE_FILE_HEADER, body);
+    if (want_csum != hdr.checksum) {
         std.log.warn("areas.reg: file checksum mismatch — attempting per-record recovery", .{});
     }
 
+    // Validate body length is an exact multiple of AREA_REC_LEN.
+    if (plen % AREA_REC_LEN != 0) return error.Truncated;
+    const rec_count = plen / AREA_REC_LEN;
+
+    var r = Reader{ .data = body };
     area_types.resetToBuiltins();
     var applied: usize = 0;
     for (0..rec_count) |n| {
@@ -338,7 +357,7 @@ pub fn deserializeAreas(data: []const u8) Error!usize {
         const name_bytes = try r.readBytes(AREA_NAME_CAP);
         const rec_csum = try r.readU64();
 
-        const rec_no_csum = data[rec_start .. r.pos - 8];
+        const rec_no_csum = body[rec_start .. r.pos - 8];
         if (tf != TYPE_RECORD or name_len > AREA_NAME_CAP or checksum(rec_no_csum) != rec_csum) {
             std.log.warn("areas.reg: bad record {d} (skipped)", .{n});
             continue;
@@ -361,6 +380,7 @@ pub fn deserializeAreas(data: []const u8) Error!usize {
 }
 
 /// Write the area-types registry to `dir/edits/areas.reg` durably (atomic).
+/// `dir` must be the .recastscene container ROOT (the "edits/" subpath is created/read relative to it).
 pub fn saveAreas(alloc: std.mem.Allocator, io: Io, dir: Dir) !void {
     var out = try serializeAreas(alloc);
     defer out.deinit();
@@ -369,6 +389,7 @@ pub fn saveAreas(alloc: std.mem.Allocator, io: Io, dir: Dir) !void {
 
 /// Load area types from `dir/edits/areas.reg`. If the file does not exist,
 /// resets to builtins and returns 0.
+/// `dir` must be the .recastscene container ROOT (the "edits/" subpath is created/read relative to it).
 /// IMPORTANT: call after loadFlags (area.flags references flag bits).
 pub fn loadAreas(alloc: std.mem.Allocator, io: Io, dir: Dir) !usize {
     const data = dir.readFileAlloc(io, "edits/areas.reg", alloc, .unlimited) catch |e| switch (e) {
@@ -383,12 +404,14 @@ pub fn loadAreas(alloc: std.mem.Allocator, io: Io, dir: Dir) !usize {
 }
 
 /// Combined save: flags first, then areas.
+/// `dir` must be the .recastscene container ROOT (the "edits/" subpath is created/read relative to it).
 pub fn saveAll(alloc: std.mem.Allocator, io: Io, dir: Dir) !void {
     try saveFlags(alloc, io, dir);
     try saveAreas(alloc, io, dir);
 }
 
 /// Combined load: flags first (INVARIANT), then areas.
+/// `dir` must be the .recastscene container ROOT (the "edits/" subpath is created/read relative to it).
 pub fn loadAll(alloc: std.mem.Allocator, io: Io, dir: Dir) !void {
     _ = try loadFlags(alloc, io, dir);
     _ = try loadAreas(alloc, io, dir);
