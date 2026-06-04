@@ -11,6 +11,7 @@ const InputGeom = ig.InputGeom;
 const ddgl = @import("debug_draw_gl.zig");
 const sample = @import("sample.zig");
 const area_types = @import("area_types.zig");
+const poly_flags = @import("poly_flags.zig");
 const ui = @import("ui.zig");
 const dbg = recast.debug;
 const rc = recast.recast;
@@ -28,6 +29,7 @@ pub const ConvexVolumeTool = struct {
     box_descent: f32 = 1.0,
     poly_offset: f32 = 0.0,
     dirty: bool = false,
+    editor: ?Edit = null, // open add/edit dialog for an area type
 
     pub fn init(alloc: std.mem.Allocator, geom: *InputGeom, dd_gl: *ddgl.DebugDrawGL) ConvexVolumeTool {
         return .{ .geom = geom, .dd_gl = dd_gl, .pts = std.array_list.Managed(f32).init(alloc) };
@@ -181,22 +183,28 @@ pub const ConvexVolumeTool = struct {
         ui.slider(@src(), "Shape Descent = {d:.1}", &self.box_descent, 0.1, 20.0);
         ui.slider(@src(), "Poly Offset = {d:.1}", &self.poly_offset, 0.0, 10.0);
 
-        // Area Type — the type painted into the next convex volume. The list is
-        // driven by the runtime registry, so user-added types show up here too.
+        // Area Type — pick the type painted into the next volume (radio), plus a
+        // pencil to open its editor. The list is the runtime registry, so custom
+        // types appear here too.
         dvui.labelNoFmt(@src(), "Area Type", .{}, .{});
         {
             var id: usize = 0;
             while (id < area_types.MAX_AREA_TYPES) : (id += 1) {
                 const t = area_types.get(id) orelse continue;
+                var row = dvui.box(@src(), .{ .dir = .horizontal }, .{ .id_extra = id, .expand = .horizontal });
+                defer row.deinit();
                 if (ui.radio(@src(), @as(usize, self.area) == id, t.name(), id)) self.area = @intCast(id);
+                if (dvui.buttonIcon(@src(), "edit", dvui.entypo.pencil, .{}, .{}, .{ .id_extra = id, .gravity_x = 1.0, .gravity_y = 0.5 })) {
+                    self.editor = Edit.fromType(@intCast(id), t);
+                }
             }
         }
+        // "+ Add" opens a draft dialog; the new type is only created if the user
+        // confirms with OK (Cancel/Esc/close discards it).
         if (dvui.button(@src(), "+ Add Area Type", .{}, .{})) {
-            _ = area_types.addType();
-            area_types.rebuild_needed = true;
+            self.editor = Edit.newDraft();
         }
-
-        if (ui.treeNode(@src(), "Edit Area Types")) editAreaTypes();
+        if (self.editor != null) self.drawEditor();
 
         _ = dvui.separator(@src(), .{ .expand = .horizontal });
         if (dvui.button(@src(), "Clear Shape", .{}, .{})) self.reset();
@@ -204,57 +212,116 @@ pub const ConvexVolumeTool = struct {
         dvui.labelNoFmt(@src(), "LMB: add point  click red point: build", .{}, .{});
         dvui.labelNoFmt(@src(), "Shift+LMB: delete shape", .{}, .{});
     }
+
+    /// Modal add/edit dialog for an area type: name, colour picker, reachability
+    /// flags, movement cost. OK commits; Cancel / Esc / close discards (so a new
+    /// type is only created on confirm).
+    fn drawEditor(self: *ConvexVolumeTool) void {
+        const ed = &self.editor.?;
+        var win = dvui.floatingWindow(@src(), .{ .rect = &ed.rect, .open_flag = &ed.open }, .{});
+        defer win.deinit();
+        win.autoSize(); // fit height to content so OK/Cancel are always visible
+        _ = dvui.windowHeader(if (ed.is_new) "New Area Type" else "Edit Area Type", "", &ed.open);
+
+        dvui.labelNoFmt(@src(), "Name", .{}, .{});
+        {
+            var te = dvui.textEntry(@src(), .{ .text = .{ .buffer = &ed.name_buf } }, .{ .expand = .horizontal });
+            te.deinit(); // textEntry returns a widget that must be closed
+        }
+
+        dvui.labelNoFmt(@src(), "Colour", .{}, .{});
+        _ = dvui.colorPicker(@src(), .{ .hsv = &ed.hsv, .dir = .vertical, .sliders = .rgb, .hex_text_entry = true }, .{});
+
+        dvui.labelNoFmt(@src(), "Flags (reachability — needs a rebuild)", .{}, .{});
+        {
+            var i: usize = 0;
+            while (i < poly_flags.MAX_FLAGS) : (i += 1) {
+                const fl = poly_flags.get(i) orelse continue;
+                const bit = poly_flags.bitOf(i).?;
+                var on = (ed.flags & bit) != 0;
+                if (dvui.checkbox(@src(), &on, fl.name(), .{ .id_extra = i })) {
+                    if (on) ed.flags |= bit else ed.flags &= ~bit;
+                }
+            }
+        }
+
+        _ = dvui.sliderEntry(@src(), "cost {d:.2}", .{ .value = &ed.cost, .min = 0, .max = 20, .interval = null }, .{ .expand = .horizontal });
+
+        {
+            var bb = dvui.box(@src(), .{ .dir = .horizontal }, .{ .gravity_x = 1.0 });
+            defer bb.deinit();
+            if (dvui.button(@src(), "Cancel", .{}, .{})) ed.open = false;
+            if (dvui.button(@src(), "OK", .{}, .{})) {
+                self.commitEditor();
+                return; // self.editor is now null
+            }
+        }
+
+        // Esc cancels (FloatingWindow doesn't auto-close on Esc).
+        for (dvui.events()) |*e| {
+            if (e.evt == .key and e.evt.key.action == .down and e.evt.key.code == .escape) ed.open = false;
+        }
+
+        // Closed via X / Cancel / Esc without OK -> discard (nothing added).
+        if (!ed.open) self.editor = null;
+    }
+
+    fn commitEditor(self: *ConvexVolumeTool) void {
+        const ed = &self.editor.?;
+        const rgb = ed.hsv.toColor();
+        const name = std.mem.sliceTo(&ed.name_buf, 0);
+        const t: ?*area_types.AreaType = if (ed.is_new) blk: {
+            const id = area_types.addType() orelse break :blk null;
+            self.area = id; // select the freshly added type for painting
+            break :blk area_types.get(id);
+        } else area_types.get(ed.edit_id);
+        if (t) |at| {
+            at.setName(name);
+            at.r = rgb.r;
+            at.g = rgb.g;
+            at.b = rgb.b;
+            at.a = 255;
+            at.flags = ed.flags;
+            at.cost = ed.cost;
+        }
+        area_types.costs_dirty = true;
+        area_types.rebuild_needed = true; // flags/type-list change needs a rebuild
+        self.editor = null;
+    }
 };
 
 const F = area_types.Flags;
 
-/// Per-type editor: cost (runtime), color RGB (immediate), poly flags (need a
-/// rebuild). Editing cost raises `costs_dirty`; editing flags raises
-/// `rebuild_needed` (the main loop / rebuild mini-tool act on these).
-fn editAreaTypes() void {
-    var id: usize = 0;
-    while (id < area_types.MAX_AREA_TYPES) : (id += 1) {
-        const t = area_types.get(id) orelse continue;
-        dvui.label(@src(), "[{d}] {s}", .{ id, t.name() }, .{ .id_extra = id });
+/// Working copy for the add/edit dialog (kept separate from the registry so a new
+/// type is only committed on OK).
+const Edit = struct {
+    open: bool = true,
+    is_new: bool,
+    edit_id: u8 = 0,
+    name_buf: [32]u8 = [_]u8{0} ** 32,
+    hsv: dvui.Color.HSV = .{},
+    flags: u16 = F.walk,
+    cost: f32 = 1.0,
+    // Placed just to the right of the Tools panel (x = padw 10 + colw 250 + padw 10)
+    // so it doesn't cover it. dvui writes the dragged position back here.
+    rect: dvui.Rect = .{ .x = 270, .y = 10, .w = 320, .h = 460 },
 
-        var cost = t.cost;
-        _ = dvui.sliderEntry(@src(), "cost {d:.2}", .{ .value = &cost, .min = 0, .max = 20, .interval = null }, .{ .expand = .horizontal, .id_extra = id });
-        if (cost != t.cost) {
-            t.cost = cost;
-            area_types.costs_dirty = true;
-        }
-
-        var rf: f32 = @floatFromInt(t.r);
-        _ = dvui.sliderEntry(@src(), "R {d:.0}", .{ .value = &rf, .min = 0, .max = 255, .interval = 1 }, .{ .expand = .horizontal, .id_extra = id });
-        t.r = @intFromFloat(@round(std.math.clamp(rf, 0, 255)));
-        var gf: f32 = @floatFromInt(t.g);
-        _ = dvui.sliderEntry(@src(), "G {d:.0}", .{ .value = &gf, .min = 0, .max = 255, .interval = 1 }, .{ .expand = .horizontal, .id_extra = id });
-        t.g = @intFromFloat(@round(std.math.clamp(gf, 0, 255)));
-        var bf: f32 = @floatFromInt(t.b);
-        _ = dvui.sliderEntry(@src(), "B {d:.0}", .{ .value = &bf, .min = 0, .max = 255, .interval = 1 }, .{ .expand = .horizontal, .id_extra = id });
-        t.b = @intFromFloat(@round(std.math.clamp(bf, 0, 255)));
-
-        flagBox(t, F.walk, "walk", id);
-        flagBox(t, F.swim, "swim", id);
-        flagBox(t, F.door, "door", id);
-        flagBox(t, F.jump, "jump", id);
-
-        if (!t.builtin and dvui.button(@src(), "remove", .{}, .{ .id_extra = id })) {
-            area_types.removeType(id);
-            area_types.rebuild_needed = true;
-        }
-        _ = dvui.separator(@src(), .{ .expand = .horizontal, .id_extra = id });
+    fn fromType(id: u8, t: *const area_types.AreaType) Edit {
+        var e = Edit{ .is_new = false, .edit_id = id, .hsv = dvui.Color.HSV.fromColor(.{ .r = t.r, .g = t.g, .b = t.b, .a = 255 }), .flags = t.flags, .cost = t.cost };
+        const n = @min(t.name().len, 31);
+        @memcpy(e.name_buf[0..n], t.name()[0..n]);
+        e.name_buf[n] = 0;
+        return e;
     }
-}
 
-fn flagBox(t: *area_types.AreaType, bit: u16, label: []const u8, id: usize) void {
-    var on = (t.flags & bit) != 0;
-    // All four flag checkboxes share this @src(), so disambiguate by id+bit.
-    if (dvui.checkbox(@src(), &on, label, .{ .id_extra = id * 16 + bit })) {
-        if (on) t.flags |= bit else t.flags &= ~bit;
-        area_types.rebuild_needed = true; // flags are baked -> needs a rebuild
+    fn newDraft() Edit {
+        var e = Edit{ .is_new = true, .hsv = dvui.Color.HSV.fromColor(.{ .r = 255, .g = 128, .b = 0, .a = 255 }) };
+        @memcpy(e.name_buf[0..8], "New Area");
+        e.name_buf[8] = 0;
+        return e;
     }
-}
+};
+
 
 inline fn sqr(x: f32) f32 {
     return x * x;

@@ -8,6 +8,7 @@ const recast = @import("recast-nav");
 const ddgl = @import("debug_draw_gl.zig");
 const sample = @import("sample.zig");
 const area_types = @import("area_types.zig");
+const poly_flags = @import("poly_flags.zig");
 const ui = @import("ui.zig");
 
 const dt = recast.detour;
@@ -82,15 +83,10 @@ pub const NavMeshTesterTool = struct {
     shape_verts: [12]f32 = undefined,
     shape_nverts: usize = 0,
 
-    // include/exclude флаги фильтра
-    inc_walk: bool = true,
-    inc_swim: bool = true,
-    inc_door: bool = true,
-    inc_jump: bool = true,
-    exc_walk: bool = false,
-    exc_swim: bool = false,
-    exc_door: bool = false,
-    exc_jump: bool = false,
+    // include/exclude filter masks (bits = poly_flags registry). Default: include
+    // the four built-in flags, exclude none. Custom flags start unchecked.
+    include_mask: u16 = PF.walk | PF.swim | PF.door | PF.jump,
+    exclude_mask: u16 = 0,
 
     pub fn init(alloc: std.mem.Allocator, dd_gl: *ddgl.DebugDrawGL) NavMeshTesterTool {
         var self = NavMeshTesterTool{ .alloc = alloc, .dd_gl = dd_gl, .filter = dt.QueryFilter.init() };
@@ -100,18 +96,8 @@ pub const NavMeshTesterTool = struct {
     }
 
     fn applyFlags(self: *NavMeshTesterTool) void {
-        var inc: u16 = 0;
-        if (self.inc_walk) inc |= PF.walk;
-        if (self.inc_swim) inc |= PF.swim;
-        if (self.inc_door) inc |= PF.door;
-        if (self.inc_jump) inc |= PF.jump;
-        var exc: u16 = 0;
-        if (self.exc_walk) exc |= PF.walk;
-        if (self.exc_swim) exc |= PF.swim;
-        if (self.exc_door) exc |= PF.door;
-        if (self.exc_jump) exc |= PF.jump;
-        self.filter.setIncludeFlags(inc);
-        self.filter.setExcludeFlags(exc);
+        self.filter.setIncludeFlags(self.include_mask);
+        self.filter.setExcludeFlags(self.exclude_mask);
     }
 
     pub fn deinit(self: *NavMeshTesterTool) void {
@@ -140,12 +126,14 @@ pub const NavMeshTesterTool = struct {
     }
 
     pub fn onClick(self: *NavMeshTesterTool, _: *const [3]f32, ray_hit: *const [3]f32, shift: bool) void {
+        // LMB = start, Shift+LMB = end (intuitive default-click-sets-start). NOTE:
+        // this is swapped from upstream RecastDemo (Shift = start there).
         if (shift) {
-            self.spos = ray_hit.*;
-            self.spos_set = true;
-        } else {
             self.epos = ray_hit.*;
             self.epos_set = true;
+        } else {
+            self.spos = ray_hit.*;
+            self.spos_set = true;
         }
         self.recalc();
     }
@@ -493,18 +481,33 @@ pub const NavMeshTesterTool = struct {
         self.modeRadio("Find Polys in Shape", .find_polys_shape, 6);
         self.modeRadio("Find Local Neighbourhood", .find_local_neighbourhood, 7);
 
-        ui.section(@src(), "Include Flags");
         var changed = false;
-        if (dvui.checkbox(@src(), &self.inc_walk, "Walk", .{})) changed = true;
-        if (dvui.checkbox(@src(), &self.inc_swim, "Swim", .{})) changed = true;
-        if (dvui.checkbox(@src(), &self.inc_door, "Door", .{})) changed = true;
-        if (dvui.checkbox(@src(), &self.inc_jump, "Jump", .{})) changed = true;
-
+        ui.section(@src(), "Include Flags");
+        {
+            var i: usize = 0;
+            while (i < poly_flags.MAX_FLAGS) : (i += 1) {
+                const fl = poly_flags.get(i) orelse continue;
+                const bit = poly_flags.bitOf(i).?;
+                var on = (self.include_mask & bit) != 0;
+                if (dvui.checkbox(@src(), &on, fl.name(), .{ .id_extra = i })) {
+                    if (on) self.include_mask |= bit else self.include_mask &= ~bit;
+                    changed = true;
+                }
+            }
+        }
         ui.section(@src(), "Exclude Flags");
-        if (dvui.checkbox(@src(), &self.exc_walk, "Walk", .{})) changed = true;
-        if (dvui.checkbox(@src(), &self.exc_swim, "Swim", .{})) changed = true;
-        if (dvui.checkbox(@src(), &self.exc_door, "Door", .{})) changed = true;
-        if (dvui.checkbox(@src(), &self.exc_jump, "Jump", .{})) changed = true;
+        {
+            var i: usize = 0;
+            while (i < poly_flags.MAX_FLAGS) : (i += 1) {
+                const fl = poly_flags.get(i) orelse continue;
+                const bit = poly_flags.bitOf(i).?;
+                var on = (self.exclude_mask & bit) != 0;
+                if (dvui.checkbox(@src(), &on, fl.name(), .{ .id_extra = i })) {
+                    if (on) self.exclude_mask |= bit else self.exclude_mask &= ~bit;
+                    changed = true;
+                }
+            }
+        }
         if (changed) {
             self.applyFlags();
             self.recalc();

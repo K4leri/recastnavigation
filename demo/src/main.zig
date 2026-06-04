@@ -15,6 +15,7 @@ const ui = @import("ui.zig");
 const theme = @import("theme.zig");
 const sample = @import("sample.zig");
 const area_types = @import("area_types.zig");
+const poly_flags = @import("poly_flags.zig");
 const tracy = @import("tracy.zig");
 const TestCase = @import("testcase.zig").TestCase;
 const ddgl = @import("debug_draw_gl.zig");
@@ -219,6 +220,9 @@ pub fn main(main_init: std.process.Init) !void {
     var last_mouse = g_window.getCursorPos();
     var rotating = false;
     var ui_mouse = false; // курсор над dvui-панелью (с прошлого кадра)
+    var ui_keyboard = false; // фокус в текстовом поле dvui (с прошлого кадра) — гейт хоткеев
+    var prev_esc = false; // фронт Esc (чтобы Esc в редакторе не закрывал приложение)
+    var new_flag_name: [20]u8 = [_]u8{0} ** 20; // поле ввода имени нового poly-флага
     var pick_hit: ?Vec3 = null; // последняя точка пикинга по земле
     const dt: f32 = 1.0 / 60.0;
 
@@ -227,11 +231,8 @@ pub fn main(main_init: std.process.Init) !void {
     var tools_rect: dvui.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
     var log_rect: dvui.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
     var test_rect: dvui.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
-    var rebuild_rect: dvui.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
-    // The rebuild mini-tool is hidden by default so it doesn't sit over the 3D view
-    // and swallow the mouse wheel; it pops up when a rebuild is actually needed, and
-    // can be pinned open from the panel checkbox.
-    var show_rebuild: bool = false;
+    var flags_rect: dvui.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
+    var show_flags: bool = false; // the Poly Flags manager window (hidden by default)
     var test_choice: usize = 0;
 
     // bench-режим (--bench): камера крутится на 360°, без idle/cap, фикс число
@@ -386,6 +387,10 @@ pub fn main(main_init: std.process.Init) !void {
         // Только пикинг ЛКМ и зум колесом учитывают курсор над панелью.
         // База скорости подобрана так, чтобы сцена пересекалась за ~2с (как в оригинале);
         // dist_scale делает движение пропорциональным удалению.
+        // Keyboard hotkeys (camera move, reset, render toggles) — suppressed while a
+        // dvui text field has focus, so typing a name doesn't drive the camera or
+        // toggle render modes.
+        if (!ui_keyboard) {
         const base: f32 = if (g_window.getKey(.left_shift) == .press) @as(f32, 150.0) else 40.0;
         const d = base * dist_scale * dt;
         if (g_window.getKey(.w) == .press) cam.moveLocal(0, 0, -d);
@@ -422,9 +427,10 @@ pub fn main(main_init: std.process.Init) !void {
             std.debug.print("[VOXVAR] {s}\n", .{vox_names[dd_gl.voxel_variant % 8]});
         }
         prev_v = v_now;
+        } // end !ui_keyboard hotkey gate
         // SPACE — run/pause симуляции толпы; "1" — один шаг (1-в-1 CrowdTool onToggle/singleStep).
         // Только для активного crowd-инструмента и не когда курсор над dvui-панелью.
-        if (active_tool == .crowd and !ui_mouse) {
+        if (active_tool == .crowd and !ui_mouse and !ui_keyboard) {
             const space_now = g_window.getKey(.space) == .press;
             if (space_now and !prev_space) crowd_tool.running = !crowd_tool.running;
             prev_space = space_now;
@@ -441,7 +447,15 @@ pub fn main(main_init: std.process.Init) !void {
             cam.moveLocal(0, 0, @as(f32, @floatCast(-g_scroll)) * zoom_step);
         }
         g_scroll = 0;
-        if (g_window.getKey(.escape) == .press) g_window.setShouldClose(true);
+        // Esc quits — but edge-triggered (only on a fresh press) and suppressed
+        // while the area-type editor dialog is open (it consumes Esc to close
+        // itself). Without the edge check, holding Esc would close the dialog one
+        // frame and quit the app the next.
+        {
+            const esc_now = g_window.getKey(.escape) == .press;
+            if (esc_now and !prev_esc and convex_tool.editor == null) g_window.setShouldClose(true);
+            prev_esc = esc_now;
+        }
 
         // ЛКМ (по фронту нажатия) -> клик в активный инструмент
         const lmb = !ui_mouse and g_window.getMouseButton(.left) == .press;
@@ -629,8 +643,12 @@ pub fn main(main_init: std.process.Init) !void {
             tools_rect = .{ .x = padw, .y = padw, .w = colw, .h = wr.h - 2 * padw };
             log_rect = .{ .x = colw + 2 * padw, .y = wr.h - logh - padw, .w = wr.w - 2 * colw - 4 * padw, .h = logh };
             test_rect = .{ .x = wr.w - padw - colw - padw - 200, .y = wr.h - padw - 450, .w = 200, .h = 450 };
-            // Rebuild mini-tool — top centre, clear of the side panels.
-            rebuild_rect = .{ .x = wr.w * 0.5 - 140, .y = padw, .w = 280, .h = 150 };
+            // Poly Flags manager — just left of the Properties panel, only shown when
+            // toggled on. Wide enough that the flag rows / hints don't clip.
+            // Height fits the flag count (header + desc + N rows + add row), so no
+            // empty space below for the default 4 flags.
+            const fh: f32 = 116 + @as(f32, @floatFromInt(poly_flags.count())) * 28;
+            flags_rect = .{ .x = wr.w - colw - 3 * padw - 380, .y = padw, .w = 380, .h = fh };
         }
 
         // --- Tools (левая колонка) ---
@@ -675,7 +693,7 @@ pub fn main(main_init: std.process.Init) !void {
             _ = dvui.checkbox(@src(), &app.show_log, "Build Log", .{});
             _ = dvui.checkbox(@src(), &app.show_tools, "Tools Panel", .{});
             _ = dvui.checkbox(@src(), &app.show_test_cases, "Test Cases", .{});
-            _ = dvui.checkbox(@src(), &show_rebuild, "Rebuild Tool", .{});
+            _ = dvui.checkbox(@src(), &show_flags, "Poly Flags", .{});
 
             ui.section(@src(), "Sample");
             {
@@ -730,6 +748,11 @@ pub fn main(main_init: std.process.Init) !void {
                 }
             }
 
+            // Area-type *flag*/type changes are baked into tile data, so they need a
+            // rebuild (cost/colour edits apply instantly and don't). When auto is off,
+            // a red "rebuild needed" notice is drawn bottom-left (see below).
+            _ = dvui.checkbox(@src(), &area_types.auto_rebuild, "Auto-rebuild on changes", .{});
+
             ui.section(@src(), "Debug Settings");
             switch (sample_kind) {
                 .solo => solo.sampleIface().drawDebugMode(),
@@ -752,27 +775,42 @@ pub fn main(main_init: std.process.Init) !void {
             }
         }
 
-        // --- Rebuild mini-tool: notifies when an area-type *flags* / type-list
-        //     change needs a navmesh rebuild, and lets the dev pick auto vs manual.
-        if (show_rebuild or area_types.rebuild_needed) {
-            var fw = dvui.floatingWindow(@src(), .{ .rect = &rebuild_rect, .resize = .none, .window_avoid = .none }, .{ .id_extra = 7 });
+        // --- Poly Flags manager (global reachability flags; hidden by default) ---
+        if (show_flags) {
+            var fw = dvui.floatingWindow(@src(), .{ .rect = &flags_rect, .open_flag = &show_flags }, .{ .id_extra = 9 });
             defer fw.deinit();
-            _ = dvui.windowHeader("Rebuild", "", &show_rebuild);
-            if (area_types.rebuild_needed) {
-                dvui.labelNoFmt(@src(), "! Navmesh rebuild needed", .{}, .{});
-                dvui.labelNoFmt(@src(), "(area flags / type list changed)", .{}, .{});
-            } else {
-                dvui.labelNoFmt(@src(), "Navmesh up to date.", .{}, .{});
+            _ = dvui.windowHeader("Poly Flags", "", &show_flags);
+            dvui.labelNoFmt(@src(), "Reachability flags (max 16).", .{}, .{});
+            _ = dvui.separator(@src(), .{ .expand = .horizontal });
+            {
+                var i: usize = 0;
+                while (i < poly_flags.MAX_FLAGS) : (i += 1) {
+                    const fl = poly_flags.get(i) orelse continue;
+                    var row = dvui.box(@src(), .{ .dir = .horizontal }, .{ .id_extra = i, .expand = .horizontal });
+                    defer row.deinit();
+                    dvui.label(@src(), "{s}  (0x{x:0>2})", .{ fl.name(), @as(u16, 1) << @intCast(i) }, .{ .id_extra = i });
+                    if (!fl.builtin and dvui.button(@src(), "remove", .{}, .{ .id_extra = i, .gravity_x = 1.0 })) {
+                        poly_flags.removeFlag(i);
+                        // Defining/removing a flag doesn't touch baked tile data — a
+                        // rebuild is only needed once a flag is assigned to an area
+                        // type (handled in the area editor), so no rebuild_needed here.
+                    }
+                }
             }
-            dvui.labelNoFmt(@src(), "Cost & colour edits apply instantly;", .{}, .{});
-            dvui.labelNoFmt(@src(), "flags are baked -> need a rebuild.", .{}, .{});
-            _ = dvui.checkbox(@src(), &area_types.auto_rebuild, "Auto-rebuild", .{});
-            if (dvui.button(@src(), "Rebuild now", .{}, .{})) {
-                area_types.rebuild_needed = false;
-                switch (sample_kind) {
-                    .solo => _ = solo.build(),
-                    .tile => _ = tile.build(),
-                    .temp => _ = temp.build(),
+            _ = dvui.separator(@src(), .{ .expand = .horizontal });
+            {
+                var row = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
+                defer row.deinit();
+                {
+                    var te = dvui.textEntry(@src(), .{ .text = .{ .buffer = &new_flag_name } }, .{ .expand = .horizontal });
+                    te.deinit();
+                }
+                if (dvui.button(@src(), "Add Flag", .{}, .{})) {
+                    const name = std.mem.sliceTo(&new_flag_name, 0);
+                    if (name.len > 0) {
+                        _ = poly_flags.addFlag(name); // ASCII/English names only (font has no Cyrillic)
+                        @memset(&new_flag_name, 0);
+                    }
                 }
             }
         }
@@ -920,13 +958,20 @@ pub fn main(main_init: std.process.Init) !void {
 
             // экранные подсказки (нижний левый угол)
             const hint = switch (active_tool) {
-                .tester => "Shift+LMB: set start   LMB: set end",
+                .tester => "LMB: set start   Shift+LMB: set end",
                 .convex => "LMB: add point, click red point to build   Shift+LMB: delete volume",
                 .offmesh => "LMB: 1st=start, 2nd=end",
                 .crowd => "Create/Move/Select via Tools panel",
                 .none => "RMB: rotate   WASD/QE: move   wheel: zoom   F: reset view",
             };
-            ui.screenText(12, vh - 24, hint, white);
+            // Controls hint — top-centre (white).
+            ui.screenTextEx(@as(f32, @floatFromInt(fb[0])) * 0.5, 16, hint, white, true);
+            // Red "rebuild needed" notice — bottom-centre. Shown only when a baked
+            // change is pending and auto-rebuild is off.
+            if (area_types.rebuild_needed and !area_types.auto_rebuild) {
+                const cx = @as(f32, @floatFromInt(fb[0])) * 0.5;
+                ui.screenTextEx(cx, vh - 28, "! Navmesh rebuild needed — press Build", .{ .r = 235, .g = 70, .b = 50, .a = 255 }, true);
+            }
         }
 
         const z_end = tracy.zone(@src(), "dvui.end"); // тесселяция + GL-рендер UI
@@ -934,6 +979,7 @@ pub fn main(main_init: std.process.Init) !void {
         z_end.end();
         // курсор над dvui-панелью? -> на след. кадре не трогаем камеру/пикинг
         ui_mouse = win.cursorRequestedFloating() != null;
+        ui_keyboard = win.textInputRequested() != null; // text field focused -> gate hotkeys
         z_dvui.end();
 
         {
