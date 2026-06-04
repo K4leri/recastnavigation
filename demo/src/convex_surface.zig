@@ -79,6 +79,8 @@ const CompactHeightfield = recast.CompactHeightfield;
 // through the `recast` sub-namespace (src/recast.zig).
 const CompactCell = recast.recast.CompactCell;
 const CompactSpan = recast.recast.CompactSpan;
+const NULL_AREA = recast.recast.AreaId.NULL_AREA;
+const WALKABLE_AREA = recast.recast.AreaId.WALKABLE_AREA;
 
 /// Mark `area` on the compact heightfield within the XZ contour, hugging the
 /// local surface: per column, anchor on the walkable span nearest the fitted
@@ -138,6 +140,7 @@ pub fn markConvexPolyAreaSurface(
             var best_d: f32 = std.math.floatMax(f32);
             var i: usize = start;
             while (i < end) : (i += 1) {
+                if (chf.areas[i] == NULL_AREA) continue;
                 const sy = bminy + @as(f32, @floatFromInt(chf.spans[i].y)) * chf.ch;
                 const d = @abs(sy - expected);
                 if (d < best_d) {
@@ -152,6 +155,7 @@ pub fn markConvexPolyAreaSurface(
                 const hi = anchor + band_above;
                 var k: usize = start;
                 while (k < end) : (k += 1) {
+                    if (chf.areas[k] == NULL_AREA) continue;
                     const sy = bminy + @as(f32, @floatFromInt(chf.spans[k].y)) * chf.ch;
                     if (sy >= lo and sy <= hi) chf.areas[k] = area;
                 }
@@ -193,23 +197,38 @@ test "pointInPoly square" {
 
 test "markSurface marks the surface floor, not the upper floor" {
     const alloc = std.testing.allocator;
-    // 2x2 grid, cs=1, ch=1, origin 0. Each column: a surface span at y=0 and an
-    // upper-floor span at y=10. Plane fit ~ y=0 -> only the y=0 spans get marked.
-    const cells = try alloc.alloc(CompactCell, 4);
+    // 3x1 grid (width=3, height=1), cs=1, ch=1, origin 0.
+    // Columns 0 and 1: surface span at y=0 (WALKABLE_AREA) + upper-floor span at y=10 (WALKABLE_AREA).
+    // Column 2:        one NULL_AREA span at y=0 — at surface height but unwalkable.
+    // Plane fit on the contour verts ~ y=0.
+    // After marking with area=7:
+    //   col0/col1 y=0 -> 7  (surface, walkable, within band)
+    //   col0/col1 y=10 -> WALKABLE_AREA (63, too far from plane, snap_max cull)
+    //   col2 y=0 -> 0  (NULL_AREA, skipped in both anchor-selection and marking loops)
+    //
+    // Layout: cells[x + z*width], spans packed: col0=[0..1], col1=[2..3], col2=[4]
+    const cells = try alloc.alloc(CompactCell, 3);
     defer alloc.free(cells);
-    const spans = try alloc.alloc(CompactSpan, 8);
+    const spans = try alloc.alloc(CompactSpan, 5);
     defer alloc.free(spans);
-    const areas = try alloc.alloc(u8, 8);
+    const areas = try alloc.alloc(u8, 5);
     defer alloc.free(areas);
-    @memset(areas, 0);
-    for (0..4) |ci| {
-        cells[ci] = .{ .index = @intCast(ci * 2), .count = 2 };
-        spans[ci * 2 + 0] = .{ .y = 0, .reg = 0, .con = 0 }; // surface
-        spans[ci * 2 + 1] = .{ .y = 10, .reg = 0, .con = 0 }; // upper floor
-    }
+
+    // Columns 0 and 1: walkable surface + walkable upper floor
+    cells[0] = .{ .index = 0, .count = 2 };
+    spans[0] = .{ .y = 0, .reg = 0, .con = 0 };  areas[0] = WALKABLE_AREA; // col0 surface
+    spans[1] = .{ .y = 10, .reg = 0, .con = 0 }; areas[1] = WALKABLE_AREA; // col0 upper
+    cells[1] = .{ .index = 2, .count = 2 };
+    spans[2] = .{ .y = 0, .reg = 0, .con = 0 };  areas[2] = WALKABLE_AREA; // col1 surface
+    spans[3] = .{ .y = 10, .reg = 0, .con = 0 }; areas[3] = WALKABLE_AREA; // col1 upper
+    // Column 2: single NULL_AREA span at surface height — must NOT be selected as anchor
+    // and must NOT be marked (NULL_AREA skip in both loops).
+    cells[2] = .{ .index = 4, .count = 1 };
+    spans[4] = .{ .y = 0, .reg = 0, .con = 0 };  areas[4] = NULL_AREA;     // col2 null
+
     var chf: recast.CompactHeightfield = undefined;
-    chf.width = 2;
-    chf.height = 2;
+    chf.width = 3;
+    chf.height = 1;
     chf.bmin = .{ .x = 0, .y = 0, .z = 0 };
     chf.cs = 1;
     chf.ch = 1;
@@ -217,12 +236,17 @@ test "markSurface marks the surface floor, not the upper floor" {
     chf.spans = spans;
     chf.areas = areas;
 
-    // contour covering the whole 2x2 at surface height (y=0), area = 7
-    const v = [_]f32{ 0, 0, 0, 2, 0, 0, 2, 0, 2, 0, 0, 2 };
+    // Contour covering the whole 3x1 at surface height (y=0), area = 7.
+    // snap_max = band_below + band_above + ch = 0.5 + 0.5 + 1.0 = 2.0 < 10 -> upper floor culled.
+    const v = [_]f32{ 0, 0, 0, 3, 0, 0, 3, 0, 1, 0, 0, 1 };
     markConvexPolyAreaSurface(&v, 4, 0.5, 0.5, 7, &chf);
 
-    for (0..4) |ci| {
-        try std.testing.expectEqual(@as(u8, 7), areas[ci * 2 + 0]); // surface marked
-        try std.testing.expectEqual(@as(u8, 0), areas[ci * 2 + 1]); // upper floor NOT marked
-    }
+    // Walkable surface spans get marked with area 7.
+    try std.testing.expectEqual(@as(u8, 7), areas[0]);  // col0 surface: marked
+    try std.testing.expectEqual(@as(u8, 7), areas[2]);  // col1 surface: marked
+    // Upper-floor spans stay WALKABLE_AREA (snap_max cull: distance 10 > 2.0).
+    try std.testing.expectEqual(WALKABLE_AREA, areas[1]); // col0 upper: not marked
+    try std.testing.expectEqual(WALKABLE_AREA, areas[3]); // col1 upper: not marked
+    // NULL_AREA span stays 0 — skipped in anchor selection AND marking loop.
+    try std.testing.expectEqual(NULL_AREA, areas[4]);   // col2 null: skipped, stays 0
 }
