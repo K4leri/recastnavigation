@@ -7,6 +7,7 @@ const std = @import("std");
 const dvui = @import("dvui");
 const recast = @import("recast-nav");
 const ig = @import("input_geom.zig");
+const convex_surface = @import("convex_surface.zig");
 const InputGeom = ig.InputGeom;
 const ddgl = @import("debug_draw_gl.zig");
 const sample = @import("sample.zig");
@@ -194,7 +195,35 @@ pub const ConvexVolumeTool = struct {
         dd.end();
 
         // Контур текущей оболочки (стены).
+        // SURFACE (nhull>2): дрейпированный слаб по подогнанной плоскости ± band —
+        // меняется ЖИВО при движении ползунков Band. PRISM (или <3 вершин):
+        // плоский min..max превью как раньше.
         const lcol = dbg.rgba(255, 255, 255, 64);
+
+        // Подогнанная плоскость по текущим вершинам оболочки (для surface-превью).
+        var plane: ?convex_surface.Plane = null;
+        if (self.new_mode == .surface and self.nhull > 2) {
+            var hverts: [MAX_PTS * 3]f32 = undefined;
+            for (0..self.nhull) |k| {
+                const src = self.hull[k] * 3;
+                hverts[k * 3 + 0] = self.pts.items[src + 0];
+                hverts[k * 3 + 1] = self.pts.items[src + 1];
+                hverts[k * 3 + 2] = self.pts.items[src + 2];
+            }
+            plane = convex_surface.fitPlane(hverts[0 .. self.nhull * 3], self.nhull);
+        }
+
+        const topYof = struct {
+            fn f(pl: ?convex_surface.Plane, hi: f32, ba: f32, vx: f32, vz: f32) f32 {
+                return if (pl) |p| p.at(vx, vz) + ba else hi;
+            }
+        }.f;
+        const botYof = struct {
+            fn f(pl: ?convex_surface.Plane, lo: f32, bb: f32, vx: f32, vz: f32) f32 {
+                return if (pl) |p| p.at(vx, vz) - bb else lo;
+            }
+        }.f;
+
         dd.begin(.lines, 2.0);
         if (self.nhull > 0) {
             var j: usize = self.nhull - 1;
@@ -202,12 +231,16 @@ pub const ConvexVolumeTool = struct {
             while (i < self.nhull) : (i += 1) {
                 const vi = self.pts.items[self.hull[j] * 3 ..][0..3];
                 const vj = self.pts.items[self.hull[i] * 3 ..][0..3];
-                dd.vertexXYZ(vj[0], minh, vj[2], lcol);
-                dd.vertexXYZ(vi[0], minh, vi[2], lcol);
-                dd.vertexXYZ(vj[0], maxh, vj[2], lcol);
-                dd.vertexXYZ(vi[0], maxh, vi[2], lcol);
-                dd.vertexXYZ(vj[0], minh, vj[2], lcol);
-                dd.vertexXYZ(vj[0], maxh, vj[2], lcol);
+                const vi_bot = botYof(plane, minh, self.band_below, vi[0], vi[2]);
+                const vi_top = topYof(plane, maxh, self.band_above, vi[0], vi[2]);
+                const vj_bot = botYof(plane, minh, self.band_below, vj[0], vj[2]);
+                const vj_top = topYof(plane, maxh, self.band_above, vj[0], vj[2]);
+                dd.vertexXYZ(vj[0], vj_bot, vj[2], lcol);
+                dd.vertexXYZ(vi[0], vi_bot, vi[2], lcol);
+                dd.vertexXYZ(vj[0], vj_top, vj[2], lcol);
+                dd.vertexXYZ(vi[0], vi_top, vi[2], lcol);
+                dd.vertexXYZ(vj[0], vj_bot, vj[2], lcol);
+                dd.vertexXYZ(vj[0], vj_top, vj[2], lcol);
                 j = i;
             }
         }

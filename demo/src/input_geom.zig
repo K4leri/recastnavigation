@@ -5,6 +5,7 @@
 const std = @import("std");
 const recast = @import("recast-nav");
 const io_util = @import("io_util.zig");
+const convex_surface = @import("convex_surface.zig");
 const DebugDraw = recast.debug.DebugDraw;
 const Managed = std.array_list.Managed;
 
@@ -226,30 +227,74 @@ pub const InputGeom = struct {
     }
 
     // --- отрисовка ---
+    /// Per-volume vertical band: for PRISM mode it's the flat hmin/hmax box; for
+    /// SURFACE mode it follows the least-squares plane (fitPlane) ± band, so the
+    /// slab tilts with the relief and shows band_above+band_below as thickness.
+    const VolumeBand = struct {
+        plane: ?convex_surface.Plane,
+        hmin: f32,
+        hmax: f32,
+        band_below: f32,
+        band_above: f32,
+        fn init(vol: *const ConvexVolume) VolumeBand {
+            const n: usize = @intCast(vol.nverts);
+            return switch (vol.mode) {
+                .prism => .{ .plane = null, .hmin = vol.hmin, .hmax = vol.hmax, .band_below = 0, .band_above = 0 },
+                .surface => .{
+                    .plane = convex_surface.fitPlane(vol.verts[0 .. n * 3], n),
+                    .hmin = 0,
+                    .hmax = 0,
+                    .band_below = vol.band_below,
+                    .band_above = vol.band_above,
+                },
+            };
+        }
+        /// Top (upper) Y for the vertex at (vx,vz).
+        fn topY(self: VolumeBand, vx: f32, vz: f32) f32 {
+            return if (self.plane) |p| p.at(vx, vz) + self.band_above else self.hmax;
+        }
+        /// Bottom (lower) Y for the vertex at (vx,vz).
+        fn botY(self: VolumeBand, vx: f32, vz: f32) f32 {
+            return if (self.plane) |p| p.at(vx, vz) - self.band_below else self.hmin;
+        }
+    };
+
     pub fn drawConvexVolumes(self: *const InputGeom, dd: DebugDraw) void {
         // 1-в-1 с duDebugDrawConvexVolumes: верхняя грань (fan) + стены + рёбра-линии + точки.
+        // PRISM: плоский ящик hmin..hmax. SURFACE: дрейпированный слаб по плоскости ± band.
         const D = recast.debug;
         dd.depthMask(false);
 
         dd.begin(.tris, 1.0);
         for (self.volumes.items) |*vol| {
             const n: usize = @intCast(vol.nverts);
+            const b = VolumeBand.init(vol);
             const col = D.transCol(dd.areaToCol(vol.area), 32);
             const cold = D.darkenCol(col);
+            // Fan anchor = vertex 0 (per-vertex top so the fan slopes with the plane).
+            const v0x = vol.verts[0];
+            const v0z = vol.verts[2];
+            const v0top = b.topY(v0x, v0z);
             var j: usize = n - 1;
             var i: usize = 0;
             while (i < n) : (i += 1) {
                 const va = vol.verts[j * 3 ..][0..3];
                 const vb = vol.verts[i * 3 ..][0..3];
-                dd.vertexXYZ(vol.verts[0], vol.hmax, vol.verts[2], col);
-                dd.vertexXYZ(vb[0], vol.hmax, vb[2], col);
-                dd.vertexXYZ(va[0], vol.hmax, va[2], col);
-                dd.vertexXYZ(va[0], vol.hmin, va[2], cold);
-                dd.vertexXYZ(va[0], vol.hmax, va[2], col);
-                dd.vertexXYZ(vb[0], vol.hmax, vb[2], col);
-                dd.vertexXYZ(va[0], vol.hmin, va[2], cold);
-                dd.vertexXYZ(vb[0], vol.hmax, vb[2], col);
-                dd.vertexXYZ(vb[0], vol.hmin, vb[2], cold);
+                const va_top = b.topY(va[0], va[2]);
+                const vb_top = b.topY(vb[0], vb[2]);
+                const va_bot = b.botY(va[0], va[2]);
+                const vb_bot = b.botY(vb[0], vb[2]);
+                // Top fan (sloped for surface).
+                dd.vertexXYZ(v0x, v0top, v0z, col);
+                dd.vertexXYZ(vb[0], vb_top, vb[2], col);
+                dd.vertexXYZ(va[0], va_top, va[2], col);
+                // Side wall va_bot -> va_top -> vb_top, then va_bot -> vb_top -> vb_bot.
+                dd.vertexXYZ(va[0], va_bot, va[2], cold);
+                dd.vertexXYZ(va[0], va_top, va[2], col);
+                dd.vertexXYZ(vb[0], vb_top, vb[2], col);
+                dd.vertexXYZ(va[0], va_bot, va[2], cold);
+                dd.vertexXYZ(vb[0], vb_top, vb[2], col);
+                dd.vertexXYZ(vb[0], vb_bot, vb[2], cold);
                 j = i;
             }
         }
@@ -258,6 +303,7 @@ pub const InputGeom = struct {
         dd.begin(.lines, 2.0);
         for (self.volumes.items) |*vol| {
             const n: usize = @intCast(vol.nverts);
+            const b = VolumeBand.init(vol);
             const col = D.transCol(dd.areaToCol(vol.area), 220);
             const cold = D.darkenCol(col);
             var j: usize = n - 1;
@@ -265,12 +311,12 @@ pub const InputGeom = struct {
             while (i < n) : (i += 1) {
                 const va = vol.verts[j * 3 ..][0..3];
                 const vb = vol.verts[i * 3 ..][0..3];
-                dd.vertexXYZ(va[0], vol.hmin, va[2], cold);
-                dd.vertexXYZ(vb[0], vol.hmin, vb[2], cold);
-                dd.vertexXYZ(va[0], vol.hmax, va[2], col);
-                dd.vertexXYZ(vb[0], vol.hmax, vb[2], col);
-                dd.vertexXYZ(va[0], vol.hmin, va[2], cold);
-                dd.vertexXYZ(va[0], vol.hmax, va[2], col);
+                dd.vertexXYZ(va[0], b.botY(va[0], va[2]), va[2], cold);
+                dd.vertexXYZ(vb[0], b.botY(vb[0], vb[2]), vb[2], cold);
+                dd.vertexXYZ(va[0], b.topY(va[0], va[2]), va[2], col);
+                dd.vertexXYZ(vb[0], b.topY(vb[0], vb[2]), vb[2], col);
+                dd.vertexXYZ(va[0], b.botY(va[0], va[2]), va[2], cold);
+                dd.vertexXYZ(va[0], b.topY(va[0], va[2]), va[2], col);
                 j = i;
             }
         }
@@ -279,13 +325,14 @@ pub const InputGeom = struct {
         dd.begin(.points, 3.0);
         for (self.volumes.items) |*vol| {
             const n: usize = @intCast(vol.nverts);
+            const b = VolumeBand.init(vol);
             const col = D.darkenCol(D.transCol(dd.areaToCol(vol.area), 220));
             var i: usize = 0;
             while (i < n) : (i += 1) {
                 const v = vol.verts[i * 3 ..][0..3];
                 dd.vertexXYZ(v[0], v[1] + 0.1, v[2], col);
-                dd.vertexXYZ(v[0], vol.hmin, v[2], col);
-                dd.vertexXYZ(v[0], vol.hmax, v[2], col);
+                dd.vertexXYZ(v[0], b.botY(v[0], v[2]), v[2], col);
+                dd.vertexXYZ(v[0], b.topY(v[0], v[2]), v[2], col);
             }
         }
         dd.end();
