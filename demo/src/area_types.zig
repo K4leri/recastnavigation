@@ -153,3 +153,46 @@ pub fn removeType(id: usize) void {
         types[id] = .{};
     }
 }
+
+/// Reset the registry to seed state (Ground..Jump). Used by registry_io BEFORE
+/// restoring saved types so edited builtins revert to defaults first, then the
+/// saved state overwrites them exactly.
+pub fn resetToBuiltins() void {
+    initialized = false;
+    ensureInit();
+}
+
+/// Restore a type into EXACT slot `id` (bypasses auto-id-allocation addType).
+/// Copies all fields from `t` (used/builtin/name/rgba/flags/cost) verbatim.
+/// No-op if id >= MAX_AREA_TYPES.
+pub fn restoreType(id: usize, t: AreaType) void {
+    ensureInit();
+    if (id >= MAX_AREA_TYPES) return;
+    types[id] = t;
+}
+
+test "restoreType overwrites exact slot, resetToBuiltins reseeds" {
+    resetToBuiltins();
+    try std.testing.expectEqualStrings("Ground", get(0).?.name());
+    try std.testing.expectEqual(@as(f32, 1.0), get(0).?.cost);
+    // edit builtin Ground (cost + color)
+    var edited = get(0).?.*;
+    edited.cost = 3.5;
+    edited.r = 10;
+    edited.g = 20;
+    edited.b = 30;
+    restoreType(0, edited);
+    try std.testing.expectEqual(@as(f32, 3.5), get(0).?.cost);
+    try std.testing.expectEqual(@as(u8, 10), get(0).?.r);
+    try std.testing.expect(get(0).?.builtin); // builtin flag preserved
+    // custom type in slot 40
+    var custom = AreaType{ .used = true, .builtin = false, .r = 1, .g = 2, .b = 3, .a = 4, .flags = 0x09, .cost = 7.0 };
+    custom.setName("Lava");
+    restoreType(40, custom);
+    try std.testing.expectEqualStrings("Lava", get(40).?.name());
+    try std.testing.expectEqual(@as(u16, 0x09), get(40).?.flags);
+    // reset clears custom and restores Ground.cost=1.0
+    resetToBuiltins();
+    try std.testing.expectEqual(@as(?*AreaType, null), get(40));
+    try std.testing.expectEqual(@as(f32, 1.0), get(0).?.cost);
+}

@@ -115,3 +115,42 @@ pub fn removeFlag(index: usize) void {
         flags[index] = .{};
     }
 }
+
+/// Reset the registry to seed state (walk/swim/door/jump + reserved). Used by
+/// registry_io BEFORE restoring saved flags to arrive at exactly the saved state.
+pub fn resetToBuiltins() void {
+    initialized = false;
+    ensureInit();
+}
+
+/// Restore a flag into EXACT slot `bit_index` (bypasses auto-bit-allocation addFlag).
+/// Builtin slots (0..3) are renamed in place; custom slots are marked used.
+/// No-op if bit_index >= MAX_FLAGS or bit_index maps to RESERVED_BIT (bit 4).
+pub fn restoreFlag(bit_index: usize, nm: []const u8, builtin_flag: bool) void {
+    ensureInit();
+    if (bit_index >= MAX_FLAGS) return;
+    const bit = @as(u16, 1) << @as(u4, @intCast(bit_index));
+    if (bit == RESERVED_BIT) return;
+    flags[bit_index] = .{ .used = true, .builtin = builtin_flag };
+    flags[bit_index].setName(nm);
+}
+
+test "restoreFlag overwrites exact slot, resetToBuiltins reseeds" {
+    resetToBuiltins();
+    try std.testing.expectEqualStrings("walk", get(0).?.name());
+    // rename builtin + add custom in slot 5
+    restoreFlag(0, "stride", true);
+    restoreFlag(5, "ladder", false);
+    try std.testing.expectEqualStrings("stride", get(0).?.name());
+    try std.testing.expect(get(0).?.builtin);
+    try std.testing.expectEqualStrings("ladder", get(5).?.name());
+    try std.testing.expect(!get(5).?.builtin);
+    try std.testing.expectEqual(@as(?u16, 1 << 5), bitOf(5));
+    // reserved bit is a no-op
+    restoreFlag(4, "nope", false); // bit 4 = RESERVED_BIT (0x10)
+    try std.testing.expectEqual(@as(?u16, null), bitOf(4));
+    // reset clears custom
+    resetToBuiltins();
+    try std.testing.expectEqual(@as(?*Flag, null), get(5));
+    try std.testing.expectEqualStrings("walk", get(0).?.name());
+}
