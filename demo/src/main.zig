@@ -815,7 +815,10 @@ pub fn main(main_init: std.process.Init) !void {
                 if (variants.len == 0) {
                     dvui.labelNoFmt(@src(), "(no saved variants)", .{}, .{});
                 } else {
-                    var vsc = dvui.scrollArea(@src(), .{}, .{ .expand = .horizontal, .min_size_content = .{ .h = 120 } });
+                    // Height fits the variant count (cap ~8 rows, scroll beyond), so a
+                    // short list shows no empty space — same idea as the Poly Flags window.
+                    const list_rows: f32 = @floatFromInt(@min(variants.len, 8));
+                    var vsc = dvui.scrollArea(@src(), .{}, .{ .expand = .horizontal, .min_size_content = .{ .h = list_rows * 30 } });
                     defer vsc.deinit();
                     for (variants, 0..) |v, vi| {
                         // index 0 = newest -> highlighted as the default selection.
