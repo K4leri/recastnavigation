@@ -13,6 +13,8 @@ const ddgl = @import("debug_draw_gl.zig");
 const io_util = @import("io_util.zig");
 const ui = @import("ui.zig");
 const nav_io = @import("navmesh_io.zig");
+const poly_visit = @import("render/poly_visit.zig");
+const scheme_state = @import("render/scheme_state.zig");
 
 const rc = recast.recast;
 const dt = recast.detour;
@@ -437,13 +439,20 @@ pub const SampleSolo = struct {
             .polymesh_detail => if (self.dmesh) |*d| {
                 if (d.nmeshes > 0) dbg.debugDrawPolyMeshDetail(dd, d);
             },
-            .navmesh, .navmesh_trans => if (self.navmesh) |*n| dbg.debugDrawNavMesh(dd, n, 0),
+            .navmesh, .navmesh_trans => if (self.navmesh) |*n| {
+                dbg.debugDrawNavMesh(dd, n, 0);
+                if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active);
+            },
             // BVTree/Nodes: оригинал рисует САМ навмеш + overlay поверх (Sample_SoloMesh::render).
             .navmesh_bvtree => if (self.navmesh) |*n| {
                 dbg.debugDrawNavMesh(dd, n, 0);
+                if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active);
                 dbg.debugDrawNavMeshBVTree(dd, n);
             },
-            .navmesh_nodes => if (self.navmesh) |*n| dbg.debugDrawNavMesh(dd, n, 0),
+            .navmesh_nodes => if (self.navmesh) |*n| {
+                dbg.debugDrawNavMesh(dd, n, 0);
+                if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active);
+            },
         }
 
         // Тёмный оверлей на DISABLED-полигонах (Toggle Polys) — 1-в-1 Sample_SoloMesh::render

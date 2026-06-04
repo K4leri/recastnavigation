@@ -22,7 +22,9 @@ fn polyHeight(tile: *const dt.MeshTile, p: *const dt.Poly) f32 {
     return if (p.vert_count == 0) 0 else sum / @as(f32, @floatFromInt(p.vert_count));
 }
 
-fn heightRange(mesh: *const NavMesh) struct { lo: f32, hi: f32 } {
+const HeightRange = struct { lo: f32, hi: f32 };
+
+fn heightRange(mesh: *const NavMesh) HeightRange {
     var lo: f32 = std.math.floatMax(f32);
     var hi: f32 = -std.math.floatMax(f32);
     var found = false;
@@ -43,7 +45,7 @@ fn heightRange(mesh: *const NavMesh) struct { lo: f32, hi: f32 } {
 
 pub fn fillNavMesh(dd: dbg.DebugDraw, mesh: *const NavMesh, scheme: cs.ColorScheme) void {
     // Height range needs a full extra traversal; only pay it for the height ramp.
-    const hr = if (scheme == .height) heightRange(mesh) else .{ .lo = @as(f32, 0), .hi = @as(f32, 0) };
+    const hr: HeightRange = if (scheme == .height) heightRange(mesh) else .{ .lo = 0, .hi = 0 };
 
     dd.depthMask(false);
     dd.begin(.tris, 1.0);

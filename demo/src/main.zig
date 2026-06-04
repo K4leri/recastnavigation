@@ -27,6 +27,7 @@ const InputGate = @import("input_gate.zig").InputGate;
 const tool_registry = @import("tool_registry.zig");
 const InputGeom = @import("input_geom.zig").InputGeom;
 const SampleSolo = @import("sample_solo.zig").SampleSolo;
+const scheme_state = @import("render/scheme_state.zig");
 const SampleTile = @import("sample_tile.zig").SampleTile;
 const SampleTempObstacles = @import("sample_temp_obstacles.zig").SampleTempObstacles;
 const NavMeshTesterTool = @import("tool_navmesh_tester.zig").NavMeshTesterTool;
@@ -759,6 +760,11 @@ pub fn main(main_init: std.process.Init) !void {
             // rebuild (cost/colour edits apply instantly and don't). When auto is off,
             // a red "rebuild needed" notice is drawn bottom-left (see below).
             _ = dvui.checkbox(@src(), &area_types.auto_rebuild, "Auto-rebuild on changes", .{});
+
+            ui.section(@src(), "Navmesh Colouring");
+            if (ui.radio(@src(), scheme_state.active == .area, "Area", 310)) scheme_state.active = .area;
+            if (ui.radio(@src(), scheme_state.active == .flags, "Flags", 311)) scheme_state.active = .flags;
+            if (ui.radio(@src(), scheme_state.active == .height, "Height", 312)) scheme_state.active = .height;
 
             ui.section(@src(), "Debug Settings");
             switch (sample_kind) {
