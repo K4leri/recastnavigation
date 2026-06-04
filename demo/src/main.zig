@@ -23,6 +23,7 @@ const Camera = @import("camera.zig").Camera;
 const BuildContext = @import("build_context.zig").BuildContext;
 const AppState = @import("app_state.zig").AppState;
 const io_util = @import("io_util.zig");
+const InputGate = @import("input_gate.zig").InputGate;
 const InputGeom = @import("input_geom.zig").InputGeom;
 const SampleSolo = @import("sample_solo.zig").SampleSolo;
 const SampleTile = @import("sample_tile.zig").SampleTile;
@@ -222,8 +223,7 @@ pub fn main(main_init: std.process.Init) !void {
         loadMeshIndex(main_init.gpa, app.meshes_folder, 0, mesh_files, &geom, &solo, &tile, &temp, &tester, &crowd_tool, &cam, &bctx);
     var last_mouse = g_window.getCursorPos();
     var rotating = false;
-    var ui_mouse = false; // курсор над dvui-панелью (с прошлого кадра)
-    var ui_keyboard = false; // фокус в текстовом поле dvui (с прошлого кадра) — гейт хоткеев
+    var gate = InputGate{}; // курсор над панелью / фокус в textfield (с прошлого кадра)
     var prev_esc = false; // фронт Esc (чтобы Esc в редакторе не закрывал приложение)
     var new_flag_name: [20]u8 = [_]u8{0} ** 20; // поле ввода имени нового poly-флага
     var pick_hit: ?Vec3 = null; // последняя точка пикинга по земле
@@ -359,7 +359,7 @@ pub fn main(main_init: std.process.Init) !void {
         // --- ввод камеры (если курсор не над UI) ---
         const cur = g_window.getCursorPos();
         const rmb = g_window.getMouseButton(.right) == .press;
-        if (rmb and !ui_mouse) {
+        if (rmb and gate.pointerInScene()) {
             if (!rotating) {
                 rotating = true;
                 last_mouse = cur;
@@ -393,7 +393,7 @@ pub fn main(main_init: std.process.Init) !void {
         // Keyboard hotkeys (camera move, reset, render toggles) — suppressed while a
         // dvui text field has focus, so typing a name doesn't drive the camera or
         // toggle render modes.
-        if (!ui_keyboard) {
+        if (gate.keyboardFree()) {
         const base: f32 = if (g_window.getKey(.left_shift) == .press) @as(f32, 150.0) else 40.0;
         const d = base * dist_scale * dt;
         if (g_window.getKey(.w) == .press) cam.moveLocal(0, 0, -d);
@@ -430,10 +430,10 @@ pub fn main(main_init: std.process.Init) !void {
             std.debug.print("[VOXVAR] {s}\n", .{vox_names[dd_gl.voxel_variant % 8]});
         }
         prev_v = v_now;
-        } // end !ui_keyboard hotkey gate
+        } // end keyboardFree hotkey gate
         // SPACE — run/pause симуляции толпы; "1" — один шаг (1-в-1 CrowdTool onToggle/singleStep).
         // Только для активного crowd-инструмента и не когда курсор над dvui-панелью.
-        if (active_tool == .crowd and !ui_mouse and !ui_keyboard) {
+        if (active_tool == .crowd and gate.pointerInScene() and gate.keyboardFree()) {
             const space_now = g_window.getKey(.space) == .press;
             if (space_now and !prev_space) crowd_tool.running = !crowd_tool.running;
             prev_space = space_now;
@@ -445,7 +445,7 @@ pub fn main(main_init: std.process.Init) !void {
             prev_step = false;
         }
         // зум колесом — только из 3D (g_scroll уже 0, если скролл потреблён панелью dvui)
-        if (g_scroll != 0 and !ui_mouse) {
+        if (g_scroll != 0 and gate.pointerInScene()) {
             const zoom_step = @max(@as(f32, 0.5), dist * 0.1);
             cam.moveLocal(0, 0, @as(f32, @floatCast(-g_scroll)) * zoom_step);
         }
@@ -461,7 +461,7 @@ pub fn main(main_init: std.process.Init) !void {
         }
 
         // ЛКМ (по фронту нажатия) -> клик в активный инструмент
-        const lmb = !ui_mouse and g_window.getMouseButton(.left) == .press;
+        const lmb = gate.pointerInScene() and g_window.getMouseButton(.left) == .press;
         if (lmb and !prev_lmb) {
             // курсор в оконных координатах -> пиксели фреймбуфера (HiDPI/скейл дисплея)
             const win_sz = g_window.getSize();
@@ -988,8 +988,7 @@ pub fn main(main_init: std.process.Init) !void {
         const end_micros = try win.end(.{ .manage_backend = false });
         z_end.end();
         // курсор над dvui-панелью? -> на след. кадре не трогаем камеру/пикинг
-        ui_mouse = win.cursorRequestedFloating() != null;
-        ui_keyboard = win.textInputRequested() != null; // text field focused -> gate hotkeys
+        gate.update(win.cursorRequestedFloating() != null, win.textInputRequested() != null);
         z_dvui.end();
 
         {
