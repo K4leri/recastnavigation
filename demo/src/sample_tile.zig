@@ -148,9 +148,13 @@ pub const SampleTile = struct {
         rc.filter.markWalkableTriangles(ctx, s.agent_max_slope, geom.verts.items, geom.tris.items, areas);
         rc.rasterization.rasterizeTriangles(ctx, geom.verts.items, geom.tris.items, areas, &hf, walkable_climb) catch return false;
 
-        rc.filter.filterLowHangingWalkableObstacles(ctx, walkable_climb, &hf);
-        rc.filter.filterLedgeSpans(ctx, walkable_height, walkable_climb, &hf);
-        rc.filter.filterWalkableLowHeightSpans(ctx, walkable_height, &hf);
+        // Фильтры условно по переключателям UI (1-в-1 Sample_TileMesh::buildTileMesh).
+        if (s.filter_low_hanging_obstacles)
+            rc.filter.filterLowHangingWalkableObstacles(ctx, walkable_climb, &hf);
+        if (s.filter_ledge_spans)
+            rc.filter.filterLedgeSpans(ctx, walkable_height, walkable_climb, &hf);
+        if (s.filter_walkable_low_height_spans)
+            rc.filter.filterWalkableLowHeightSpans(ctx, walkable_height, &hf);
 
         const span_count = rc.compact.getHeightFieldSpanCount(ctx, &hf);
         var chf = recast.CompactHeightfield.init(a, width, width, @intCast(span_count), walkable_height, walkable_climb, hbmin, hbmax, cs, ch, border_size) catch return false;
@@ -162,8 +166,18 @@ pub const SampleTile = struct {
             const nv: usize = @intCast(vol.nverts);
             rc.area.markConvexPolyArea(ctx, vol.verts[0 .. nv * 3], nv, vol.hmin, vol.hmax, vol.area, &chf);
         }
-        rc.region.buildDistanceField(ctx, &chf, a) catch return false;
-        rc.region.buildRegions(ctx, &chf, border_size, min_region_area, merge_region_area, a) catch return false;
+        // Partitioning (ветвление по типу, 1-в-1 Sample_TileMesh::buildTileMesh).
+        switch (s.partition_type) {
+            .watershed => {
+                // Watershed: дистанционное поле + рост регионов.
+                rc.region.buildDistanceField(ctx, &chf, a) catch return false;
+                rc.region.buildRegions(ctx, &chf, border_size, min_region_area, merge_region_area, a) catch return false;
+            },
+            // Monotone: без distancefield.
+            .monotone => rc.region.buildRegionsMonotone(ctx, &chf, border_size, min_region_area, merge_region_area, a) catch return false,
+            // Layers: без distancefield; merge_region_area не используется (как в оригинале).
+            .layers => rc.region.buildLayerRegions(ctx, &chf, border_size, min_region_area, a) catch return false,
+        }
 
         var cset = recast.ContourSet.init(a);
         defer cset.deinit();

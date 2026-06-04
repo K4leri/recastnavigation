@@ -203,9 +203,15 @@ pub const SampleTempObstacles = struct {
         rc.filter.markWalkableTriangles(ctx, s.agent_max_slope, geom.verts.items, geom.tris.items, areas);
         try rc.rasterization.rasterizeTriangles(ctx, geom.verts.items, geom.tris.items, areas, &hf, walkable_climb);
 
-        rc.filter.filterLowHangingWalkableObstacles(ctx, walkable_climb, &hf);
-        rc.filter.filterLedgeSpans(ctx, walkable_height, walkable_climb, &hf);
-        rc.filter.filterWalkableLowHeightSpans(ctx, walkable_height, &hf);
+        // Фильтры условно по переключателям UI (1-в-1 Sample_TempObstacles::rasterizeTileLayers).
+        // Partitioning здесь не выбирается: TileCache всегда использует layer-партишн
+        // через rcBuildHeightfieldLayers (см. ниже), как в оригинале — s.partition_type не применяется.
+        if (s.filter_low_hanging_obstacles)
+            rc.filter.filterLowHangingWalkableObstacles(ctx, walkable_climb, &hf);
+        if (s.filter_ledge_spans)
+            rc.filter.filterLedgeSpans(ctx, walkable_height, walkable_climb, &hf);
+        if (s.filter_walkable_low_height_spans)
+            rc.filter.filterWalkableLowHeightSpans(ctx, walkable_height, &hf);
 
         const span_count = rc.compact.getHeightFieldSpanCount(ctx, &hf);
         var chf = try recast.CompactHeightfield.init(a, width, width, @intCast(span_count), walkable_height, walkable_climb, hbmin, hbmax, cs, ch, border_size);

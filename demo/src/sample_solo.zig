@@ -242,10 +242,14 @@ pub const SampleSolo = struct {
 
         try rc.rasterization.rasterizeTriangles(ctx, verts, tris, areas, &hf, cfg.walkable_climb);
 
-        // 2. фильтры
-        rc.filter.filterLowHangingWalkableObstacles(ctx, cfg.walkable_climb, &hf);
-        rc.filter.filterLedgeSpans(ctx, cfg.walkable_height, cfg.walkable_climb, &hf);
-        rc.filter.filterWalkableLowHeightSpans(ctx, cfg.walkable_height, &hf);
+        // 2. фильтры (условно по переключателям UI, 1-в-1 Sample_SoloMesh::handleBuild)
+        const s = &self.settings;
+        if (s.filter_low_hanging_obstacles)
+            rc.filter.filterLowHangingWalkableObstacles(ctx, cfg.walkable_climb, &hf);
+        if (s.filter_ledge_spans)
+            rc.filter.filterLedgeSpans(ctx, cfg.walkable_height, cfg.walkable_climb, &hf);
+        if (s.filter_walkable_low_height_spans)
+            rc.filter.filterWalkableLowHeightSpans(ctx, cfg.walkable_height, &hf);
         self.hf = hf;
 
         // 3. compact heightfield
@@ -260,8 +264,18 @@ pub const SampleSolo = struct {
             const nv: usize = @intCast(vol.nverts);
             rc.area.markConvexPolyArea(ctx, vol.verts[0 .. nv * 3], nv, vol.hmin, vol.hmax, vol.area, &chf);
         }
-        try rc.region.buildDistanceField(ctx, &chf, a);
-        try rc.region.buildRegions(ctx, &chf, cfg.border_size, cfg.min_region_area, cfg.merge_region_area, a);
+        // Partitioning (ветвление по типу, 1-в-1 Sample_SoloMesh::handleBuild).
+        switch (s.partition_type) {
+            .watershed => {
+                // Watershed: дистанционное поле + рост регионов.
+                try rc.region.buildDistanceField(ctx, &chf, a);
+                try rc.region.buildRegions(ctx, &chf, cfg.border_size, cfg.min_region_area, cfg.merge_region_area, a);
+            },
+            // Monotone: без distancefield.
+            .monotone => try rc.region.buildRegionsMonotone(ctx, &chf, cfg.border_size, cfg.min_region_area, cfg.merge_region_area, a),
+            // Layers: без distancefield; merge_region_area не используется (как в оригинале).
+            .layers => try rc.region.buildLayerRegions(ctx, &chf, cfg.border_size, cfg.min_region_area, a),
+        }
         self.chf = chf;
 
         // 5. контуры
