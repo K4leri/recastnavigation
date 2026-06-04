@@ -71,7 +71,7 @@ test {
 // Library version
 pub const VERSION_MAJOR = 0;
 pub const VERSION_MINOR = 1;
-pub const VERSION_PATCH = 0;
+pub const VERSION_PATCH = 8;
 
 pub fn version() []const u8 {
     return std.fmt.comptimePrint("{d}.{d}.{d}", .{
