@@ -210,6 +210,10 @@ pub const InputGeom = struct {
         try self.off_dir.append(bidir);
         try self.off_area.append(area);
         try self.off_flags.append(flags);
+        // NOTE: index-derived (1000+len), NOT monotonic — an id is reused after a
+        // middle connection is removed. Stable-id consumers (cluster F/I) must not
+        // rely on off_id being unique across removal; making it monotonic like
+        // next_volume_id is tracked as a follow-up (changes upstream-faithful value).
         try self.off_id.append(@intCast(1000 + self.off_id.items.len));
     }
     pub fn offMeshCount(self: *const InputGeom) usize {
@@ -357,6 +361,12 @@ test "addConvexVolume assigns monotonic non-reused ids" {
     try std.testing.expectEqual(@as(u32, 2), geom.volumes.items[1].id);
     try std.testing.expectEqual(@as(u32, 3), geom.volumes.items[2].id);
     try std.testing.expectEqual(@as(u32, 4), geom.next_volume_id);
+
+    // Remove volume 1 (index 0), add a fourth — id must not reuse 1, 2 or 3.
+    geom.deleteConvexVolume(0);
+    try geom.addConvexVolume(&tri, 3, 0.0, 1.0, 0);
+    try std.testing.expectEqual(@as(u32, 4), geom.volumes.items[geom.volumes.items.len - 1].id);
+    try std.testing.expectEqual(@as(u32, 5), geom.next_volume_id);
 }
 
 test "raycast hits a quad on the ground" {
