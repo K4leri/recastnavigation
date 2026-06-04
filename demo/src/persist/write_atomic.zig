@@ -94,7 +94,7 @@ pub fn writeAtomic(
         var wbuf: [4096]u8 = undefined;
         var w = af.file.writer(io, &wbuf);
         w.interface.writeAll(bytes) catch |e| switch (e) {
-            error.WriteFailed => return w.err.?,
+            error.WriteFailed => return w.err orelse error.Unexpected,
         };
         try w.flush(); // File.Writer.flush unwraps WriteFailed to the underlying error.
 
@@ -108,6 +108,7 @@ pub fn writeAtomic(
 
         // 3) Atomic rename temp -> sub_path. (replace closes af.file internally first.)
         try af.replace(io);
+        // NOTE: dirFsync MUST stay OUTSIDE this block — the errdefer above must be dead before the explicit deinit ran, or it would deinit an already-undefined AtomicFile.
     }
 
     // 4) Release remaining resources. After a successful replace this is a no-op for
@@ -120,6 +121,16 @@ pub fn writeAtomic(
     //    (POSIX). No-op on Windows. If this fails the file is already materialized;
     //    we surface the durability error to the caller (no temp to clean up).
     try dirFsync(dir);
+}
+
+/// Open (creating if needed) a scene container directory under `parent`, returning
+/// an owned Dir the caller must close. Used by the persistence orchestrator to get
+/// a handle for writeAtomic sub-paths.
+///
+/// Uses `createDirPathOpen` which atomically creates all intermediate directories
+/// (no-op if already present) and returns an open handle in a single operation.
+pub fn openContainerDir(io: Io, parent: Dir, sub_path: []const u8) !Dir {
+    return parent.createDirPathOpen(io, sub_path, .{});
 }
 
 // ---------------------------------------------------------------------------
@@ -172,5 +183,17 @@ test "writeAtomic nested sub_path creates parent dir and writes" {
 test "dirFsync on a normal directory returns without error (EINVAL tolerated)" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    try dirFsync(tmp.dir); // POSIX: success or EINVAL=no-op; Windows: no-op.
+    try dirFsync(tmp.dir); // POSIX or Windows: returns without error (EINVAL tolerated).
+}
+
+test "openContainerDir creates and opens a nested container" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = testing.io;
+    var d = try openContainerDir(io, tmp.dir, "world/.recastscene");
+    defer d.close(io);
+    try writeAtomic(io, d, "manifest", "hello");
+    const got = try d.readFileAlloc(io, "manifest", testing.allocator, .unlimited);
+    defer testing.allocator.free(got);
+    try testing.expectEqualStrings("hello", got);
 }
