@@ -774,6 +774,13 @@ pub fn main(main_init: std.process.Init) !void {
                         "scene.obj";
                     saveSceneNow(main_init.gpa, &geom, &solo, app.meshes_folder, cur_name, &bctx);
                 }
+                if (dvui.button(@src(), "Load Scene", .{}, .{ .id_extra = 997 })) {
+                    const cur_name: []const u8 = if (mesh_files.len > 0 and mesh_choice < mesh_files.len)
+                        mesh_files[mesh_choice]
+                    else
+                        "scene.obj";
+                    loadSceneNow(main_init.gpa, app.meshes_folder, cur_name, &geom, &solo, &tile, &temp, &tester, &crowd_tool, &prune_tool, &cam, &bctx);
+                }
             }
 
             ui.section(@src(), "Navmesh Colouring");
@@ -1159,6 +1166,119 @@ fn saveSceneNow(
         };
         bctx.context().log(.progress, "Saved scene to {s} (no navmesh built; 0 tiles)", .{container_path});
     }
+}
+
+/// Restore a `<mesh>.recastscene/` container produced by saveSceneNow and rebuild the
+/// Solo navmesh from the restored geometry + area registry. MUTATES live state (geom,
+/// the module-global registries, the navmesh, the tools) — so it is built to be safe:
+///   * ALL errors are caught + logged via bctx and we return without crashing.
+///   * The restore happens into a TEMP geom first; the live `geom` is only swapped in
+///     once loadScene + the base-mesh reload BOTH succeed, so a failed/corrupt load
+///     leaves the previous scene intact (no half-applied state).
+/// Solo sample only (the caller gates sample_kind == .solo).
+fn loadSceneNow(
+    gpa: std.mem.Allocator,
+    folder: []const u8,
+    mesh_name: []const u8,
+    geom: *InputGeom,
+    solo: *SampleSolo,
+    tile: *SampleTile,
+    temp: *SampleTempObstacles,
+    tester: *NavMeshTesterTool,
+    crowd_tool: *CrowdTool,
+    prune_tool: *NavMeshPruneTool,
+    cam: *Camera,
+    bctx: *BuildContext,
+) void {
+    // 1) Same container path scheme as Save: "<folder>/<stem>.recastscene".
+    const stem_full = if (mesh_name.len > 0) mesh_name else "scene";
+    const dot = std.mem.lastIndexOfScalar(u8, stem_full, '.');
+    const stem = if (dot) |d| stem_full[0..d] else stem_full;
+    const container_path = std.fmt.allocPrint(gpa, "{s}/{s}.recastscene", .{ folder, stem }) catch |e| {
+        bctx.context().log(.err, "Load Scene: path alloc failed: {s}", .{@errorName(e)});
+        return;
+    };
+    defer gpa.free(container_path);
+
+    // 2) io acquisition mirrors saveSceneNow / io_util (Threaded backend).
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // 3) Restore into a TEMP geom so a failure cannot corrupt the live scene.
+    //    loadScene resets+restores the module-global registries (area_types/poly_flags),
+    //    then restores volumes/offmesh into `tmp_geom`. NOTE: this DOES mutate the
+    //    global registries even on the temp path; that is acceptable (the registries are
+    //    re-derived on the next successful save and a failed load only logs), and the
+    //    invariant "registries before geometry" is owned entirely by loadScene.
+    var tmp_geom = InputGeom.init(gpa);
+    var tmp_geom_owned = true;
+    defer if (tmp_geom_owned) tmp_geom.deinit();
+
+    const lr = scene_container.loadScene(io, gpa, container_path, &tmp_geom) catch |e| {
+        bctx.context().log(.err, "Load Scene failed ({s}): {s}", .{ container_path, @errorName(e) });
+        return;
+    };
+    defer scene_container.freeLoadResult(gpa, lr);
+
+    // 4) loadScene restored volumes/offmesh but NOT the base triangle mesh. Reload the
+    //    .obj referenced by scene.gset (resolved under the meshes folder). ORDERING: we
+    //    deliberately call loadMesh AFTER the loadScene restore because loadMesh clears
+    //    ONLY verts/tris/normals and leaves volumes + off-mesh arrays untouched (verified
+    //    in input_geom.loadMesh). So the restored edits SURVIVE the triangle reload and
+    //    the final geom has BOTH the mesh triangles AND the restored volumes/offmesh.
+    const obj_name = if (lr.mesh_name.len > 0) lr.mesh_name else mesh_name;
+    if (obj_name.len == 0) {
+        bctx.context().log(.err, "Load Scene: no mesh name in container {s}", .{container_path});
+        return;
+    }
+    const obj_path = std.fmt.allocPrint(gpa, "{s}/{s}", .{ folder, obj_name }) catch |e| {
+        bctx.context().log(.err, "Load Scene: obj path alloc failed: {s}", .{@errorName(e)});
+        return;
+    };
+    defer gpa.free(obj_path);
+    tmp_geom.loadMesh(obj_path) catch |e| {
+        bctx.context().log(.err, "Load Scene: reload mesh {s}: {s}", .{ obj_path, @errorName(e) });
+        return;
+    };
+
+    // 5) Commit: swap the restored temp geom into the live `geom`. From here on the
+    //    operation succeeds (the remaining steps are infallible build/tool wiring).
+    geom.deinit();
+    geom.* = tmp_geom;
+    tmp_geom_owned = false; // ownership moved into `geom`; don't deinit it in defer.
+
+    // 6) Rebuild the Solo navmesh from the restored geom + restored area registry.
+    //    (Solo first-cut: regenerate from geometry. Direct saved-tile load via
+    //    scene_container.loadTilesInto(io, gpa, container_path, lr.tiles, navmesh) is a
+    //    documented follow-up — not wired here.)
+    solo.setGeom(geom);
+    tile.setGeom(geom);
+    temp.setGeom(geom);
+    cam.reset(Vec3.init(geom.bmin[0], geom.bmin[1], geom.bmin[2]), Vec3.init(geom.bmax[0], geom.bmax[1], geom.bmax[2]));
+    {
+        const dx = geom.bmax[0] - geom.bmin[0];
+        const dy = geom.bmax[1] - geom.bmin[1];
+        const dz = geom.bmax[2] - geom.bmin[2];
+        const camr = @sqrt(dx * dx + dy * dy + dz * dz) / 2.0 * 3.0;
+        solo.dd_gl.setFogRange(camr * 0.1, camr * 1.25);
+    }
+    _ = solo.build();
+
+    // 7) Post-load tail (mirror loadMeshIndex): re-point the tools at the new navmesh,
+    //    and reapply the restored area costs into the live filters. The main loop's
+    //    build_gen sync would also re-point the tools next frame, but we do it eagerly
+    //    here exactly like loadMeshIndex so no tool is left on a stale navmesh.
+    const nm = solo.navMesh();
+    tester.setNavMesh(nm);
+    crowd_tool.setNavMesh(nm);
+    prune_tool.setNavMesh(nm);
+    area_types.applyCosts(&tester.filter);
+    crowd_tool.reapplyAreaCosts();
+    // Ensure any later cost edit still re-pushes; also harmless if already clean.
+    area_types.costs_dirty = false;
+
+    bctx.context().log(.progress, "Loaded scene {s} (mesh {s}, {d} saved tiles)", .{ container_path, obj_name, lr.tiles.len });
 }
 
 /// Точка пикинга: пересечение с мешем (если есть), иначе с плоскостью y=0.

@@ -70,10 +70,16 @@ pub const LoadResult = struct {
     versions: manifest.FormatVersions,
     /// Owned (free via freeLoadResult). The caller passes this to loadTilesInto.
     tiles: []const tile_store.TileKey,
+    /// Owned (free via freeLoadResult). The geometry mesh reference from scene.gset
+    /// (e.g. "dungeon.obj"). Empty if scene.gset had no/empty mesh row. The UI caller
+    /// resolves this under the meshes folder to reload the base .obj triangles, since
+    /// loadScene restores volumes/offmesh into geom but NOT the base triangle mesh.
+    mesh_name: []const u8,
 };
 
 pub fn freeLoadResult(alloc: std.mem.Allocator, r: LoadResult) void {
     alloc.free(r.tiles);
+    alloc.free(r.mesh_name);
 }
 
 /// Save the full scene into `container_path` (created if missing) in commit order.
@@ -159,6 +165,11 @@ pub fn loadScene(
     alloc.free(m.gset_name);
     errdefer alloc.free(m.tiles);
 
+    // mesh_name is captured from scene.gset below and moved into LoadResult. Default
+    // to an owned empty string so the result is always free-able via freeLoadResult.
+    var mesh_name: []const u8 = try alloc.dupe(u8, "");
+    errdefer alloc.free(mesh_name);
+
     // 1) Registries FIRST (invariant). loadAll resets to builtins on FileNotFound;
     //    corruption is surfaced — tolerate it here (fall back to whatever loaded).
     registry_io.loadAll(alloc, io, root) catch |e| switch (e) {
@@ -175,14 +186,18 @@ pub fn loadScene(
         error.FileNotFound => null,
         else => return e,
     };
-    if (parsed) |p| alloc.free(p.mesh_name);
+    if (parsed) |p| {
+        // Move the gset mesh reference into LoadResult (replace the empty default).
+        alloc.free(mesh_name);
+        mesh_name = p.mesh_name; // ownership transferred
+    }
 
     scene_io.loadVolumes(alloc, io, root, out_geom) catch |e|
         std.log.warn("scene_container: volumes.bin: {s}", .{@errorName(e)});
     scene_io.loadOffMesh(alloc, io, root, out_geom) catch |e|
         std.log.warn("scene_container: offmesh.bin: {s}", .{@errorName(e)});
 
-    return .{ .versions = m.versions, .tiles = m.tiles };
+    return .{ .versions = m.versions, .tiles = m.tiles, .mesh_name = mesh_name };
 }
 
 /// loadScene PHASE 2: add the manifest's tiles directly to `mesh`. A missing or
@@ -459,16 +474,22 @@ fn loadSceneUnder(
         else => return e,
     };
 
+    var mesh_name: []const u8 = try alloc.dupe(u8, "");
+    errdefer alloc.free(mesh_name);
+
     const parsed = scene_io.readGset(alloc, io, root, out_geom) catch |e| switch (e) {
         error.FileNotFound => null,
         else => return e,
     };
-    if (parsed) |p| alloc.free(p.mesh_name);
+    if (parsed) |p| {
+        alloc.free(mesh_name);
+        mesh_name = p.mesh_name;
+    }
 
     scene_io.loadVolumes(alloc, io, root, out_geom) catch |e|
         std.log.warn("scene_container(test): volumes.bin: {s}", .{@errorName(e)});
     scene_io.loadOffMesh(alloc, io, root, out_geom) catch |e|
         std.log.warn("scene_container(test): offmesh.bin: {s}", .{@errorName(e)});
 
-    return .{ .versions = m.versions, .tiles = m.tiles };
+    return .{ .versions = m.versions, .tiles = m.tiles, .mesh_name = mesh_name };
 }
