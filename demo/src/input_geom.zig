@@ -10,6 +10,8 @@ const Managed = std.array_list.Managed;
 
 pub const MAX_CONVEXVOL_PTS = 12;
 
+pub const VolumeMode = enum(u8) { prism = 0, surface = 1 };
+
 pub const ConvexVolume = struct {
     verts: [MAX_CONVEXVOL_PTS * 3]f32 = undefined,
     nverts: i32 = 0,
@@ -20,6 +22,9 @@ pub const ConvexVolume = struct {
     /// Never reused, so selection/undo (cluster F) and repro (cluster I) can
     /// reference a volume across add/remove. 0 = unassigned.
     id: u32 = 0,
+    mode: VolumeMode = .surface,
+    band_below: f32 = 1.0,
+    band_above: f32 = 1.0,
 };
 
 pub const InputGeom = struct {
