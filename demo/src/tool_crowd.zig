@@ -89,6 +89,13 @@ pub const CrowdTool = struct {
         self.vod = null;
     }
 
+    /// Re-push area costs into the crowd's filter 0 after they were edited.
+    pub fn reapplyAreaCosts(self: *CrowdTool) void {
+        if (self.crowd) |*cc| {
+            if (cc.getEditableFilter(0)) |f| area_types.applyCosts(f);
+        }
+    }
+
     pub fn setNavMesh(self: *CrowdTool, nm: ?*dt.NavMesh) void {
         if (self.crowd) |*c| c.deinit();
         if (self.query) |q| q.deinit();

@@ -57,6 +57,9 @@ pub var rebuild_needed: bool = false;
 /// If true, the rebuild mini-tool rebuilds automatically whenever `rebuild_needed`
 /// is raised; otherwise it only notifies and waits for a manual Rebuild.
 pub var auto_rebuild: bool = false;
+/// Raised when an area *cost* is edited; the main loop re-applies costs to the
+/// live tester/crowd filters (cheap) and clears it.
+pub var costs_dirty: bool = false;
 
 /// Auto-colour palette for newly added types (distinct, readable on the mesh).
 const palette = [_][3]u8{

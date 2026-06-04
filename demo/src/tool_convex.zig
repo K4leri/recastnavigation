@@ -10,6 +10,7 @@ const ig = @import("input_geom.zig");
 const InputGeom = ig.InputGeom;
 const ddgl = @import("debug_draw_gl.zig");
 const sample = @import("sample.zig");
+const area_types = @import("area_types.zig");
 const ui = @import("ui.zig");
 const dbg = recast.debug;
 const rc = recast.recast;
@@ -22,7 +23,7 @@ pub const ConvexVolumeTool = struct {
     pts: std.array_list.Managed(f32),
     hull: [MAX_PTS]usize = undefined,
     nhull: usize = 0,
-    area: sample.SamplePolyAreas = .grass,
+    area: u8 = 4, // grass (default) — index into the area_types registry
     box_height: f32 = 6.0,
     box_descent: f32 = 1.0,
     poly_offset: f32 = 0.0,
@@ -102,7 +103,7 @@ pub const ConvexVolumeTool = struct {
                             @intCast(cap),
                             minh,
                             maxh,
-                            @intFromEnum(self.area),
+                            self.area,
                         ) catch {};
                         self.dirty = true;
                     }
@@ -112,7 +113,7 @@ pub const ConvexVolumeTool = struct {
                         @intCast(self.nhull),
                         minh,
                         maxh,
-                        @intFromEnum(self.area),
+                        self.area,
                     ) catch {};
                     self.dirty = true;
                 }
@@ -180,13 +181,22 @@ pub const ConvexVolumeTool = struct {
         ui.slider(@src(), "Shape Descent = {d:.1}", &self.box_descent, 0.1, 20.0);
         ui.slider(@src(), "Poly Offset = {d:.1}", &self.poly_offset, 0.0, 10.0);
 
+        // Area Type — the type painted into the next convex volume. The list is
+        // driven by the runtime registry, so user-added types show up here too.
         dvui.labelNoFmt(@src(), "Area Type", .{}, .{});
-        areaRadio(self, "Ground", .ground, 0);
-        areaRadio(self, "Water", .water, 1);
-        areaRadio(self, "Road", .road, 2);
-        areaRadio(self, "Door", .door, 3);
-        areaRadio(self, "Grass", .grass, 4);
-        areaRadio(self, "Jump", .jump, 5);
+        {
+            var id: usize = 0;
+            while (id < area_types.MAX_AREA_TYPES) : (id += 1) {
+                const t = area_types.get(id) orelse continue;
+                if (ui.radio(@src(), @as(usize, self.area) == id, t.name(), id)) self.area = @intCast(id);
+            }
+        }
+        if (dvui.button(@src(), "+ Add Area Type", .{}, .{})) {
+            _ = area_types.addType();
+            area_types.rebuild_needed = true;
+        }
+
+        if (ui.treeNode(@src(), "Edit Area Types")) editAreaTypes();
 
         _ = dvui.separator(@src(), .{ .expand = .horizontal });
         if (dvui.button(@src(), "Clear Shape", .{}, .{})) self.reset();
@@ -194,11 +204,57 @@ pub const ConvexVolumeTool = struct {
         dvui.labelNoFmt(@src(), "LMB: add point  click red point: build", .{}, .{});
         dvui.labelNoFmt(@src(), "Shift+LMB: delete shape", .{}, .{});
     }
-
-    fn areaRadio(self: *ConvexVolumeTool, label: []const u8, a: sample.SamplePolyAreas, id: usize) void {
-        if (ui.radio(@src(), self.area == a, label, id)) self.area = a;
-    }
 };
+
+const F = area_types.Flags;
+
+/// Per-type editor: cost (runtime), color RGB (immediate), poly flags (need a
+/// rebuild). Editing cost raises `costs_dirty`; editing flags raises
+/// `rebuild_needed` (the main loop / rebuild mini-tool act on these).
+fn editAreaTypes() void {
+    var id: usize = 0;
+    while (id < area_types.MAX_AREA_TYPES) : (id += 1) {
+        const t = area_types.get(id) orelse continue;
+        dvui.label(@src(), "[{d}] {s}", .{ id, t.name() }, .{ .id_extra = id });
+
+        var cost = t.cost;
+        _ = dvui.sliderEntry(@src(), "cost {d:.2}", .{ .value = &cost, .min = 0, .max = 20, .interval = null }, .{ .expand = .horizontal, .id_extra = id });
+        if (cost != t.cost) {
+            t.cost = cost;
+            area_types.costs_dirty = true;
+        }
+
+        var rf: f32 = @floatFromInt(t.r);
+        _ = dvui.sliderEntry(@src(), "R {d:.0}", .{ .value = &rf, .min = 0, .max = 255, .interval = 1 }, .{ .expand = .horizontal, .id_extra = id });
+        t.r = @intFromFloat(@round(std.math.clamp(rf, 0, 255)));
+        var gf: f32 = @floatFromInt(t.g);
+        _ = dvui.sliderEntry(@src(), "G {d:.0}", .{ .value = &gf, .min = 0, .max = 255, .interval = 1 }, .{ .expand = .horizontal, .id_extra = id });
+        t.g = @intFromFloat(@round(std.math.clamp(gf, 0, 255)));
+        var bf: f32 = @floatFromInt(t.b);
+        _ = dvui.sliderEntry(@src(), "B {d:.0}", .{ .value = &bf, .min = 0, .max = 255, .interval = 1 }, .{ .expand = .horizontal, .id_extra = id });
+        t.b = @intFromFloat(@round(std.math.clamp(bf, 0, 255)));
+
+        flagBox(t, F.walk, "walk", id);
+        flagBox(t, F.swim, "swim", id);
+        flagBox(t, F.door, "door", id);
+        flagBox(t, F.jump, "jump", id);
+
+        if (!t.builtin and dvui.button(@src(), "remove", .{}, .{ .id_extra = id })) {
+            area_types.removeType(id);
+            area_types.rebuild_needed = true;
+        }
+        _ = dvui.separator(@src(), .{ .expand = .horizontal, .id_extra = id });
+    }
+}
+
+fn flagBox(t: *area_types.AreaType, bit: u16, label: []const u8, id: usize) void {
+    var on = (t.flags & bit) != 0;
+    // All four flag checkboxes share this @src(), so disambiguate by id+bit.
+    if (dvui.checkbox(@src(), &on, label, .{ .id_extra = id * 16 + bit })) {
+        if (on) t.flags |= bit else t.flags &= ~bit;
+        area_types.rebuild_needed = true; // flags are baked -> needs a rebuild
+    }
+}
 
 inline fn sqr(x: f32) f32 {
     return x * x;

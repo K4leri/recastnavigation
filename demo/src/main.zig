@@ -13,6 +13,7 @@ const mat = @import("mat.zig");
 const ui = @import("ui.zig");
 const theme = @import("theme.zig");
 const sample = @import("sample.zig");
+const area_types = @import("area_types.zig");
 const tracy = @import("tracy.zig");
 const TestCase = @import("testcase.zig").TestCase;
 const ddgl = @import("debug_draw_gl.zig");
@@ -209,6 +210,8 @@ pub fn main(main_init: std.process.Init) !void {
     var tools_rect: dvui.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
     var log_rect: dvui.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
     var test_rect: dvui.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
+    var rebuild_rect: dvui.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
+    var show_rebuild: bool = true; // the area-type rebuild mini-tool
     var test_choice: usize = 0;
 
     // bench-режим (--bench): камера крутится на 360°, без idle/cap, фикс число
@@ -472,6 +475,24 @@ pub fn main(main_init: std.process.Init) !void {
             }
         }
 
+        // Area-type cost edits apply at runtime (re-push into the live filters).
+        if (area_types.costs_dirty) {
+            area_types.costs_dirty = false;
+            area_types.applyCosts(&tester.filter);
+            crowd_tool.reapplyAreaCosts();
+        }
+        // Flag edits / added/removed types are baked into tile data -> rebuild.
+        // Done automatically here only when the Rebuild mini-tool's auto toggle is on;
+        // otherwise it just notifies and waits for a manual Rebuild.
+        if (area_types.rebuild_needed and area_types.auto_rebuild) {
+            area_types.rebuild_needed = false;
+            switch (sample_kind) {
+                .solo => _ = solo.build(),
+                .tile => _ = tile.build(),
+                .temp => _ = temp.build(),
+            }
+        }
+
         // синхронизация инструментов при перестройке активного сэмпла
         {
             const gen = switch (sample_kind) {
@@ -588,6 +609,8 @@ pub fn main(main_init: std.process.Init) !void {
             tools_rect = .{ .x = padw, .y = padw, .w = colw, .h = wr.h - 2 * padw };
             log_rect = .{ .x = colw + 2 * padw, .y = wr.h - logh - padw, .w = wr.w - 2 * colw - 4 * padw, .h = logh };
             test_rect = .{ .x = wr.w - padw - colw - padw - 200, .y = wr.h - padw - 450, .w = 200, .h = 450 };
+            // Rebuild mini-tool — top centre, clear of the side panels.
+            rebuild_rect = .{ .x = wr.w * 0.5 - 140, .y = padw, .w = 280, .h = 150 };
         }
 
         // --- Tools (левая колонка) ---
@@ -632,6 +655,7 @@ pub fn main(main_init: std.process.Init) !void {
             _ = dvui.checkbox(@src(), &app.show_log, "Build Log", .{});
             _ = dvui.checkbox(@src(), &app.show_tools, "Tools Panel", .{});
             _ = dvui.checkbox(@src(), &app.show_test_cases, "Test Cases", .{});
+            _ = dvui.checkbox(@src(), &show_rebuild, "Rebuild Tool", .{});
 
             ui.section(@src(), "Sample");
             {
@@ -705,6 +729,31 @@ pub fn main(main_init: std.process.Init) !void {
             const n = bctx.getLogCount();
             while (i < n) : (i += 1) {
                 dvui.labelNoFmt(@src(), bctx.getLogText(i), .{}, .{ .id_extra = i });
+            }
+        }
+
+        // --- Rebuild mini-tool: notifies when an area-type *flags* / type-list
+        //     change needs a navmesh rebuild, and lets the dev pick auto vs manual.
+        if (show_rebuild) {
+            var fw = dvui.floatingWindow(@src(), .{ .rect = &rebuild_rect, .resize = .none, .window_avoid = .none }, .{ .id_extra = 7 });
+            defer fw.deinit();
+            _ = dvui.windowHeader("Rebuild", "", &show_rebuild);
+            if (area_types.rebuild_needed) {
+                dvui.labelNoFmt(@src(), "! Navmesh rebuild needed", .{}, .{});
+                dvui.labelNoFmt(@src(), "(area flags / type list changed)", .{}, .{});
+            } else {
+                dvui.labelNoFmt(@src(), "Navmesh up to date.", .{}, .{});
+            }
+            dvui.labelNoFmt(@src(), "Cost & colour edits apply instantly;", .{}, .{});
+            dvui.labelNoFmt(@src(), "flags are baked -> need a rebuild.", .{}, .{});
+            _ = dvui.checkbox(@src(), &area_types.auto_rebuild, "Auto-rebuild", .{});
+            if (dvui.button(@src(), "Rebuild now", .{}, .{})) {
+                area_types.rebuild_needed = false;
+                switch (sample_kind) {
+                    .solo => _ = solo.build(),
+                    .tile => _ = tile.build(),
+                    .temp => _ = temp.build(),
+                }
             }
         }
 
