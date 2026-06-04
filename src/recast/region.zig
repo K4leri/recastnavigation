@@ -1550,7 +1550,7 @@ fn mergeAndFilterLayerRegions(
             // Pop front
             const reg_idx: usize = @intCast(stack.items[0]);
             const reg = &regions.items[reg_idx];
-            stack.orderedRemove(0);
+            _ = stack.orderedRemove(0);
 
             for (reg.connections.items) |nei| {
                 const nei_idx: usize = @intCast(nei);
@@ -1627,7 +1627,7 @@ fn mergeAndFilterLayerRegions(
     max_region_id.* = reg_id_gen;
 
     // Remap regions
-    for (0..chf.span_count) |i| {
+    for (0..@intCast(chf.span_count)) |i| {
         if ((src_reg[i] & BORDER_REG) == 0) {
             src_reg[i] = regions.items[src_reg[i]].id;
         }
