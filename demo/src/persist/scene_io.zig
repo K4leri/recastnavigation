@@ -54,6 +54,10 @@ const OFF_REC_MAGIC: u32 = 0x314D464F; // per-offmesh record
 const ARC_FILE_MAGIC: u32 = 0x52415243; // archive file-header
 const ARC_REC_MAGIC: u32 = 0x52464C46; // archive per-file record
 const FORMAT_VERSION: u32 = 1;
+/// volumes.bin format version (bumped from 1 -> 2 to add mode/band_below/band_above).
+/// Off-mesh, archive, and gset remain at FORMAT_VERSION = 1 (unchanged).
+const VOL_FORMAT_VERSION: u32 = 2;
+const VOL_FORMAT_VERSION_LEGACY: u32 = 1;
 
 const TYPE_FILE_HEADER: u16 = 0;
 const TYPE_RECORD: u16 = 1;
@@ -104,6 +108,55 @@ fn appendRecord(b: *Buf, magic: u32, payload: []const u8) !void {
     const hdr = ChunkHeader.init(magic, FORMAT_VERSION, TYPE_RECORD, payload).pack();
     try b.appendSlice(&hdr);
     try b.appendSlice(payload);
+}
+
+/// Like appendRecord but uses the volumes-specific format version.
+fn appendVolumeRecord(b: *Buf, magic: u32, payload: []const u8) !void {
+    const hdr = ChunkHeader.init(magic, VOL_FORMAT_VERSION, TYPE_RECORD, payload).pack();
+    try b.appendSlice(&hdr);
+    try b.appendSlice(payload);
+}
+
+/// Like assembleFile but uses VOL_FORMAT_VERSION for the file header.
+fn assembleVolumeFile(alloc: std.mem.Allocator, magic: u32, body: []const u8) !Buf {
+    var out = Buf.init(alloc);
+    errdefer out.deinit();
+    const hdr_bytes = ChunkHeader.init(magic, VOL_FORMAT_VERSION, TYPE_FILE_HEADER, body).pack();
+    try out.appendSlice(&hdr_bytes);
+    try out.appendSlice(body);
+    return out;
+}
+
+/// Parse a volumes.bin file header. Tries VOL_FORMAT_VERSION (2) first; if the
+/// file was written with the legacy version (1), falls back and returns version=1.
+/// Returns the body slice and the detected file version.
+fn volumeFileBody(data: []const u8) Error!struct { body: []const u8, version: u32 } {
+    // Try new version first.
+    if (unpackHeader(data, VOL_FILE_MAGIC, VOL_FORMAT_VERSION)) |hdr| {
+        const plen = std.math.cast(usize, hdr.payload_len) orelse return error.Truncated;
+        const body_end = std.math.add(usize, HEADER_LEN, plen) catch return error.Truncated;
+        if (body_end > data.len) return error.Truncated;
+        const body = data[HEADER_LEN..body_end];
+        const want = ChunkHeader.computeChecksum(VOL_FILE_MAGIC, VOL_FORMAT_VERSION, hdr.type_flags, body);
+        if (want != hdr.checksum) {
+            std.log.warn("scene_io: volumes.bin file checksum mismatch — attempting per-record recovery", .{});
+        }
+        return .{ .body = body, .version = VOL_FORMAT_VERSION };
+    } else |e1| {
+        if (e1 != error.WrongVersion) return e1;
+        // Legacy: try version 1.
+        const hdr = try unpackHeader(data, VOL_FILE_MAGIC, VOL_FORMAT_VERSION_LEGACY);
+        const plen = std.math.cast(usize, hdr.payload_len) orelse return error.Truncated;
+        const body_end = std.math.add(usize, HEADER_LEN, plen) catch return error.Truncated;
+        if (body_end > data.len) return error.Truncated;
+        const body = data[HEADER_LEN..body_end];
+        const want = ChunkHeader.computeChecksum(VOL_FILE_MAGIC, VOL_FORMAT_VERSION_LEGACY, hdr.type_flags, body);
+        if (want != hdr.checksum) {
+            std.log.warn("scene_io: volumes.bin (legacy v1) file checksum mismatch — attempting per-record recovery", .{});
+        }
+        std.log.info("scene_io: volumes.bin detected legacy format v1 — loading as prism with default bands", .{});
+        return .{ .body = body, .version = VOL_FORMAT_VERSION_LEGACY };
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -179,8 +232,10 @@ fn fileBody(data: []const u8, magic: u32, name: []const u8) Error![]const u8 {
 // volumes.bin
 // ===========================================================================
 
-/// Serialize one convex volume record payload (framed by appendRecord's ChunkHeader):
-/// id(u32) area(u8) _pad(u8x3) nverts(i32) hmin(f32) hmax(f32) verts(f32 × nverts*3)
+/// Serialize one convex volume record payload (framed by appendVolumeRecord's ChunkHeader).
+/// Layout v2: id(u32) area(u8) _pad(u8x3) nverts(i32) hmin(f32) hmax(f32)
+///            verts(f32 × nverts*3) mode(u8) band_below(f32) band_above(f32)
+/// Layout v1 (legacy, read-only): same but WITHOUT the trailing mode/band_below/band_above.
 fn encodeVolumePayload(pl: *Buf, vol: *const ConvexVolume) !void {
     if (vol.nverts < 1 or vol.nverts > MAX_CONVEXVOL_PTS) return error.TooManyVerts;
     try putU32(pl, vol.id);
@@ -191,10 +246,14 @@ fn encodeVolumePayload(pl: *Buf, vol: *const ConvexVolume) !void {
     try putF32(pl, vol.hmax);
     const n: usize = @intCast(vol.nverts);
     for (vol.verts[0 .. n * 3]) |c| try putF32(pl, c);
+    // v2 extension: mode + bands
+    try putU8(pl, @intFromEnum(vol.mode));
+    try putF32(pl, vol.band_below);
+    try putF32(pl, vol.band_above);
 }
 
 /// Serialize ALL volumes into an owned buffer:
-/// [ChunkHeader] ++ [count:u32] ++ [volume-record × count].
+/// [ChunkHeader(VOL_FORMAT_VERSION=2)] ++ [count:u32] ++ [volume-record × count].
 pub fn encodeVolumes(alloc: std.mem.Allocator, geom: *const InputGeom) !Buf {
     var body = Buf.init(alloc);
     defer body.deinit();
@@ -204,16 +263,24 @@ pub fn encodeVolumes(alloc: std.mem.Allocator, geom: *const InputGeom) !Buf {
     for (geom.volumes.items) |*vol| {
         pl.clearRetainingCapacity();
         try encodeVolumePayload(&pl, vol);
-        try appendRecord(&body, VOL_REC_MAGIC, pl.items);
+        try appendVolumeRecord(&body, VOL_REC_MAGIC, pl.items);
     }
-    return assembleFile(alloc, VOL_FILE_MAGIC, body.items);
+    return assembleVolumeFile(alloc, VOL_FILE_MAGIC, body.items);
 }
 
 /// Load volumes from a binary blob into geom (clears existing volumes).
+/// Handles both v2 (current) and v1 (legacy) files:
+///   - v2: file header version=2, per-record version=2; records include mode/band.
+///   - v1: file header version=1, per-record version=1; no mode/band -> defaults
+///         vol.mode=.prism, band_below=1.0, band_above=1.0 (old prisms load as prisms).
+/// The version is detected from the file-header (unpackHeader); the per-record
+/// readRecord is called with the same detected version so both levels are consistent.
 /// Corrupt per-volume records are skipped (graceful). next_volume_id is bumped
 /// to max(loaded id)+1 (>= 1) so subsequent adds never reuse a stable id.
 pub fn decodeVolumes(geom: *InputGeom, data: []const u8) Error!void {
-    const body = try fileBody(data, VOL_FILE_MAGIC, "volumes.bin");
+    const fb = try volumeFileBody(data);
+    const body = fb.body;
+    const file_version = fb.version;
 
     geom.volumes.clearRetainingCapacity();
     var max_id: u32 = 0;
@@ -223,14 +290,14 @@ pub fn decodeVolumes(geom: *InputGeom, data: []const u8) Error!void {
     var k: u32 = 0;
     while (k < count) : (k += 1) {
         var skip: usize = 0;
-        const rec = readRecord(body[r.pos..], VOL_REC_MAGIC, FORMAT_VERSION, &skip) catch |e| {
+        const rec = readRecord(body[r.pos..], VOL_REC_MAGIC, file_version, &skip) catch |e| {
             std.log.warn("scene_io: skipping bad volume #{d}: {s}", .{ k, @errorName(e) });
             if (skip == 0) break; // boundary unknown — cannot resync
             r.pos += skip;
             continue;
         };
         r.pos += rec.next;
-        decodeOneVolume(geom, rec.payload, &max_id) catch |e| {
+        decodeOneVolume(geom, rec.payload, file_version, &max_id) catch |e| {
             std.log.warn("scene_io: volume #{d} dropped: {s}", .{ k, @errorName(e) });
             continue;
         };
@@ -239,7 +306,7 @@ pub fn decodeVolumes(geom: *InputGeom, data: []const u8) Error!void {
     if (geom.next_volume_id < 1) geom.next_volume_id = 1;
 }
 
-fn decodeOneVolume(geom: *InputGeom, payload: []const u8, max_id: *u32) !void {
+fn decodeOneVolume(geom: *InputGeom, payload: []const u8, file_version: u32, max_id: *u32) !void {
     var r = Reader{ .data = payload };
     var vol = ConvexVolume{};
     vol.id = try r.readU32();
@@ -251,6 +318,19 @@ fn decodeOneVolume(geom: *InputGeom, payload: []const u8, max_id: *u32) !void {
     vol.hmax = try r.readF32();
     const n: usize = @intCast(vol.nverts);
     for (0..n * 3) |i| vol.verts[i] = try r.readF32();
+    if (file_version >= VOL_FORMAT_VERSION) {
+        // v2+: read mode and band fields.
+        const mode_raw = try r.readU8();
+        // Clamp/validate: only 0 (prism) or 1 (surface) are valid.
+        vol.mode = if (mode_raw <= 1) @enumFromInt(mode_raw) else .prism;
+        vol.band_below = try r.readF32();
+        vol.band_above = try r.readF32();
+    } else {
+        // v1 legacy: no mode/band stored — default to prism with stock bands.
+        vol.mode = .prism;
+        vol.band_below = 1.0;
+        vol.band_above = 1.0;
+    }
     if (vol.id > max_id.*) max_id.* = vol.id;
     try geom.volumes.append(vol);
 }
@@ -799,6 +879,11 @@ test "volumes.bin round-trip preserves stable id and geometry" {
     g.deleteConvexVolume(0); // leaves id=2
     try g.addConvexVolume(&tri, 3, 0.0, 5.0, 1); // id=3
 
+    // Set custom mode/band on the first remaining volume (id=2) to verify v2 round-trip.
+    g.volumes.items[0].mode = .surface;
+    g.volumes.items[0].band_below = 2.5;
+    g.volumes.items[0].band_above = 3.5;
+
     var blob = try encodeVolumes(alloc, &g);
     defer blob.deinit();
 
@@ -815,9 +900,66 @@ test "volumes.bin round-trip preserves stable id and geometry" {
         try std.testing.expectEqual(a.hmax, b.hmax);
         const n: usize = @intCast(a.nverts);
         try std.testing.expectEqualSlices(f32, a.verts[0 .. n * 3], b.verts[0 .. n * 3]);
+        // v2: mode and band fields must survive the round-trip.
+        try std.testing.expectEqual(a.mode, b.mode);
+        try std.testing.expectEqual(a.band_below, b.band_below);
+        try std.testing.expectEqual(a.band_above, b.band_above);
     }
+    // Assert the surface/band values on the specific volume (id=2, index=0).
+    try std.testing.expectEqual(@import("../input_geom.zig").VolumeMode.surface, g2.volumes.items[0].mode);
+    try std.testing.expectApproxEqAbs(@as(f32, 2.5), g2.volumes.items[0].band_below, 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 3.5), g2.volumes.items[0].band_above, 1e-6);
     // next_volume_id bumped past max loaded id (3) so a new add won't reuse it.
     try std.testing.expectEqual(@as(u32, 4), g2.next_volume_id);
+}
+
+test "volumes.bin legacy v1 decodes as prism with default bands" {
+    // Construct a hand-crafted v1 volumes.bin with one record that has NO mode/band
+    // fields (the old format). Verify that decodeVolumes assigns .prism + defaults.
+    const alloc = std.testing.allocator;
+    const VolumeMode = @import("../input_geom.zig").VolumeMode;
+
+    // Build the v1 payload for one volume: id=42 area=5 pad nverts=3 hmin hmax verts
+    var pl = Buf.init(alloc);
+    defer pl.deinit();
+    try putU32(&pl, 42); // id
+    try putU8(&pl, 5); // area
+    try pl.appendSlice(&[_]u8{ 0, 0, 0 }); // _pad
+    try putI32(&pl, 3); // nverts
+    try putF32(&pl, 0.5); // hmin
+    try putF32(&pl, 2.0); // hmax
+    // 3 verts
+    const vcoords = [_]f32{ 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+    for (vcoords) |c| try putF32(&pl, c);
+    // NO mode/band_below/band_above — this is v1 legacy
+
+    // Wrap in a v1 per-record chunk header (VOL_FORMAT_VERSION_LEGACY = 1)
+    var body = Buf.init(alloc);
+    defer body.deinit();
+    try putU32(&body, 1); // count = 1
+    const rec_hdr = ChunkHeader.init(VOL_REC_MAGIC, VOL_FORMAT_VERSION_LEGACY, TYPE_RECORD, pl.items).pack();
+    try body.appendSlice(&rec_hdr);
+    try body.appendSlice(pl.items);
+
+    // Wrap in a v1 file header
+    var blob = Buf.init(alloc);
+    defer blob.deinit();
+    const file_hdr = ChunkHeader.init(VOL_FILE_MAGIC, VOL_FORMAT_VERSION_LEGACY, TYPE_FILE_HEADER, body.items).pack();
+    try blob.appendSlice(&file_hdr);
+    try blob.appendSlice(body.items);
+
+    var g = InputGeom.init(alloc);
+    defer g.deinit();
+    try decodeVolumes(&g, blob.items);
+
+    try std.testing.expectEqual(@as(usize, 1), g.volumes.items.len);
+    const vol = g.volumes.items[0];
+    try std.testing.expectEqual(@as(u32, 42), vol.id);
+    try std.testing.expectEqual(@as(u8, 5), vol.area);
+    // Legacy decode must yield .prism with default bands.
+    try std.testing.expectEqual(VolumeMode.prism, vol.mode);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), vol.band_below, 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), vol.band_above, 1e-6);
 }
 
 test "volumes load skips a corrupt record, keeps the rest" {
