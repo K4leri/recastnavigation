@@ -23,10 +23,11 @@ pub const PolyColorCtx = struct {
     height_min: f32 = 0,
     height_max: f32 = 0,
     cost: f32 = 0,
+    cost_min: f32 = 0, // Detour area costs are non-negative, so default min is 0
     cost_max: f32 = 0,
 };
 
-const ALPHA: i32 = 192;
+const ALPHA: i32 = 192; // ~75% opaque — standard navmesh overlay alpha
 
 // Gradient endpoints (dbg.rgba is an inline fn, so these fold at comptime).
 const HEIGHT_LO: u32 = dbg.rgba(40, 90, 200, 192); // low  = blue
@@ -40,6 +41,7 @@ fn norm(v: f32, lo: f32, hi: f32) f32 {
     return std.math.clamp((v - lo) / (hi - lo), 0.0, 1.0);
 }
 
+/// Blend colours a->b by t in [0,1]; t is truncated (not rounded) to [0,255].
 fn gradient(a: u32, b: u32, t: f32) u32 {
     const u: u32 = @intFromFloat(std.math.clamp(t, 0.0, 1.0) * 255.0);
     return dbg.lerpCol(a, b, u);
@@ -53,7 +55,7 @@ pub fn colorForPoly(scheme: ColorScheme, ctx: PolyColorCtx) u32 {
         .component => dbg.intToCol(ctx.component, ALPHA),
         .flags => dbg.intToCol(@as(i32, ctx.flags), ALPHA),
         .height => gradient(HEIGHT_LO, HEIGHT_HI, norm(ctx.height, ctx.height_min, ctx.height_max)),
-        .cost => gradient(COST_LO, COST_HI, norm(ctx.cost, 0, ctx.cost_max)),
+        .cost => gradient(COST_LO, COST_HI, norm(ctx.cost, ctx.cost_min, ctx.cost_max)),
     };
 }
 
@@ -66,7 +68,8 @@ test "region/component/flags are deterministic and match intToCol" {
     try std.testing.expectEqual(dbg.intToCol(5, ALPHA), colorForPoly(.region, .{ .region = 5 }));
     try std.testing.expectEqual(dbg.intToCol(7, ALPHA), colorForPoly(.component, .{ .component = 7 }));
     try std.testing.expectEqual(dbg.intToCol(@as(i32, 0x0A), ALPHA), colorForPoly(.flags, .{ .flags = 0x0A }));
-    try std.testing.expectEqual(colorForPoly(.region, .{ .region = 5 }), colorForPoly(.region, .{ .region = 5 }));
+    // distinct region -> distinct deterministic colour
+    try std.testing.expectEqual(dbg.intToCol(0, ALPHA), colorForPoly(.region, .{ .region = 0 }));
 }
 
 test "height gradient hits endpoints; empty range -> low" {
@@ -81,4 +84,6 @@ test "height gradient hits endpoints; empty range -> low" {
 test "cost gradient hits endpoints" {
     try std.testing.expectEqual(COST_LO, colorForPoly(.cost, .{ .cost = 0, .cost_max = 4 }));
     try std.testing.expectEqual(COST_HI, colorForPoly(.cost, .{ .cost = 4, .cost_max = 4 }));
+    // degenerate range: cost_max == cost_min -> low endpoint, no divide-by-zero
+    try std.testing.expectEqual(COST_LO, colorForPoly(.cost, .{ .cost = 1, .cost_max = 0 }));
 }
