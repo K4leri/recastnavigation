@@ -80,10 +80,19 @@ pub const ConvexVolumeTool = struct {
                     verts[i * 3 + 2] = self.pts.items[src + 2];
                 }
 
+                // Призма охватывает ВЕСЬ диапазон высот кликнутых точек
+                // (min..max), плюс паддинг снизу (descent) и сверху (height-as-ascent).
+                // Расхождение с upstream (там maxh = minh + height, фикс-высота от дна):
+                // так объём гарантированно накрывает поверхность, перепадающую по высоте.
                 var minh: f32 = std.math.floatMax(f32);
-                for (0..self.nhull) |i| minh = @min(minh, verts[i * 3 + 1]);
+                var maxh: f32 = -std.math.floatMax(f32);
+                for (0..self.nhull) |i| {
+                    const y = verts[i * 3 + 1];
+                    minh = @min(minh, y);
+                    maxh = @max(maxh, y);
+                }
                 minh -= self.box_descent;
-                const maxh = minh + self.box_height;
+                maxh += self.box_height;
 
                 if (self.poly_offset > 0.01) {
                     var offset: [MAX_PTS * 2 * 3]f32 = undefined;
@@ -140,11 +149,17 @@ pub const ConvexVolumeTool = struct {
 
         const np = self.numPoints();
 
-        // Высотный диапазон текущей заготовки.
+        // Высотный диапазон текущей заготовки: охватываем min..max высот точек
+        // (как при build), чтобы превью совпадало с итоговой призмой.
         var minh: f32 = std.math.floatMax(f32);
-        for (0..np) |i| minh = @min(minh, self.pts.items[i * 3 + 1]);
+        var maxh: f32 = -std.math.floatMax(f32);
+        for (0..np) |i| {
+            const y = self.pts.items[i * 3 + 1];
+            minh = @min(minh, y);
+            maxh = @max(maxh, y);
+        }
         minh -= self.box_descent;
-        const maxh = minh + self.box_height;
+        maxh += self.box_height;
 
         // Точки (последняя — красная).
         dd.begin(.points, 4.0);
@@ -179,7 +194,7 @@ pub const ConvexVolumeTool = struct {
     }
 
     pub fn drawMenu(self: *ConvexVolumeTool) void {
-        ui.slider(@src(), "Shape Height = {d:.1}", &self.box_height, 0.1, 20.0);
+        ui.slider(@src(), "Shape Ascent = {d:.1}", &self.box_height, 0.1, 20.0);
         ui.slider(@src(), "Shape Descent = {d:.1}", &self.box_descent, 0.1, 20.0);
         ui.slider(@src(), "Poly Offset = {d:.1}", &self.poly_offset, 0.0, 10.0);
 
