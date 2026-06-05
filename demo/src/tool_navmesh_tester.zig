@@ -184,12 +184,22 @@ pub const NavMeshTesterTool = struct {
         self.applyFlags();
         area_types.applyCosts(&self.filter); // per-area movement cost from the registry
         self.compare = filter_compare.Compare.init();
-        // Seed sensible defaults so the first toggle shows a meaningful diff:
-        // F1 = current include/exclude, F2 = same but exclude swim (water-free).
-        self.compare.variants[0].include = self.include_mask;
-        self.compare.variants[0].exclude = self.exclude_mask;
-        self.compare.variants[1].include = self.include_mask;
-        self.compare.variants[1].exclude = self.exclude_mask | PF.swim;
+        // Seed three MEANINGFUL defaults. All include `walk` (so each finds a path on
+        // a plain walkable mesh), but they diverge wherever polys carry other flags:
+        //   F1 = allow everything (walk|swim|door|jump) — goes THROUGH water/doors.
+        //   F2 = no swim — routes AROUND water (paint a Water area volume to see it).
+        //   F3 = no door — routes around door polys.
+        // include=0 would block ALL polys (passFilter: flags & include == 0 -> fail),
+        // so every variant must keep at least `walk`.
+        self.compare.variants[0].include = PF.walk | PF.swim | PF.door | PF.jump;
+        self.compare.variants[0].exclude = 0;
+        self.compare.variants[0].setLabel("F1 all");
+        self.compare.variants[1].include = PF.walk | PF.door | PF.jump; // no swim
+        self.compare.variants[1].exclude = 0;
+        self.compare.variants[1].setLabel("F2 no-swim");
+        self.compare.variants[2].include = PF.walk | PF.swim | PF.jump; // no door
+        self.compare.variants[2].exclude = 0;
+        self.compare.variants[2].setLabel("F3 no-door");
         return self;
     }
 
@@ -1494,6 +1504,7 @@ pub const NavMeshTesterTool = struct {
             dirty = true;
 
         if (self.compare.on) {
+            dvui.labelNoFmt(@src(), "Routes differ only where polys carry the toggled flags. On an all-walkable mesh all routes match — paint a Water/Door area volume across the path, then F2 (no-swim)/F3 (no-door) route around it. 'incl' must keep walk or a variant finds no path.", .{}, .{ .id_extra = 0xCF });
             for (&self.compare.variants, 0..) |*v, vi| {
                 const base: usize = 0xC100 + vi * 0x100;
                 {
