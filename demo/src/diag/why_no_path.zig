@@ -18,6 +18,9 @@ pub const Verdict = enum {
     invalid_end,
     different_components,
     partial_node_limit,
+    /// Reserved: a partial path that is neither a flags nor a clear cost case. The
+    /// current `classify` residue yields `unknown` (blocked_by_cost already covers
+    /// the partial+connected case); kept for callers that construct it directly.
     partial_no_goal,
     filtered_by_flags,
     blocked_by_cost,
@@ -79,7 +82,9 @@ pub fn classify(s: Signals) Verdict {
     // invalid_start/end guards above this is rare, but treat it as an end issue.
     if (s.status_invalid) return .invalid_end;
 
-    // 4. The search exhausted the node pool (incomplete for capacity reasons).
+    // 4. The node pool was exhausted (findPath surfaced OutOfNodes — e.g. the start
+    //    node itself couldn't be allocated, or the pool filled mid-search). Bump
+    //    max_nodes in initQuery to recover.
     if (s.status_out_of_nodes) return .partial_node_limit;
 
     // 5. Real topological gap: even a neutral filter cannot connect them.
@@ -219,11 +224,14 @@ test "classify: neutral-reachable + user-disconnected -> filtered_by_flags" {
 }
 
 test "classify: user-connected + partial -> blocked_by_cost" {
+    // Live-producible: diagnose sets same_component from a passFilter link-BFS
+    // (cost-agnostic), so a flag-passable but cost-cut route yields exactly this
+    // combo — neutral-reachable, user-flag-connected, yet the path came back partial.
     var s = baseOk();
     s.status_success = false;
     s.path_reaches_end = false;
     s.reachable_neutral = true;
-    s.same_component = true;
+    s.same_component = true; // passFilter-BFS reached end (flags OK); cost cut the path
     s.status_partial = true;
     try std.testing.expectEqual(Verdict.blocked_by_cost, classify(s));
 }

@@ -93,7 +93,6 @@ pub const NavMeshTesterTool = struct {
     verdict: diagnose.Verdict = .unknown,
     signals: wnp.Signals = std.mem.zeroes(wnp.Signals),
     verdict_valid: bool = false,
-    explain_open: bool = false,
     diag_scratch: [MAX_POLYS]dt.PolyRef = undefined,
 
     // include/exclude filter masks (bits = poly_flags registry). Default: include
@@ -281,6 +280,7 @@ pub const NavMeshTesterTool = struct {
         defer comps.deinit();
 
         const res = diagnose.diagnose(
+            self.alloc,
             q,
             nav,
             &comps,
