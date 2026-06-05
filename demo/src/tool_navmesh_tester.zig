@@ -1270,7 +1270,7 @@ pub const NavMeshTesterTool = struct {
                 if (!v.enabled) continue;
                 const r = self.compare.results[vi];
                 const reach: []const u8 = if (r.reaches) "Y" else "N";
-                dvui.label(@src(), "[#] {s}: {d} polys  cost {d:.1}  reaches:{s}", .{ v.label(), r.npolys, r.cost, reach }, .{ .id_extra = 0xCE00 + vi });
+                dvui.label(@src(), "[{d}] {s}: {d} polys  cost {d:.1}  reaches:{s}", .{ vi + 1, v.label(), r.npolys, r.cost, reach }, .{ .id_extra = 0xCE00 + vi });
             }
         }
 

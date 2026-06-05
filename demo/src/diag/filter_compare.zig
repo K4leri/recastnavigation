@@ -198,14 +198,13 @@ pub fn routeCost(nav: *const NavMesh, filter: *const QueryFilter, polys: []const
     var have_prev = false;
     var total: f32 = 0;
     for (polys) |ref| {
-        var t: ?*const dt.MeshTile = null;
-        var p: ?*const dt.Poly = null;
-        nav.getTileAndPolyByRefUnsafe(ref, &t, &p);
-        const tile = t orelse continue;
-        const poly = p orelse continue;
-        const c = polyCentroid(tile, poly);
+        // Use the CHECKED accessor: getTileAndPolyByRefUnsafe never nulls its
+        // out-params (it indexes the decoded tile/poly raw), so a stale/garbage ref
+        // would read out of bounds. getTileAndPolyByRef validates salt + bounds.
+        const tp = nav.getTileAndPolyByRef(ref) catch continue;
+        const c = polyCentroid(tp.tile, tp.poly);
         if (have_prev) {
-            total += reachability.edgeWeight(prev_c, c, filter.getAreaCost(poly.getArea()));
+            total += reachability.edgeWeight(prev_c, c, filter.getAreaCost(tp.poly.getArea()));
         }
         prev_c = c;
         have_prev = true;
