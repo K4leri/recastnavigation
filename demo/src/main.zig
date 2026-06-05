@@ -1875,6 +1875,11 @@ pub fn main(main_init: std.process.Init) !void {
                 const scheme = scheme_state.active;
                 var lo: f32 = 0;
                 var hi: f32 = 0;
+                // Continuous schemes (height/cost) need a baked navmesh to label a
+                // range; without one we'd draw a meaningless "0.00 .. 0.00" bar, so
+                // skip the legend entirely in that case. Discrete schemes (area/
+                // flags/component) come from the registries and draw regardless.
+                var draw_legend = true;
                 if (scheme == .height or scheme == .cost) {
                     const nm = switch (sample_kind) {
                         .solo => solo.navMesh(),
@@ -1885,9 +1890,11 @@ pub fn main(main_init: std.process.Init) !void {
                         const r = poly_visit.schemeRange(n, scheme);
                         lo = r.lo;
                         hi = r.hi;
+                    } else {
+                        draw_legend = false;
                     }
                 }
-                legend.draw(scheme, @floatFromInt(fb[0]), vh, lo, hi);
+                if (draw_legend) legend.draw(scheme, @floatFromInt(fb[0]), vh, lo, hi);
             }
 
             // экранные подсказки (нижний левый угол)
