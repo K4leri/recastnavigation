@@ -61,6 +61,7 @@ const poly_inspect = @import("diag/poly_inspect.zig");
 const import_geom = @import("io/import_geom.zig");
 const navmesh_lint = @import("diag/navmesh_lint.zig");
 const navmesh_verify = @import("diag/navmesh_verify.zig");
+const cli = @import("cli/cli.zig");
 const Vec3 = recast.math.Vec3;
 
 const ActiveTool = tool_registry.ToolId; // { none, tester, prune, offmesh, convex, crowd }
@@ -95,6 +96,27 @@ const MoveSnapItem = struct {
 
 pub fn main(main_init: std.process.Init) !void {
     if (dvui.render_backend.kind != .opengl) @compileError("ожидается opengl render_backend");
+
+    // --- HEADLESS CLI-роутинг (cluster D / D5+D6) ---------------------------
+    // ДО любой инициализации glfw/GL/окна: если argv[1] — подкоманда build|diff,
+    // выполняем headless-путь (GL-free сборка/diff) и завершаем процесс с его
+    // exit-code, НЕ создавая окно. Иначе — обычный GUI-путь ниже (полная
+    // обратная совместимость с --bench/--draw/--cam, которые остаются флагами
+    // GUI и парсятся в существующем arg-блоке). Весь парс CLI — в cli.zig.
+    {
+        // Собираем argv в []const []const u8 (arena — освобождается с процессом
+        // на выходе через std.process.exit; для GUI-пути ниже не используется).
+        var argv = std.array_list.Managed([]const u8).init(main_init.arena.allocator());
+        var it = try std.process.Args.Iterator.initAllocator(main_init.minimal.args, main_init.gpa);
+        defer it.deinit();
+        while (it.next()) |a| {
+            try argv.append(try main_init.arena.allocator().dupe(u8, a));
+        }
+        if (argv.items.len >= 2 and cli.isSubcommand(argv.items[1])) {
+            const code = cli.run(main_init.gpa, argv.items);
+            std.process.exit(code);
+        }
+    }
 
     // --- окно + GL 3.3 core контекст (владеем мы) ---
     try zglfw.init();
