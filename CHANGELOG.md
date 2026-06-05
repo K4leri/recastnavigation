@@ -12,10 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 A large, self-contained set of developer tooling layered on top of the faithful
 recast/detour core (faithful `src/*` untouched — only additive read-only getters;
 all new logic lives under `demo/src/`). Delivered as six feature clusters plus a
-foundation, on the `feat/debug-platform` branch. Each feature was implemented
-behind a two-stage review (spec compliance + code quality) with unit tests for
-the load-bearing pure logic. Three test suites stay green: `zig build demo`,
-`zig build demo-test`, `zig build test-integration`.
+foundation, on the `feat/debug-platform` branch (clusters A–J). Each feature was
+implemented behind a two-stage review (spec compliance + code quality) with unit
+tests for the load-bearing pure logic. The test suites stay green: `zig build
+demo`, `zig build demo-test` (250/250), `zig build test` (91/91).
 
 #### Foundation (Scene / Persist / Render / UI-shell)
 - **Durable scene persistence** — a `.recastscene/` container (one shareable
@@ -125,7 +125,89 @@ the load-bearing pure logic. Three test suites stay green: `zig build demo`,
   CLI whose exit code = the violation count. Proven free of false positives on a
   real two-tile stitched fixture.
 
+#### Cluster D — Import / export / interop (`demo/src/io/`, `demo/src/cli/`)
+- **Geometry import beyond `.obj`** — STL (binary + ASCII), PLY (ASCII + binary
+  LE/BE), and glTF 2.0 / `.glb` (TRIANGLES, `POSITION` + indices, node world
+  transforms, `.glb` BIN + `data:`-base64 buffers). A single extension dispatch
+  feeds the same model as `.obj`; the input-mesh dropdown and scene loader now
+  accept `*.obj/.stl/.ply/.gltf/.glb`. Each parser is `std`-only, unit-tested, and
+  passed an opus correctness pass (tab/exponent ASCII STL; PLY x/y/z-by-role +
+  index validation + big-endian; glTF `byteStride`-from-bufferView + quaternion
+  node compose). Triangle indices are range-checked at the single import sink, so
+  a malformed mesh is rejected, not crashed-on. (`import_{stl,ply,gltf,geom}.zig`)
+- **Navmesh geometry export** — `.obj` (arbitrary-arity faces) and a minimal
+  `.glb` (4-byte-aligned chunks, `POSITION` min/max, u16/u32 indices).
+  (`export_obj.zig`, `export_gltf.zig`, `nav_export.zig`)
+- **Metrics JSON** — a deterministic, versioned schema (settings snapshot, bounds,
+  tile/poly/vert counts, per-area histogram, build-ms, navmesh verify-hash);
+  GUI Export button + headless. Non-finite floats are normalised so the output is
+  always valid JSON. (`export_metrics.zig`)
+- **Query-results export** — the tester's current query as CSV + JSON
+  (`export_query.zig`); **SVG** top-down topology export (`export_svg.zig`).
+- **Headless build CLI** — `recast_demo build --geom <p> [--cfg k=v,…] --metrics
+  <out|->` builds a navmesh with **no window / no GL** (reuses the GUI build path,
+  so the numbers are identical) and can emit the navmesh / `.obj` / `.glb` / SVG;
+  CI-friendly exit codes. (`cli/headless_build.zig`, `cli/cli.zig`)
+- **Upstream diff** — `recast_demo diff --a a.json --b b.json [--eps f]` compares
+  two metric snapshots (exact counts/strings, eps-tolerant floats, areas matched
+  by id) with a CI exit code — a direct faithful-port validation hook against
+  C++ recast. (`cli/diff.zig`)
+
+#### Cluster I — Reproducibility / sharing (`demo/src/persist/`)
+- **`.recastbundle` single-file archive** — packs a whole `.recastscene/` container
+  plus a repro section into one shareable file (per-entry XXH32 checksum,
+  bounds-/corruption-safe; never panics on a malformed bundle). Export / Import
+  Bundle buttons + drag-a-bundle-onto-the-exe / `recast_demo bundle import`.
+  (`persist/bundle.zig`, `bundle_io.zig`)
+- **Repro query manifest** — Export Bundle snapshots the tester's current
+  query + result as `repro/query.json` (the "expected" for compare on import).
+- **Determinism verify-hash** — metrics carry an **XXH3** over the navmesh tile
+  bytes; the same geom + settings yields a byte-identical hash across runs
+  (verified), and any divergence from an upstream build shows up in `diff`.
+
+#### Cluster J — Dynamics / runtime (`demo/src/diag/`, crowd + tilecache)
+- **Crowd why-stuck** — classifies *why* an agent isn't moving (off-navmesh /
+  no-target / pending / no-path / partial / blocked-by-neighbours / arrived) from
+  its already-stored fields; short tags over stuck agents + an explain line for
+  the selection. (`diag/why_stuck.zig`)
+- **TileCache time-line** — an obstacle event journal, a **Step-rebuild** toggle
+  (regeneration becomes visible over frames instead of drained silently per
+  frame), and an amber wire-box highlight of each tile currently regenerating.
+- **Crowd analytics** — live graphs of stuck-count, avg/max speed, and max
+  proximity-grid density; **dynamic off-mesh toggle** — disable all off-mesh links
+  at runtime and watch agents reroute.
+- **Crowd record / replay** — record user actions to an append-only journal, then
+  replay them deterministically forward at a fixed `dt` (binary save/load).
+  (`diag/crowd_replay.zig`)
+
+#### Cluster H — Scripting / headless (`demo/src/cli/`)
+- **Config-file run** — `recast_demo headless --config run.json`: a declarative
+  `{geom, sample, settings, queries[], outputs}` executed with no window.
+- **Query script** — `findPath` / `findStraightPath` / `raycast` / `findNearestPoly`
+  / `findDistanceToWall` run headless against the built navmesh → CSV/JSON results.
+  (`cli/headless_query.zig`)
+- **Batch matrix** — `recast_demo batch --matrix "cell_size=0.2,0.3,0.5;agent_radius=
+  0.4,0.6"`: a cartesian parameter sweep → a per-cell table (polys, verts,
+  build-ms, queries found/total). (`cli/headless_run.zig`)
+- All headless modes share the GL-free build path and report CI-friendly exit
+  codes; `area_types`/`poly_flags` remain process-global, so headless is
+  one-scene-per-process for now (parallel workers are a later step).
+
 ### Fixed
+- **`zig build test` no longer aborts on Windows.** Dozens of integration tests run
+  the full recast pipeline, and `Context.log` streamed hundreds of `[PROGRESS]`
+  lines to the test process's stderr, which the build server captures over
+  `--listen=-`; the spam raced the result-manifest read and crashed the build
+  runner ("unable to read results of configure phase … FileNotFound"). `Context.log`
+  now suppresses output under `builtin.is_test` (logging only — no algorithm or
+  demo behaviour change). Core suite: 91/91 green. (`src/context.zig`)
+- **Select/Edit Properties inspector fixed.** Editing a selected convex volume /
+  off-mesh now actually shows its fields: the panel was emitted *inside* an
+  unscoped horizontal box and clipped off-screen. Sliders that snapped to the
+  minimum, jittered across digit-width changes, or blew the value "into space" are
+  replaced with drag-only, scene-relative-range sliders; volume edits now show a
+  **live 3D preview** (prism/surface, height, band, area) before Apply commits and
+  rebuilds, and Ctrl+Z undoes. (`demo/src/main.zig`, `input_geom.zig`)
 - **Debug-draw of a stale / invalid poly-ref no longer crashes the GUI.** The
   faithful `debugDrawNavMeshPoly` indexes `mesh.tiles[decoded.tile]` guarded only
   by `max_tiles`; a path ref that survived a navmesh swap could index past the
