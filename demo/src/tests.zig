@@ -22,6 +22,8 @@ test {
     _ = @import("persist/tile_store.zig");
     _ = @import("persist/manifest.zig");
     _ = @import("persist/scene_container.zig");
+    _ = @import("persist/bundle.zig");
+    _ = @import("persist/bundle_io.zig");
     _ = @import("edit/undo_stack.zig");
     _ = @import("edit/edit_op.zig");
     _ = @import("edit/selection.zig");

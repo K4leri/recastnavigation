@@ -14,11 +14,16 @@ const sample = @import("../sample.zig");
 const headless = @import("headless_build.zig");
 const diff_mod = @import("diff.zig");
 const io_util = @import("../io_util.zig");
+const bundle_io = @import("../persist/bundle_io.zig");
 
-/// true, если `arg` — известная headless-подкоманда (build/diff). main.zig
-/// использует это, чтобы решить, идти ли headless-путём ВМЕСТО GUI.
+/// true, если `arg` — известная headless-подкоманда (build/diff/bundle) ИЛИ путь к
+/// .recastbundle (drag-onto-exe / `recast_demo file.recastbundle`). main.zig использует
+/// это, чтобы решить, идти ли headless-путём ВМЕСТО GUI.
 pub fn isSubcommand(arg: []const u8) bool {
-    return std.mem.eql(u8, arg, "build") or std.mem.eql(u8, arg, "diff");
+    return std.mem.eql(u8, arg, "build") or
+        std.mem.eql(u8, arg, "diff") or
+        std.mem.eql(u8, arg, "bundle") or
+        std.mem.endsWith(u8, arg, ".recastbundle");
 }
 
 fn warn(comptime fmt: []const u8, args: anytype) void {
@@ -36,8 +41,39 @@ pub fn run(gpa: std.mem.Allocator, args: []const []const u8) u8 {
     const rest = args[2..];
     if (std.mem.eql(u8, cmd, "build")) return runBuild(gpa, rest);
     if (std.mem.eql(u8, cmd, "diff")) return runDiff(gpa, rest);
-    warn("unknown subcommand '{s}' (expected build|diff)\n", .{cmd});
+    // `bundle import <path>` OR a bare `<path>.recastbundle` (drag-onto-exe).
+    if (std.mem.eql(u8, cmd, "bundle")) {
+        if (rest.len >= 2 and std.mem.eql(u8, rest[0], "import")) return runBundleImport(gpa, rest[1]);
+        warn("usage: recast_demo bundle import <file.recastbundle>\n", .{});
+        return 2;
+    }
+    if (std.mem.endsWith(u8, cmd, ".recastbundle")) return runBundleImport(gpa, cmd);
+    warn("unknown subcommand '{s}' (expected build|diff|bundle)\n", .{cmd});
     return 2;
+}
+
+// ===========================================================================
+// bundle import — headless validate/unpack of a .recastbundle (cluster I / I-2)
+// ===========================================================================
+
+/// Headless import of a `.recastbundle`: unpack it into a temp `.recastscene/`
+/// container, validate (magic/version/per-entry checksums propagate as errors),
+/// and report what was restored on stderr. Full GUI scene-restore is NOT performed
+/// here (no window/sample); this validates the bundle and materializes the scene so
+/// it could be loaded — sufficient for drag-onto-exe / CI smoke. exit 0 on success.
+fn runBundleImport(gpa: std.mem.Allocator, bundle_path: []const u8) u8 {
+    // Restore next to the bundle file (its parent dir), mirroring the GUI flow.
+    const dest = std.fs.path.dirname(bundle_path) orelse ".";
+    var res = bundle_io.importBundle(gpa, bundle_path, dest) catch |e| {
+        warn("[bundle] import '{s}' failed: {s}\n", .{ bundle_path, @errorName(e) });
+        return 1;
+    };
+    defer res.deinit();
+    warn("[bundle] imported scene -> {s}{s}\n", .{
+        res.scene_container_path,
+        if (res.repro_json != null) " (+repro/query.json)" else " (no repro)",
+    });
+    return 0;
 }
 
 // ===========================================================================

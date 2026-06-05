@@ -29,6 +29,7 @@ const export_gltf = @import("io/export_gltf.zig");
 const export_svg = @import("io/export_svg.zig");
 const export_query = @import("io/export_query.zig");
 const scene_container = @import("persist/scene_container.zig");
+const bundle_io = @import("persist/bundle_io.zig");
 const InputGate = @import("input_gate.zig").InputGate;
 const tool_registry = @import("tool_registry.zig");
 const InputGeom = @import("input_geom.zig").InputGeom;
@@ -1893,6 +1894,27 @@ pub fn main(main_init: std.process.Init) !void {
                         }
                     }
                 }
+
+                // --- Bug-report bundle (.recastbundle) export / import (cluster I) ---
+                {
+                    var brow = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
+                    defer brow.deinit();
+                    // Export: archive the NEWEST saved variant's container into a
+                    // sibling "<stem>.recastbundle". Requires a saved scene first.
+                    if (dvui.button(@src(), "Export Bundle", .{}, .{ .id_extra = 990 })) {
+                        if (variants.len > 0) {
+                            exportBundleNow(main_init.gpa, app.meshes_folder, cur_stem, variants[0].path, &bctx);
+                        } else {
+                            bctx.context().log(.err, "Export Bundle: save the scene first (no variants).", .{});
+                        }
+                    }
+                    // Import: pick the newest *.recastbundle in the meshes folder,
+                    // restore it, and load the restored scene into the live state.
+                    if (dvui.button(@src(), "Import Bundle", .{}, .{ .id_extra = 991 })) {
+                        importBundleNow(main_init.gpa, app.meshes_folder, cur_name, &geom, &solo, &tile, &temp, &tester, &crowd_tool, &prune_tool, &cam, &bctx);
+                        rebuildVariants(main_init.gpa, app.meshes_folder, cur_stem, &variants, &variants_stem, &bctx);
+                    }
+                }
             }
 
             // --- NavMesh export (cluster D, D2/D3/D7) ---------------------------
@@ -3708,6 +3730,100 @@ fn loadSceneNow(
     area_types.costs_dirty = false;
 
     bctx.context().log(.progress, "Loaded scene {s} (mesh {s}, {d} saved tiles)", .{ container_path, obj_name, lr.tiles.len });
+}
+
+/// Export a bug-report bundle: archive `container_path` (a saved `.recastscene/`)
+/// into "<folder>/<stem>.recastbundle". repro is null for now (cluster I-2 follow-up).
+/// All errors caught + logged; never crashes.
+fn exportBundleNow(
+    gpa: std.mem.Allocator,
+    folder: []const u8,
+    stem: []const u8,
+    container_path: []const u8,
+    bctx: *BuildContext,
+) void {
+    const out_path = std.fmt.allocPrint(gpa, "{s}/{s}.recastbundle", .{ folder, stem }) catch |e| {
+        bctx.context().log(.err, "Export Bundle: path alloc failed: {s}", .{@errorName(e)});
+        return;
+    };
+    defer gpa.free(out_path);
+    bundle_io.exportBundle(gpa, container_path, null, out_path) catch |e| {
+        bctx.context().log(.err, "Export Bundle failed ({s}): {s}", .{ out_path, @errorName(e) });
+        return;
+    };
+    bctx.context().log(.progress, "Exported bundle {s} (from {s})", .{ out_path, container_path });
+}
+
+/// Import a bug-report bundle: pick the NEWEST "*.recastbundle" in `folder`, restore
+/// its `.recastscene` container under `folder`, then load it into the live state via
+/// loadSceneNow. All errors caught + logged; never crashes.
+fn importBundleNow(
+    gpa: std.mem.Allocator,
+    folder: []const u8,
+    mesh_name: []const u8,
+    geom: *InputGeom,
+    solo: *SampleSolo,
+    tile: *SampleTile,
+    temp: *SampleTempObstacles,
+    tester: *NavMeshTesterTool,
+    crowd_tool: *CrowdTool,
+    prune_tool: *NavMeshPruneTool,
+    cam: *Camera,
+    bctx: *BuildContext,
+) void {
+    // 1) Find the newest *.recastbundle in `folder` (mtime DESC, name tiebreak).
+    const bundles = io_util.scanDirectory(gpa, folder, ".recastbundle") catch |e| {
+        bctx.context().log(.err, "Import Bundle: scan {s}: {s}", .{ folder, @errorName(e) });
+        return;
+    };
+    defer {
+        for (bundles) |b| gpa.free(b);
+        gpa.free(bundles);
+    }
+    if (bundles.len == 0) {
+        bctx.context().log(.err, "Import Bundle: no *.recastbundle in {s}", .{folder});
+        return;
+    }
+    // scanDirectory sorts by NAME asc; pick newest by mtime among them.
+    var newest: []const u8 = bundles[0];
+    {
+        var threaded: std.Io.Threaded = .init(gpa, .{});
+        defer threaded.deinit();
+        const io = threaded.io();
+        var best_ns: i128 = -1;
+        for (bundles) |b| {
+            const full = std.fmt.allocPrint(gpa, "{s}/{s}", .{ folder, b }) catch continue;
+            defer gpa.free(full);
+            const ns: i128 = if (std.Io.Dir.cwd().statFile(io, full, .{})) |st|
+                @intCast(st.mtime.nanoseconds)
+            else |_|
+                0;
+            if (ns > best_ns) {
+                best_ns = ns;
+                newest = b;
+            }
+        }
+    }
+    const bundle_path = std.fmt.allocPrint(gpa, "{s}/{s}", .{ folder, newest }) catch |e| {
+        bctx.context().log(.err, "Import Bundle: path alloc failed: {s}", .{@errorName(e)});
+        return;
+    };
+    defer gpa.free(bundle_path);
+
+    // 2) Restore the container under `folder` (sibling of the bundle).
+    var res = bundle_io.importBundle(gpa, bundle_path, folder) catch |e| {
+        bctx.context().log(.err, "Import Bundle failed ({s}): {s}", .{ bundle_path, @errorName(e) });
+        return;
+    };
+    defer res.deinit();
+    bctx.context().log(.progress, "Imported bundle {s} -> {s}{s}", .{
+        bundle_path,
+        res.scene_container_path,
+        if (res.repro_json != null) " (+repro)" else "",
+    });
+
+    // 3) Load the restored scene into the live state.
+    loadSceneNow(gpa, folder, res.scene_container_path, mesh_name, geom, solo, tile, temp, tester, crowd_tool, prune_tool, cam, bctx);
 }
 
 /// Точка пикинга: пересечение с мешем (если есть), иначе с плоскостью y=0.
