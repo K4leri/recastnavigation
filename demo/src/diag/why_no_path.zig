@@ -105,15 +105,15 @@ pub fn classify(s: Signals) Verdict {
 /// One-line human-readable reason for a verdict (panel status line).
 pub fn reasonText(v: Verdict) []const u8 {
     return switch (v) {
-        .ok => "Path found: start and end are connected.",
-        .same_poly => "Start and end are on the same polygon.",
-        .invalid_start => "No polygon under the start point (snap failed).",
-        .invalid_end => "No polygon under the end point (snap failed).",
-        .different_components => "Start and end are on disconnected islands (no topological link).",
-        .partial_node_limit => "Search hit the node-pool limit before reaching the goal.",
-        .partial_no_goal => "Partial path: the search stopped short of the goal.",
-        .filtered_by_flags => "The filter's include/exclude flags cut the connecting polygons.",
-        .blocked_by_cost => "Reachable, but area costs steered the search away from a full path.",
+        .ok => "OK - a path exists from start to end.",
+        .same_poly => "Start and end are on the same polygon (trivially connected).",
+        .invalid_start => "No navmesh polygon under the START point - move it onto walkable navmesh.",
+        .invalid_end => "No navmesh polygon under the END point - move it onto walkable navmesh.",
+        .different_components => "No path: start and end are on SEPARATE pieces of navmesh that aren't connected by anything (a real gap - even an all-flags filter can't cross it).",
+        .partial_node_limit => "No full path: the search ran out of node-pool space before reaching the end. Raise max_nodes.",
+        .partial_no_goal => "Partial path only: the search stopped short of the goal.",
+        .filtered_by_flags => "No path: the polygons that WOULD connect start->end are blocked by your include/exclude FLAGS (they'd connect with an all-flags filter). Allow the needed flag.",
+        .blocked_by_cost => "Reachable by flags, but the area COSTS steered the search away from a complete corridor (it's expensive, not impossible).",
         .unknown => "Path failed for an undetermined reason.",
     };
 }

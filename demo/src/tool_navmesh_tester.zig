@@ -1292,11 +1292,21 @@ pub const NavMeshTesterTool = struct {
             ui.section(@src(), "Why no path?");
             const ok = self.verdict == .ok or self.verdict == .same_poly;
             const icon: []const u8 = if (ok) "[OK] " else "[X] ";
-            dvui.label(@src(), "{s}{s}", .{ icon, wnp.reasonText(self.verdict) }, .{});
-            if (dvui.expander(@src(), "Explain", .{}, .{})) {
+            // textLayout WRAPS to the panel width (plain dvui.label clips with "..."
+            // in this narrow panel, so the verdict was unreadable).
+            {
+                var rbuf: [160]u8 = undefined;
+                const reason = std.fmt.bufPrint(&rbuf, "{s}{s}", .{ icon, wnp.reasonText(self.verdict) }) catch wnp.reasonText(self.verdict);
+                var tl = dvui.textLayout(@src(), .{}, .{ .expand = .horizontal, .id_extra = 0xA10 });
+                tl.addText(reason, .{});
+                tl.deinit();
+            }
+            if (dvui.expander(@src(), "Explain", .{}, .{ .id_extra = 0xA11 })) {
                 var ebuf: [512]u8 = undefined;
                 const txt = wnp.explainText(&ebuf, self.verdict, self.signals);
-                dvui.labelNoFmt(@src(), txt, .{}, .{});
+                var tl = dvui.textLayout(@src(), .{}, .{ .expand = .horizontal, .id_extra = 0xA12 });
+                tl.addText(txt, .{});
+                tl.deinit();
             }
         }
 
