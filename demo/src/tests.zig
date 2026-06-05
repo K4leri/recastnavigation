@@ -16,4 +16,6 @@ test {
     _ = @import("persist/tile_store.zig");
     _ = @import("persist/manifest.zig");
     _ = @import("persist/scene_container.zig");
+    _ = @import("edit/undo_stack.zig");
+    _ = @import("edit/edit_op.zig");
 }

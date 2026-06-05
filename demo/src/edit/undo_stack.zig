@@ -216,7 +216,7 @@ test "off-mesh delete undo restores all 6 fields at index" {
     try std.testing.expectEqual(@as(u8, 1), geom.off_dir.items[0]);
     try std.testing.expectEqual(@as(u8, 9), geom.off_area.items[0]);
     try std.testing.expectEqual(@as(u16, 0x55), geom.off_flags.items[0]);
-    try std.testing.expectEqual(@as(u32, 0x55), geom.off_id.items[0]);
+    try std.testing.expectEqual(@as(u32, 1000), geom.off_id.items[0]);
 }
 
 test "ring eviction frees oldest, no leak" {

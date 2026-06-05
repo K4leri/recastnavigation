@@ -733,10 +733,10 @@ pub fn main(main_init: std.process.Init) !void {
                 defer row.deinit();
                 const can_u = undo_stack.canUndo();
                 const can_r = undo_stack.canRedo();
-                if (dvui.button(@src(), "Undo", .{}, .{ .id_extra = 970 })) {
+                if (dvui.button(@src(), "Undo", .{ .grayed = !can_u }, .{ .id_extra = 970 })) {
                     if (can_u and undo_stack.undo(&geom)) geom_edited = true;
                 }
-                if (dvui.button(@src(), "Redo", .{}, .{ .id_extra = 971 })) {
+                if (dvui.button(@src(), "Redo", .{ .grayed = !can_r }, .{ .id_extra = 971 })) {
                     if (can_r and undo_stack.redo(&geom)) geom_edited = true;
                 }
             }
