@@ -49,6 +49,10 @@ pub const Metrics = struct {
     num_polys: u32,
     num_verts: u32,
     max_polys: u32,
+    /// XXH3 (seed 0) over the navmesh tile data bytes — a deterministic build
+    /// fingerprint (I-3 repro-contract). Same geom+settings -> same hash across
+    /// runs/machines on one arch; byte-divergence from upstream MSET shows here.
+    navmesh_hash: u64 = 0,
     areas: []const AreaCount,
     build_ms: f32,
 };
@@ -187,6 +191,8 @@ pub fn toJson(alloc: std.mem.Allocator, m: Metrics) ![]u8 {
     try w.print(",\"num_polys\":{d}", .{m.num_polys});
     try w.print(",\"num_verts\":{d}", .{m.num_verts});
     try w.print(",\"max_polys\":{d}", .{m.max_polys});
+    // Deterministic build fingerprint as a hex STRING (exact-compared by D6 diff).
+    try w.print(",\"hash\":\"0x{x:0>16}\"", .{m.navmesh_hash});
     try w.writeByte('}');
 
     // areas
@@ -244,6 +250,7 @@ fn soloFixture() Metrics {
         .num_polys = 200,
         .num_verts = 512,
         .max_polys = 256,
+        .navmesh_hash = 0xDEADBEEFCAFEF00D,
         .areas = areas,
         .build_ms = 12.34,
     };

@@ -62,10 +62,14 @@ pub fn gatherMetrics(
     var num_verts: u32 = 0;
     // per-area счётчик: area в [0,63] (DT_MAX_AREAS=64).
     var area_polys = [_]u32{0} ** area_types.MAX_AREA_TYPES;
+    // I-3 verify-hash: XXH3 (seed 0) over valid tiles' data bytes in tiles-array
+    // order (same order navmesh_io.save serialises) — deterministic per build.
+    var hasher = std.hash.XxHash3.init(0);
 
     for (mesh.tiles) |*t| {
         const hdr = t.header orelse continue;
         if (t.data_size == 0) continue;
+        hasher.update(t.data[0..@intCast(t.data_size)]);
         num_tiles += 1;
         num_verts += @intCast(@max(hdr.vert_count, 0));
         const pc: usize = @intCast(@max(hdr.poly_count, 0));
@@ -114,6 +118,7 @@ pub fn gatherMetrics(
         .num_polys = num_polys,
         .num_verts = num_verts,
         .max_polys = @intCast(@max(mesh.params.max_polys, 0)),
+        .navmesh_hash = hasher.final(),
         .areas = areas_owned,
         .build_ms = build_ms,
     };
