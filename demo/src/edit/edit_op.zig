@@ -38,6 +38,35 @@ fn markAreaDirty() void {
     area_types.costs_dirty = true;
 }
 
+/// Locate the array index of the convex volume whose `.id == id`, or null if no
+/// volume currently carries that id (e.g. it was deleted). Used by the id-keyed
+/// `edit_volume` op so it hits the right object even after the list reordered.
+fn volumeIndexById(geom: *const InputGeom, id: u32) ?usize {
+    for (geom.volumes.items, 0..) |*vol, i| {
+        if (vol.id == id) return i;
+    }
+    return null;
+}
+
+/// Locate the array index of the off-mesh connection whose `off_id == id`, or
+/// null if none currently carries that id. Used by the id-keyed `edit_offmesh`.
+fn offmeshIndexById(geom: *const InputGeom, id: u32) ?usize {
+    for (geom.off_id.items, 0..) |oid, i| {
+        if (oid == id) return i;
+    }
+    return null;
+}
+
+/// Overwrite the 6 mutable fields of the off-mesh at `idx` from `data` (the
+/// stable `.id` key in `off_id` is intentionally left untouched).
+fn writeOffmesh(geom: *InputGeom, idx: usize, data: OffMeshData) void {
+    @memcpy(geom.off_verts.items[idx * 6 ..][0..6], &data.verts);
+    geom.off_rad.items[idx] = data.rad;
+    geom.off_dir.items[idx] = data.dir;
+    geom.off_area.items[idx] = data.area;
+    geom.off_flags.items[idx] = data.flags;
+}
+
 /// Reversible capture of one off-mesh connection (all 6 parallel-array fields).
 pub const OffMeshData = struct {
     verts: [6]f32,
@@ -65,6 +94,18 @@ pub const EditOp = union(enum) {
     delete_volume: struct { index: usize, vol: ConvexVolume },
     add_offmesh: OffMeshData,
     delete_offmesh: struct { index: usize, data: OffMeshData },
+
+    // --- In-place edits (id-keyed) --------------------------------------------
+    // These mutate an EXISTING object in place. They are keyed by STABLE id (not
+    // array index) so they survive the list reordering that undo/redo of OTHER
+    // edits performs between record and undo. Both serve feature F3 group-move and
+    // the future F5 property edit. If the target id no longer exists (it was
+    // deleted), apply/revert are silent no-ops — never a crash.
+    /// A volume (found by .id) was overwritten: apply -> after, revert -> before.
+    edit_volume: struct { id: u32, before: ConvexVolume, after: ConvexVolume },
+    /// An off-mesh (found by off_id) had its 6 fields overwritten. The .id field
+    /// is the key and never changes; apply -> after, revert -> before.
+    edit_offmesh: struct { id: u32, before: OffMeshData, after: OffMeshData },
 
     // --- Scene-markup registry edits (area types + poly flags) ----------------
     // These operate on the MODULE-GLOBAL registries (area_types / poly_flags),
@@ -107,6 +148,14 @@ pub const EditOp = union(enum) {
             },
             .delete_offmesh => |d| {
                 geom.deleteOffMeshConnection(d.index);
+            },
+            .edit_volume => |e| {
+                // Overwrite the (id-keyed) volume with `after`; missing -> no-op.
+                if (volumeIndexById(geom, e.id)) |i| geom.volumes.items[i] = e.after;
+            },
+            .edit_offmesh => |e| {
+                // Overwrite the (id-keyed) connection's 6 fields with `after`.
+                if (offmeshIndexById(geom, e.id)) |i| writeOffmesh(geom, i, e.after);
             },
             .area_add => |a| {
                 area_types.restoreType(a.id, a.type);
@@ -152,6 +201,14 @@ pub const EditOp = union(enum) {
             },
             .delete_offmesh => |d| {
                 geom.insertOffMeshConnection(d.index, d.data.verts, d.data.rad, d.data.dir, d.data.area, d.data.flags, d.data.id) catch {};
+            },
+            .edit_volume => |e| {
+                // Restore the (id-keyed) volume to `before`; missing -> no-op.
+                if (volumeIndexById(geom, e.id)) |i| geom.volumes.items[i] = e.before;
+            },
+            .edit_offmesh => |e| {
+                // Restore the (id-keyed) connection's 6 fields to `before`.
+                if (offmeshIndexById(geom, e.id)) |i| writeOffmesh(geom, i, e.before);
             },
             .area_add => |a| {
                 area_types.removeType(a.id);
@@ -208,6 +265,8 @@ pub const EditOp = union(enum) {
             .delete_volume => "Delete Volume",
             .add_offmesh => "Add Off-Mesh Link",
             .delete_offmesh => "Delete Off-Mesh Link",
+            .edit_volume => "Move/Edit Volume",
+            .edit_offmesh => "Move/Edit Off-Mesh",
             .area_add => "Add Area Type",
             .area_edit => "Edit Area Type",
             .area_remove => "Remove Area Type",

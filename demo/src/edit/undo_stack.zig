@@ -219,6 +219,133 @@ test "off-mesh delete undo restores all 6 fields at index" {
     try std.testing.expectEqual(@as(u32, 1000), geom.off_id.items[0]);
 }
 
+test "edit_volume is id-keyed: undo/redo hit the right volume after an index shift" {
+    var geom = InputGeom.init(std.testing.allocator);
+    defer geom.deinit();
+    var st = UndoStack.init(std.testing.allocator);
+    defer st.deinit();
+
+    // Add the volume we will edit (id 1), give it a distinctive mode/band.
+    const tri = [_]f32{ 0, 0, 0, 2, 0, 0, 0, 0, 2 };
+    try geom.addConvexVolume(&tri, 3, 0.0, 1.0, 5); // id 1
+    geom.volumes.items[0].mode = .prism;
+    geom.volumes.items[0].band_below = 2.0;
+    geom.volumes.items[0].band_above = 3.0;
+    const target_id = geom.volumes.items[0].id;
+    const before = geom.volumes.items[0];
+
+    // Mutate it: translate verts by (+10,_,+20) and bump the band.
+    var after = before;
+    var k: usize = 0;
+    while (k < 3) : (k += 1) {
+        after.verts[k * 3 + 0] += 10;
+        after.verts[k * 3 + 2] += 20;
+    }
+    after.band_above = 9.0;
+    geom.volumes.items[0] = after;
+    st.record(.{ .edit_volume = .{ .id = target_id, .before = before, .after = after } });
+
+    // SHIFT INDICES: insert a fresh volume at index 0 AFTER recording, BEFORE undo.
+    // The edited volume is now at index 1 — index-keying would corrupt the wrong one.
+    const tri2 = [_]f32{ 100, 0, 0, 101, 0, 0, 100, 0, 1 };
+    try geom.addConvexVolume(&tri2, 3, 0.0, 1.0, 0); // id 2, appended at end...
+    // ...move it to the front so the edited volume's INDEX changes.
+    const shifter = geom.volumes.pop().?;
+    try geom.volumes.insert(0, shifter);
+    try std.testing.expectEqual(target_id, geom.volumes.items[1].id); // edited one moved to idx 1
+
+    // Undo -> restores `before` EXACTLY on the id-keyed volume (now at idx 1).
+    try std.testing.expect(st.undo(&geom));
+    const u = geom.volumes.items[1];
+    try std.testing.expectEqual(target_id, u.id);
+    try std.testing.expectEqual(ig.VolumeMode.prism, u.mode);
+    try std.testing.expectEqual(@as(f32, 2.0), u.band_below);
+    try std.testing.expectEqual(@as(f32, 3.0), u.band_above);
+    try std.testing.expectEqual(@as(f32, 0.0), u.verts[0]); // un-translated
+    try std.testing.expectEqual(@as(f32, 2.0), u.verts[8]); // vert2.z == 2
+
+    // Redo -> re-applies `after`.
+    try std.testing.expect(st.redo(&geom));
+    const r = geom.volumes.items[1];
+    try std.testing.expectEqual(@as(f32, 10.0), r.verts[0]); // translated
+    try std.testing.expectEqual(@as(f32, 22.0), r.verts[8]);
+    try std.testing.expectEqual(@as(f32, 9.0), r.band_above);
+}
+
+test "edit_volume missing id is a no-op (no crash)" {
+    var geom = InputGeom.init(std.testing.allocator);
+    defer geom.deinit();
+    var st = UndoStack.init(std.testing.allocator);
+    defer st.deinit();
+
+    const tri = [_]f32{ 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+    try geom.addConvexVolume(&tri, 3, 0.0, 1.0, 0); // id 1
+    var before = geom.volumes.items[0];
+    before.id = 999; // an id that does NOT exist in geom
+    const after = before;
+    st.record(.{ .edit_volume = .{ .id = 999, .before = before, .after = after } });
+
+    // Both undo and redo must be silent no-ops on the missing id.
+    try std.testing.expect(st.undo(&geom));
+    try std.testing.expectEqual(@as(usize, 1), geom.volumes.items.len);
+    try std.testing.expect(st.redo(&geom));
+    try std.testing.expectEqual(@as(usize, 1), geom.volumes.items.len);
+}
+
+test "edit_offmesh is id-keyed: undo/redo survive an index shift" {
+    const OffMeshData = @import("edit_op.zig").OffMeshData;
+    var geom = InputGeom.init(std.testing.allocator);
+    defer geom.deinit();
+    var st = UndoStack.init(std.testing.allocator);
+    defer st.deinit();
+
+    // Add the connection we will edit (off_id 1000) at index 0.
+    try geom.addOffMeshConnection(.{ 1, 2, 3 }, .{ 4, 5, 6 }, 0.5, 1, 7, 0x33); // off_id 1000
+    const target_id = geom.off_id.items[0];
+    const before = OffMeshData.capture(&geom, 0);
+
+    // Mutate: translate both endpoints by (+10,_,+20), write it back in place.
+    var after = before;
+    after.verts[0] += 10;
+    after.verts[2] += 20;
+    after.verts[3] += 10;
+    after.verts[5] += 20;
+    writeBack(&geom, 0, after);
+    st.record(.{ .edit_offmesh = .{ .id = target_id, .before = before, .after = after } });
+
+    // SHIFT INDICES: insert a DIFFERENT connection at index 0 AFTER recording but
+    // BEFORE undo. The edited connection (off_id 1000) is now at index 1 — an
+    // index-keyed op would corrupt the wrong connection.
+    try geom.insertOffMeshConnection(0, .{ 0, 0, 0, 1, 0, 1 }, 0.5, 1, 0, 0, 1001);
+    try std.testing.expectEqual(target_id, geom.off_id.items[1]); // edited one moved to idx 1
+
+    // Undo -> restores `before` on the id-keyed connection (wherever it now is).
+    try std.testing.expect(st.undo(&geom));
+    const i = offmeshIdx(&geom, target_id).?;
+    try std.testing.expectEqual(@as(f32, 1.0), geom.off_verts.items[i * 6 + 0]);
+    try std.testing.expectEqual(@as(f32, 6.0), geom.off_verts.items[i * 6 + 5]);
+
+    // Redo -> re-applies `after`.
+    try std.testing.expect(st.redo(&geom));
+    try std.testing.expectEqual(@as(f32, 11.0), geom.off_verts.items[i * 6 + 0]);
+    try std.testing.expectEqual(@as(f32, 26.0), geom.off_verts.items[i * 6 + 5]);
+}
+
+/// Test helper: overwrite the 6 mutable fields of off-mesh idx from an OffMeshData.
+fn writeBack(geom: *InputGeom, idx: usize, d: @import("edit_op.zig").OffMeshData) void {
+    @memcpy(geom.off_verts.items[idx * 6 ..][0..6], &d.verts);
+    geom.off_rad.items[idx] = d.rad;
+    geom.off_dir.items[idx] = d.dir;
+    geom.off_area.items[idx] = d.area;
+    geom.off_flags.items[idx] = d.flags;
+}
+
+/// Test helper: find off-mesh array index by off_id.
+fn offmeshIdx(geom: *const InputGeom, id: u32) ?usize {
+    for (geom.off_id.items, 0..) |oid, i| if (oid == id) return i;
+    return null;
+}
+
 const area_types = @import("../area_types.zig");
 const poly_flags = @import("../poly_flags.zig");
 
