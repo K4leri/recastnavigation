@@ -35,6 +35,7 @@ const view_state = @import("render/view_state.zig");
 const legend = @import("render/legend.zig");
 const overlay = @import("render/overlay.zig");
 const minimap = @import("render/minimap.zig");
+const capture = @import("render/capture.zig");
 const poly_visit = @import("render/poly_visit.zig");
 const SampleTile = @import("sample_tile.zig").SampleTile;
 const SampleTempObstacles = @import("sample_temp_obstacles.zig").SampleTempObstacles;
@@ -250,6 +251,10 @@ pub fn main(main_init: std.process.Init) !void {
     var gate = InputGate{}; // курсор над панелью / фокус в textfield (с прошлого кадра)
     var prev_esc = false; // фронт Esc (чтобы Esc в редакторе не закрывал приложение)
     var new_flag_name: [20]u8 = [_]u8{0} ** 20; // поле ввода имени нового poly-флага
+    // --- Capture UI state (Cluster E, P2-1) ---------------------------------
+    var capture_ui_frames: f32 = 120; // frame-count slider (orbit -> 120 frames = full sweep)
+    var capture_ui_dir: [capture.DIR_MAX]u8 = [_]u8{0} ** capture.DIR_MAX; // output dir text entry
+    @memcpy(capture_ui_dir[0..7], "capture"); // default dir name
     // --- F4: area/flag presets state ---------------------------------------
     var preset_name: [48]u8 = [_]u8{0} ** 48; // поле ввода имени нового пресета (Save Preset)
     var preset_names: [][]u8 = &.{}; // кэш списка пресетов (имена-стемы, owned) — пересканируется
@@ -316,11 +321,30 @@ pub fn main(main_init: std.process.Init) !void {
     var cycle_modes = false; // --cyclemodes: перебор всех draw-режимов (поиск крашей)
     var shot_draw: ?[]const u8 = null; // --draw=<имя>: фикс draw-режим для скриншот-сравнения
     var shot_cam: ?[5]f32 = null; // --cam=pitch,yaw,x,y,z: задать ракурс камеры для сравнения
+    // --capture=<dir>,<frames>: write N PPM frames + manifest to <dir>, sweeping a full
+    // 360° orbit deterministically (frame-count-driven), then auto-close. Reuses the bench
+    // orbit machinery for the camera sweep. Headless-friendly (no UI interaction needed;
+    // a GL window still must exist — true offscreen FBO is out of scope).
+    var capture_state: capture.State = .{};
+    var capture_headless = false; // set by --capture: auto-close the window after the run
     {
         var it = try std.process.Args.Iterator.initAllocator(main_init.minimal.args, main_init.gpa);
         defer it.deinit();
         while (it.next()) |a| {
             if (std.mem.eql(u8, a, "--bench")) bench = true;
+            if (std.mem.startsWith(u8, a, "--capture=")) {
+                // "<dir>,<frames>" — split on the last comma so dir names may contain none.
+                const spec = a["--capture=".len..];
+                if (std.mem.lastIndexOfScalar(u8, spec, ',')) |ci| {
+                    const dir_s = spec[0..ci];
+                    const n = std.fmt.parseInt(u32, spec[ci + 1 ..], 10) catch 0;
+                    if (dir_s.len > 0 and n > 0) {
+                        capture_state.start(dir_s, n, .orbit);
+                        capture_headless = true;
+                        bench = true; // reuse the orbit machinery so the camera sweeps 360°
+                    }
+                }
+            }
             if (std.mem.eql(u8, a, "--cyclemodes")) cycle_modes = true;
             if (std.mem.startsWith(u8, a, "--draw=")) {
                 // дублируем в arena (it.next буфер переиспользуется)
@@ -389,6 +413,12 @@ pub fn main(main_init: std.process.Init) !void {
     // it with the post-edit bbox makes the dirty-tile set cover deletes too (the
     // deleted object was present last frame). Recomputed every frame below.
     var prev_geom_bbox: ?EditBBox = geomEditBBox(&geom);
+
+    // Capture: in-memory manifest accumulated across frames, flushed durably on finish.
+    var capture_manifest = std.array_list.Managed(u8).init(main_init.gpa);
+    defer capture_manifest.deinit();
+    var capture_dir_opened = false; // create the output dir once (on the first frame).
+
     while (!g_window.shouldClose()) {
         const frame_start = impl.nanoTime();
 
@@ -408,7 +438,16 @@ pub fn main(main_init: std.process.Init) !void {
                 bench_off = cam.pos.sub(bench_center);
                 bench_yaw0 = cam.eulers[1];
             }
-            bench_angle += 36.0 / 60.0; // ~36°/с при 60 эфф. кадров -> 360° за 10с
+            // Orbit step. In CAPTURE mode it is frame-count-driven (360°/total per
+            // captured frame) so the N frames span exactly one revolution deterministically
+            // — independent of wall-clock / FPS, for reproducible image sequences. In plain
+            // --bench mode it stays the wall-clock-tuned ~36°/s sweep.
+            if (capture_state.active and capture_state.total > 0) {
+                bench_angle = @as(f32, @floatFromInt(capture_state.done)) * 360.0 /
+                    @as(f32, @floatFromInt(capture_state.total));
+            } else {
+                bench_angle += 36.0 / 60.0; // ~36°/с при 60 эфф. кадров -> 360° за 10с
+            }
             const a = bench_angle * std.math.pi / 180.0;
             const ca = @cos(a);
             const sa = @sin(a);
@@ -1624,6 +1663,47 @@ pub fn main(main_init: std.process.Init) !void {
                 _ = dvui.checkbox(@src(), &grp.labels, "Show labels", .{ .id_extra = 361 });
             }
 
+            // --- Capture (cluster E, P2-1) ---
+            // Frame-count slider + mode radio {orbit|live} + output-dir text entry +
+            // Start/Stop. orbit reuses the bench orbit machinery (set bench=true on Start);
+            // live just grabs the current view each frame. Progress shown as done/total.
+            // id_extra 365..369 (after the 356..361 Layers range; ids 352..361 in use).
+            // PPM-only; reassemble with: ffmpeg -i <dir>/frame_%05d.ppm out.mp4
+            ui.section(@src(), "Capture");
+            {
+                ui.sliderInt(@src(), "frames {d:.0}", &capture_ui_frames, 1, 600);
+                {
+                    var row = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
+                    defer row.deinit();
+                    if (ui.radio(@src(), capture_state.mode == .orbit, "orbit", 365)) capture_state.mode = .orbit;
+                    if (ui.radio(@src(), capture_state.mode == .live, "live", 366)) capture_state.mode = .live;
+                }
+                {
+                    // Dir text entry — gated so typing here doesn't drive the camera/hotkeys.
+                    var te = dvui.textEntry(@src(), .{ .text = .{ .buffer = &capture_ui_dir } }, .{ .expand = .horizontal, .id_extra = 367 });
+                    te.deinit();
+                }
+                if (capture_state.active) {
+                    dvui.label(@src(), "capturing {d}/{d}", .{ capture_state.done, capture_state.total }, .{ .id_extra = 368 });
+                    if (dvui.button(@src(), "Stop", .{}, .{ .id_extra = 369 })) {
+                        capture_state.active = false; // mid-capture stop: no leak (per-frame defers freed buffers)
+                        if (capture_state.mode == .orbit) bench = false;
+                    }
+                } else {
+                    if (dvui.button(@src(), "Start", .{}, .{ .id_extra = 369 })) {
+                        const dir_s = std.mem.sliceTo(&capture_ui_dir, 0);
+                        if (dir_s.len > 0) {
+                            capture_manifest.clearRetainingCapacity();
+                            capture_state.start(dir_s, @intFromFloat(capture_ui_frames), capture_state.mode);
+                            if (capture_state.mode == .orbit) {
+                                bench = true; // sweep 360° via the orbit machinery
+                                bench_started = false; // re-seed the orbit center from current geom
+                            }
+                        }
+                    }
+                }
+            }
+
             ui.section(@src(), "Debug Settings");
             switch (sample_kind) {
                 .solo => solo.sampleIface().drawDebugMode(),
@@ -2156,6 +2236,32 @@ pub fn main(main_init: std.process.Init) !void {
         gate.update(win.cursorRequestedFloating() != null, win.textInputRequested() != null);
         z_dvui.end();
 
+        // --- Frame capture hook (Cluster E, P2-1) ---
+        // AFTER the 3D sample + dvui UI have drawn into the default framebuffer and BEFORE
+        // the buffer swap, the framebuffer is complete: read it back, encode a flipped PPM,
+        // and durably write it via write_atomic (no torn images). Frame-count-driven.
+        if (capture_state.active and !capture_state.finished()) {
+            captureFrame(
+                main_init.gpa,
+                &capture_state,
+                &capture_manifest,
+                &capture_dir_opened,
+                fb,
+                cam,
+                &bctx,
+            );
+            if (capture_state.finished()) {
+                bctx.context().log(.progress, "capture: wrote {d} frames to {s}", .{ capture_state.done, capture_state.dir() });
+                bctx.context().log(.progress, "capture: video via  ffmpeg -i {s}/frame_%05d.ppm out.mp4", .{capture_state.dir()});
+                capture_state.active = false;
+                if (capture_headless) {
+                    g_window.setShouldClose(true); // headless run exits after capture
+                } else if (capture_state.mode == .orbit) {
+                    bench = false; // UI-triggered orbit: stop the camera sweep when done
+                }
+            }
+        }
+
         {
             const z = tracy.zone(@src(), "swapBuffers");
             defer z.end();
@@ -2212,6 +2318,77 @@ fn continuousNeeded(crowd: *const CrowdTool) bool {
     if (g_window.getMouseButton(.right) == .press or g_window.getMouseButton(.left) == .press) return true;
     if (crowd.running and crowd.agent_count > 0) return true;
     return false;
+}
+
+/// Capture one frame: glReadPixels the complete default framebuffer, encode a vertically
+/// flipped PPM (GL origin is bottom-left), and durably write it to `<dir>/frame_<idx>.ppm`
+/// via write_atomic (atomic rename — a partially written frame never appears). Appends a
+/// manifest line; on the final frame flushes the manifest to `<dir>/manifest.txt`.
+///
+/// All IO/alloc errors are caught + logged (capture is best-effort demo tooling — a single
+/// failed frame must never crash the loop). `done` is incremented on a fully written frame.
+fn captureFrame(
+    gpa: std.mem.Allocator,
+    st: *capture.State,
+    manifest: *std.array_list.Managed(u8),
+    dir_opened: *bool,
+    fb: [2]i32,
+    cam: Camera,
+    bctx: *BuildContext,
+) void {
+    const write_atomic = @import("persist/write_atomic.zig");
+
+    const w: usize = @intCast(fb[0]);
+    const h: usize = @intCast(fb[1]);
+    if (w == 0 or h == 0) return;
+
+    // 1) Read back the framebuffer (RGB, bottom-up). zgl wraps glReadPixels.
+    const rgb = gpa.alloc(u8, w * h * 3) catch {
+        bctx.context().log(.err, "capture: alloc pixels failed", .{});
+        return;
+    };
+    defer gpa.free(rgb);
+    zgl.readPixels(0, 0, w, h, .rgb, .unsigned_byte, rgb.ptr);
+
+    // 2) Encode a top-down PPM (encodePpm flips vertically).
+    const ppm = capture.encodePpm(gpa, rgb, w, h) catch {
+        bctx.context().log(.err, "capture: encode PPM failed", .{});
+        return;
+    };
+    defer gpa.free(ppm);
+
+    // 3) Durable write. One Threaded Io + cwd Dir per frame (mirrors saveSceneNow).
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var dir = write_atomic.openContainerDir(io, std.Io.Dir.cwd(), st.dir()) catch {
+        bctx.context().log(.err, "capture: open dir '{s}' failed", .{st.dir()});
+        return;
+    };
+    defer dir.close(io);
+    dir_opened.* = true;
+
+    var name_buf: [32]u8 = undefined;
+    const name = capture.frameName(&name_buf, st.done + 1);
+    write_atomic.writeAtomic(io, dir, name, ppm) catch |e| {
+        bctx.context().log(.err, "capture: write {s} failed: {s}", .{ name, @errorName(e) });
+        return;
+    };
+
+    // 4) Append the manifest line (best-effort; appends are in-memory until finish).
+    var line_buf: [128]u8 = undefined;
+    const line = capture.manifestLine(&line_buf, st.done + 1, cam.eulers[0], cam.eulers[1], .{ cam.pos.x, cam.pos.y, cam.pos.z });
+    manifest.appendSlice(line) catch {};
+
+    st.done += 1;
+
+    // 5) On the last frame, flush the manifest durably.
+    if (st.finished()) {
+        write_atomic.writeAtomic(io, dir, "manifest.txt", manifest.items) catch |e| {
+            bctx.context().log(.err, "capture: write manifest failed: {s}", .{@errorName(e)});
+        };
+    }
 }
 
 /// Загрузить меш по индексу: load -> build -> setNavMesh -> reset камеры.
