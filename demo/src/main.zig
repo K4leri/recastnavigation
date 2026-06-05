@@ -43,6 +43,7 @@ const selection_mod = @import("edit/selection.zig");
 const snap_mod = @import("edit/snap.zig");
 const Clipboard = @import("edit/clipboard.zig").Clipboard;
 const inspector = @import("edit/inspector.zig");
+const presets = @import("edit/presets.zig");
 const Vec3 = recast.math.Vec3;
 
 const ActiveTool = tool_registry.ToolId; // { none, tester, prune, offmesh, convex, crowd }
@@ -241,6 +242,13 @@ pub fn main(main_init: std.process.Init) !void {
     var gate = InputGate{}; // курсор над панелью / фокус в textfield (с прошлого кадра)
     var prev_esc = false; // фронт Esc (чтобы Esc в редакторе не закрывал приложение)
     var new_flag_name: [20]u8 = [_]u8{0} ** 20; // поле ввода имени нового poly-флага
+    // --- F4: area/flag presets state ---------------------------------------
+    var preset_name: [48]u8 = [_]u8{0} ** 48; // поле ввода имени нового пресета (Save Preset)
+    var preset_names: [][]u8 = &.{}; // кэш списка пресетов (имена-стемы, owned) — пересканируется
+    var preset_choice: usize = 0; // выбранный пресет в дропдауне Apply
+    var preset_merge: bool = true; // стратегия применения: true=Merge (по умолчанию), false=Replace
+    var preset_list_init = false; // первичное сканирование presets/ выполнено?
+    defer freePresetNames(main_init.gpa, &preset_names);
     var variant_name: [32]u8 = [_]u8{0} ** 32; // поле ввода тега варианта сцены (Save Scene)
     // Кэш списка вариантов сцены (Load): сканируется по требованию (кнопка Refresh и
     // при смене меша), не каждый кадр. Освобождается через freeVariants.
@@ -1093,7 +1101,8 @@ pub fn main(main_init: std.process.Init) !void {
             // toggled on. Wide enough that the flag rows / hints don't clip.
             // Height fits the flag count (header + desc + N rows + add row), so no
             // empty space below for the default 4 flags.
-            const fh: f32 = 116 + @as(f32, @floatFromInt(poly_flags.count())) * 28;
+            // +200 for the F4 preset section (Save row + dropdown + radios + Apply).
+            const fh: f32 = 116 + 200 + @as(f32, @floatFromInt(poly_flags.count())) * 28;
             flags_rect = .{ .x = wr.w - colw - 3 * padw - 380, .y = padw, .w = 380, .h = fh };
         }
 
@@ -1572,6 +1581,58 @@ pub fn main(main_init: std.process.Init) !void {
                     }
                 }
             }
+
+            // --- F4: area-type / poly-flag PRESETS ----------------------------
+            // First time the panel renders, scan presets/ once so the dropdown is
+            // populated. Re-scan happens after every Save below.
+            if (!preset_list_init) {
+                preset_list_init = true;
+                rescanPresets(main_init.gpa, app.meshes_folder, &preset_names);
+            }
+            _ = dvui.separator(@src(), .{ .expand = .horizontal });
+            dvui.labelNoFmt(@src(), "Presets (area types + poly flags)", .{}, .{});
+
+            // Save Preset: name entry + Save button -> presets/<name>.reg.
+            {
+                var row = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
+                defer row.deinit();
+                {
+                    var te = dvui.textEntry(@src(), .{ .text = .{ .buffer = &preset_name } }, .{ .expand = .horizontal });
+                    te.deinit();
+                }
+                if (dvui.button(@src(), "Save Preset", .{}, .{})) {
+                    const nm_in = std.mem.sliceTo(&preset_name, 0);
+                    const nm = if (nm_in.len > 0) nm_in else "preset"; // savePreset also sanitizes/defaults
+                    savePresetNow(main_init.gpa, app.meshes_folder, nm);
+                    @memset(&preset_name, 0);
+                    // Re-scan so the new preset appears in the Apply dropdown.
+                    rescanPresets(main_init.gpa, app.meshes_folder, &preset_names);
+                }
+            }
+
+            // Apply Preset: dropdown + Replace/Merge radio + Apply button.
+            if (preset_names.len > 0) {
+                if (preset_choice >= preset_names.len) preset_choice = 0;
+                {
+                    var row = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
+                    defer row.deinit();
+                    // dvui.dropdown wants []const []const u8 — our names are [][]u8;
+                    // the element type coerces, so pass it directly.
+                    _ = dvui.dropdown(@src(), preset_names, .{ .choice = &preset_choice }, .{}, .{ .expand = .horizontal });
+                }
+                {
+                    var row = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
+                    defer row.deinit();
+                    if (ui.radio(@src(), preset_merge, "Merge", 970)) preset_merge = true;
+                    if (ui.radio(@src(), !preset_merge, "Replace", 971)) preset_merge = false;
+                }
+                if (dvui.button(@src(), "Apply Preset", .{}, .{})) {
+                    applyPresetNow(main_init.gpa, app.meshes_folder, preset_names[preset_choice], preset_merge, &undo_stack, &geom);
+                    geom_edited = true;
+                }
+            } else {
+                dvui.labelNoFmt(@src(), "(no presets — Save one above)", .{}, .{});
+            }
         }
 
         // --- Test Cases (как окно "Test Cases" RecastDemo) ---
@@ -2005,6 +2066,100 @@ fn rebuildVariants(
 }
 
 /// Save the current editable scene into a `<mesh>.recastscene/` container using the
+// ===========================================================================
+// F4 — area/flag PRESETS UI helpers (presets/ lives under the scene save root).
+// All file I/O is best-effort: errors log a [WARN] and never crash the GUI.
+// ===========================================================================
+
+/// Free a cached preset-name list (owned name strings + the slice).
+fn freePresetNames(gpa: std.mem.Allocator, names: *[][]u8) void {
+    for (names.*) |n| gpa.free(n);
+    if (names.len > 0) gpa.free(names.*);
+    names.* = &.{};
+}
+
+/// (Re)scan `<folder>/presets/*.reg` and replace the cached name list. All errors
+/// are caught + logged; on failure the cache is left empty.
+fn rescanPresets(gpa: std.mem.Allocator, folder: []const u8, names: *[][]u8) void {
+    freePresetNames(gpa, names);
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var root = std.Io.Dir.cwd().openDir(io, folder, .{}) catch |e| {
+        std.debug.print("[WARN] presets: open scene root '{s}' failed: {s}\n", .{ folder, @errorName(e) });
+        return;
+    };
+    defer root.close(io);
+    names.* = presets.listPresets(gpa, io, root) catch |e| {
+        std.debug.print("[WARN] presets: list failed: {s}\n", .{@errorName(e)});
+        names.* = &.{};
+        return;
+    };
+}
+
+/// Save the CURRENT registry to `<folder>/presets/<name>.reg`. Errors -> [WARN], no crash.
+fn savePresetNow(gpa: std.mem.Allocator, folder: []const u8, name: []const u8) void {
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var root = std.Io.Dir.cwd().openDir(io, folder, .{}) catch |e| {
+        std.debug.print("[WARN] presets: open scene root '{s}' failed: {s}\n", .{ folder, @errorName(e) });
+        return;
+    };
+    defer root.close(io);
+    presets.savePreset(gpa, io, root, name) catch |e| {
+        std.debug.print("[WARN] presets: save '{s}' failed: {s}\n", .{ name, @errorName(e) });
+        return;
+    };
+    std.debug.print("[INFO] presets: saved preset '{s}' to {s}/presets/\n", .{ name, folder });
+}
+
+/// Read `<folder>/presets/<name>.reg`, apply it (replace|merge) as ONE undo-able
+/// edit recorded on `undo_stack`, and raise the same dirty signals the area editor
+/// uses so live filters/costs refresh. Errors -> [WARN], no crash.
+fn applyPresetNow(
+    gpa: std.mem.Allocator,
+    folder: []const u8,
+    name: []const u8,
+    merge: bool,
+    undo_stack: *UndoStack,
+    geom: *InputGeom,
+) void {
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var root = std.Io.Dir.cwd().openDir(io, folder, .{}) catch |e| {
+        std.debug.print("[WARN] presets: open scene root '{s}' failed: {s}\n", .{ folder, @errorName(e) });
+        return;
+    };
+    defer root.close(io);
+
+    var sub_buf: [80]u8 = undefined;
+    const sub = std.fmt.bufPrint(&sub_buf, "presets/{s}.reg", .{name}) catch {
+        std.debug.print("[WARN] presets: name '{s}' too long\n", .{name});
+        return;
+    };
+    const blob = root.readFileAlloc(io, sub, gpa, .unlimited) catch |e| {
+        std.debug.print("[WARN] presets: read '{s}' failed: {s}\n", .{ sub, @errorName(e) });
+        return;
+    };
+    defer gpa.free(blob);
+
+    const mode: presets.ApplyMode = if (merge) .merge else .replace;
+    const op = presets.applyBlob(gpa, blob, mode) catch |e| {
+        std.debug.print("[WARN] presets: apply '{s}' failed: {s}\n", .{ name, @errorName(e) });
+        return;
+    };
+    undo_stack.record(op);
+    // applyBlob's op.apply already raised these, but the apply path here did NOT
+    // call op.apply (the globals were mutated in-place by applyBlob) — so signal
+    // explicitly to refresh live filters/costs + trigger a rebuild.
+    area_types.rebuild_needed = true;
+    area_types.costs_dirty = true;
+    _ = geom;
+    std.debug.print("[INFO] presets: applied preset '{s}' ({s}), {d} areas / {d} flags now\n", .{ name, if (merge) "merge" else "replace", area_types.count(), poly_flags.count() });
+}
+
 /// finished persistence layer (scene_container.saveScene). READ-ONLY w.r.t. live state:
 /// it only reads `geom` + the built navmesh and writes files. Errors are caught and
 /// logged (never propagated to a crash). Solo sample only.
