@@ -20,4 +20,5 @@ test {
     _ = @import("edit/edit_op.zig");
     _ = @import("edit/selection.zig");
     _ = @import("edit/snap.zig");
+    _ = @import("edit/clipboard.zig");
 }
