@@ -2259,9 +2259,6 @@ pub fn main(main_init: std.process.Init) !void {
             if (dvui.clickedEx(canvas.data(), .{ .rect = cr })) |ev| {
                 if (ev == .mouse and cr.contains(ev.mouse.p)) {
                     click_world = minimap.mapToWorld(ev.mouse.p.x, ev.mouse.p.y, bminx, bminz, bmaxx, bmaxz, cr.x, cr.y, cr.w, cr.h);
-                    // DIAG (DPI miss-click): report the click px, the canvas physical
-                    // rect, and the mapped world so a mismatch can be pinpointed.
-                    std.debug.print("[MINIMAP] click=({d:.1},{d:.1}) rect=(x{d:.1} y{d:.1} w{d:.1} h{d:.1}) -> world=({d:.2},{d:.2})  cursorOS=({d:.1},{d:.1})\n", .{ ev.mouse.p.x, ev.mouse.p.y, cr.x, cr.y, cr.w, cr.h, click_world.?[0], click_world.?[1], cur[0], cur[1] });
                 }
             }
             canvas.deinit();
@@ -2315,23 +2312,37 @@ pub fn main(main_init: std.process.Init) !void {
                 minimap.dot(p[0], p[1], 5, .{ .r = 255, .g = 150, .b = 0, .a = 255 });
             }
 
-            // Camera position + heading arrow (yellow). Heading = view-forward XZ.
+            // Camera marker (yellow). The marker shows where the camera is LOOKING
+            // (its forward ray hit on the scene mid-height plane), NOT the eye — so a
+            // minimap click+fly-to lands the marker ON the clicked point (the eye is
+            // pulled back, which made the marker look "off" from the click). Falls
+            // back to the eye XZ when the view is near-horizontal (no ground hit).
             {
-                const cp = minimap.worldToMap(cam.pos.x, cam.pos.z, bminx, bminz, bmaxx, bmaxz, cr.x, cr.y, cr.w, cr.h);
                 const yellow = dvui.Color{ .r = 255, .g = 235, .b = 0, .a = 255 };
-                minimap.dot(cp[0], cp[1], 7, yellow);
-                // view-forward (camera looks along -Z in view space): rows of view().
                 const vmat = cam.view();
                 // forward world dir = -(third row of rotation) -> (-m2, -m6, -m10).
-                var fx = -vmat.m[2];
-                var fz = -vmat.m[10];
-                const fl = @sqrt(fx * fx + fz * fz);
-                if (fl > 1e-4) {
-                    fx /= fl;
-                    fz /= fl;
-                    // arrow length in px; XZ -> screen px (world +Z maps screen-down).
+                var fwx = -vmat.m[2];
+                const fwy = -vmat.m[6];
+                var fwz = -vmat.m[10];
+                const ymid = (geom.bmin[1] + geom.bmax[1]) * 0.5;
+                var look_x = cam.pos.x;
+                var look_z = cam.pos.z;
+                if (@abs(fwy) > 1e-3) {
+                    const t = (ymid - cam.pos.y) / fwy;
+                    if (t > 0) {
+                        look_x = cam.pos.x + fwx * t;
+                        look_z = cam.pos.z + fwz * t;
+                    }
+                }
+                const cp = minimap.worldToMap(look_x, look_z, bminx, bminz, bmaxx, bmaxz, cr.x, cr.y, cr.w, cr.h);
+                minimap.dot(cp[0], cp[1], 7, yellow);
+                // heading arrow from the look point along the view-forward XZ.
+                const fl2 = @sqrt(fwx * fwx + fwz * fwz);
+                if (fl2 > 1e-4) {
+                    fwx /= fl2;
+                    fwz /= fl2;
                     const al: f32 = 16;
-                    minimap.line(cp[0], cp[1], cp[0] + fx * al, cp[1] + fz * al, yellow, 2.0);
+                    minimap.line(cp[0], cp[1], cp[0] + fwx * al, cp[1] + fwz * al, yellow, 2.0);
                 }
             }
 
