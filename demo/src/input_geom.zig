@@ -54,6 +54,23 @@ pub const InputGeom = struct {
     /// holding an off_id never aliases a different connection after delete+add.
     next_off_id: u32 = 1000,
 
+    /// F5 live-preview override. While a single convex volume is being edited in
+    /// the inspector, `preview_id` is set to its id and `preview_vol` holds the
+    /// STAGED (uncommitted) value. drawConvexVolumes draws preview_vol in place of
+    /// the committed volume, so mode/height/band/area edits show live in 3D WITHOUT
+    /// mutating geom (no navmesh rebuild until Apply). null = no preview active.
+    preview_id: ?u32 = null,
+    preview_vol: ConvexVolume = .{},
+
+    /// Resolve the volume to DRAW for `vc`: the staged preview when its id is the
+    /// one under edit, else the committed volume itself. Read-only.
+    fn previewed(self: *const InputGeom, vc: *const ConvexVolume) *const ConvexVolume {
+        if (self.preview_id) |pid| {
+            if (pid == vc.id) return &self.preview_vol;
+        }
+        return vc;
+    }
+
     pub fn init(alloc: std.mem.Allocator) InputGeom {
         return .{
             .alloc = alloc,
@@ -302,7 +319,8 @@ pub const InputGeom = struct {
         dd.depthMask(false);
 
         dd.begin(.tris, 1.0);
-        for (self.volumes.items) |*vol| {
+        for (self.volumes.items) |*vc| {
+            const vol = self.previewed(vc);
             const n: usize = @intCast(vol.nverts);
             const b = VolumeBand.init(vol);
             const col = D.transCol(dd.areaToCol(vol.area), 32);
@@ -337,7 +355,8 @@ pub const InputGeom = struct {
         dd.end();
 
         dd.begin(.lines, 2.0);
-        for (self.volumes.items) |*vol| {
+        for (self.volumes.items) |*vc| {
+            const vol = self.previewed(vc);
             const n: usize = @intCast(vol.nverts);
             const b = VolumeBand.init(vol);
             const col = D.transCol(dd.areaToCol(vol.area), 220);
@@ -359,7 +378,8 @@ pub const InputGeom = struct {
         dd.end();
 
         dd.begin(.points, 3.0);
-        for (self.volumes.items) |*vol| {
+        for (self.volumes.items) |*vc| {
+            const vol = self.previewed(vc);
             const n: usize = @intCast(vol.nverts);
             const b = VolumeBand.init(vol);
             const col = D.darkenCol(D.transCol(dd.areaToCol(vol.area), 220));

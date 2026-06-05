@@ -152,7 +152,7 @@ pub fn main(main_init: std.process.Init) !void {
     // С дефолтным LESS совпадающие фрагменты проигрывают z-тест -> навмеш невидим/мерцает.
     zgl.depthFunc(.less_or_equal);
     zgl.enable(.multisample); // 4x MSAA сглаживает копланарные швы граней вокселей (как RecastDemo)
-    std.debug.print("[GL] samples={d} BUILD_MARKER=props-fix-v6 renderer={s} vendor={s}\n", .{ zgl.getInteger(.samples), zgl.getString(.renderer) orelse "?", zgl.getString(.vendor) orelse "?" });
+    std.debug.print("[GL] samples={d} BUILD_MARKER=props-live-v7 renderer={s} vendor={s}\n", .{ zgl.getInteger(.samples), zgl.getString(.renderer) orelse "?", zgl.getString(.vendor) orelse "?" });
     zgl.enable(.blend);
     zgl.blendFunc(.src_alpha, .one_minus_src_alpha);
 
@@ -1064,6 +1064,28 @@ pub fn main(main_init: std.process.Init) !void {
         const aspect: f32 = @as(f32, @floatFromInt(fb[0])) / @as(f32, @floatFromInt(fb[1]));
         dd_gl.setMvp(cam.proj(aspect).mul(cam.view()).m);
         dd_gl.setViewport(fb[0], fb[1]);
+
+        // F5 LIVE PREVIEW: while a single convex volume is selected in Select/Edit
+        // and its inspector staging is seeded, draw it from the STAGED (uncommitted)
+        // values so mode/height/band/area edits show live in 3D — WITHOUT mutating
+        // geom or rebuilding the navmesh (Apply does that). Recomputed every frame
+        // from the persisted staging; cleared otherwise. (1-frame lag vs the slider
+        // is invisible under continuous redraw.)
+        geom.preview_id = null;
+        if (active_tool == .select and selection.volumes.items.len == 1 and
+            selection.offmesh.items.len == 0 and inspect_is_volume)
+        {
+            const pid = selection.volumes.items[0];
+            if (inspect_id == pid) { // staging is seeded for THIS volume
+                for (geom.volumes.items) |*v| {
+                    if (v.id == pid) {
+                        geom.preview_id = pid;
+                        geom.preview_vol = inspector.buildAfterVolume(v.*, inspect_vol);
+                        break;
+                    }
+                }
+            }
+        }
 
         switch (sample_kind) {
             .solo => solo.render(),
