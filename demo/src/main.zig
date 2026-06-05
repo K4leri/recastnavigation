@@ -334,6 +334,21 @@ pub fn main(main_init: std.process.Init) !void {
     var show_flags: bool = false; // the Poly Flags manager window (hidden by default)
     var test_choice: usize = 0;
 
+    // --- Diagnostics: each heavy panel lives in its OWN floating window (toggled
+    // by a checkbox in Properties → "Diagnostics"). Moved out of the Properties
+    // scrollArea so the rows are not horizontally truncated. Default rects cascade
+    // into the centre free area (Tools is left, Properties right, Log bottom);
+    // wide (~440) so Build Inspector rows fit. Movable + resizable — these rect
+    // vars persist user drags between frames.
+    var show_validation: bool = false; // Validation (G1/G2) window
+    var show_capture: bool = false; // Capture controls window
+    const diag_base_x: f32 = 270; // tools column (250) + pad
+    var build_inspector_win_rect: dvui.Rect = .{ .x = diag_base_x + 0, .y = 40, .w = 440, .h = 360 };
+    var profiler_win_rect: dvui.Rect = .{ .x = diag_base_x + 30, .y = 70, .w = 440, .h = 360 };
+    var memory_win_rect: dvui.Rect = .{ .x = diag_base_x + 60, .y = 100, .w = 440, .h = 300 };
+    var validation_win_rect: dvui.Rect = .{ .x = diag_base_x + 90, .y = 130, .w = 440, .h = 380 };
+    var capture_win_rect: dvui.Rect = .{ .x = diag_base_x + 120, .y = 160, .w = 440, .h = 280 };
+
     // bench-режим (--bench): камера крутится на 360°, без idle/cap, фикс число
     // кадров, затем печать средней нагрузки. Для профилирования под нагрузкой.
     var bench = false;
@@ -1561,29 +1576,18 @@ pub fn main(main_init: std.process.Init) !void {
             // a red "rebuild needed" notice is drawn bottom-left (see below).
             _ = dvui.checkbox(@src(), &area_types.auto_rebuild, "Auto-rebuild on changes", .{});
 
-            // Build Inspector (B-1): per-stage counters + timings. Solo only — Tile/Temp
-            // lack the full single-pass intermediate set.
-            if (show_build_inspector) {
-                if (sample_kind == .solo) {
-                    solo.drawBuildInspector();
-                } else {
-                    ui.section(@src(), "Build Inspector");
-                    dvui.labelNoFmt(@src(), "Solo sample only.", .{}, .{ .id_extra = 7401 });
-                }
-            }
+            // --- Diagnostics (toggles) ---
+            // Each diagnostic panel now lives in its OWN movable/resizable floating
+            // window (built after the three primary windows below). The checkboxes
+            // stay HERE in Properties; only the heavy content moved out so the rows
+            // are no longer horizontally truncated. Closing a window's X unchecks
+            // its box (windowHeader openflag wired to the same bool).
+            ui.section(@src(), "Diagnostics");
             _ = dvui.checkbox(@src(), &show_build_inspector, "Build Inspector", .{ .id_extra = 7402 });
-
-            // Build Profiler + Run History (C1): stage breakdown table + stacked
-            // bar + total_ms sparkline over the last N=16 builds. Solo only.
-            if (solo.show_profiler) {
-                if (sample_kind == .solo) {
-                    solo.drawProfiler();
-                } else {
-                    ui.section(@src(), "Profiler");
-                    dvui.labelNoFmt(@src(), "Solo sample only.", .{}, .{ .id_extra = 7505 });
-                }
-            }
             _ = dvui.checkbox(@src(), &solo.show_profiler, "Profiler", .{ .id_extra = 7506 });
+            _ = dvui.checkbox(@src(), &solo.show_memory, "Memory", .{ .id_extra = 7507 });
+            _ = dvui.checkbox(@src(), &show_validation, "Validation", .{ .id_extra = 7508 });
+            _ = dvui.checkbox(@src(), &show_capture, "Capture", .{ .id_extra = 7509 });
 
             // --- Polygon Inspector (B-4) ---
             // Shows a structured table for the polygon last picked via the
@@ -1663,86 +1667,9 @@ pub fn main(main_init: std.process.Init) !void {
                 }
             }
 
-            // --- Validation (G1): run the navmesh linter over the active sample's
-            // navMesh() and show counts + a scrollable findings list. The cached
-            // LintReport is freed before each re-lint and on teardown (null-after-
-            // free; no double-free). id_extra range 7550-7575.
-            {
-                ui.section(@src(), "Validation");
-                const active_nav: ?*recast.detour.NavMesh = switch (sample_kind) {
-                    .solo => solo.navMesh(),
-                    .tile => tile.navMesh(),
-                    .temp => temp.navMesh(),
-                };
-                var lrow = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal, .id_extra = 7550 });
-                if (dvui.button(@src(), "Lint NavMesh", .{ .grayed = active_nav == null }, .{ .id_extra = 7551 })) {
-                    if (active_nav) |nm| {
-                        if (lint_report) |*old| {
-                            old.deinit(main_init.gpa);
-                            lint_report = null; // null-after-free
-                        }
-                        lint_report = navmesh_lint.lint(nm, 0.02, main_init.gpa) catch null;
-                    }
-                }
-                _ = dvui.checkbox(@src(), &lint_highlight, "Highlight findings", .{ .id_extra = 7552, .gravity_y = 0.5 });
-                lrow.deinit();
-
-                if (lint_report) |*rep| {
-                    dvui.label(@src(), "errors: {d}   warnings: {d}   info: {d}", .{ rep.error_count, rep.warn_count, rep.info_count }, .{ .id_extra = 7553 });
-                    if (rep.findings.items.len == 0) {
-                        dvui.labelNoFmt(@src(), "No findings — navmesh is clean.", .{}, .{ .id_extra = 7554, .color_text = .{ .r = 140, .g = 220, .b = 140 } });
-                    } else {
-                        var fsc = dvui.scrollArea(@src(), .{}, .{ .expand = .horizontal, .min_size_content = .{ .h = 160 }, .id_extra = 7555 });
-                        for (rep.findings.items, 0..) |*f, fi| {
-                            const col: dvui.Color = switch (f.severity) {
-                                .err => .{ .r = 235, .g = 90, .b = 90 },
-                                .warn => .{ .r = 235, .g = 200, .b = 80 },
-                                .info => .{ .r = 150, .g = 190, .b = 235 },
-                            };
-                            const badge = switch (f.severity) {
-                                .err => "E",
-                                .warn => "W",
-                                .info => "I",
-                            };
-                            var rbuf: [128]u8 = undefined;
-                            const row = std.fmt.bufPrint(&rbuf, "[{s}] {s}: {s}", .{ badge, @tagName(f.rule), f.message() }) catch f.message();
-                            dvui.labelNoFmt(@src(), row, .{}, .{ .id_extra = 7556 + fi, .color_text = col });
-                        }
-                        fsc.deinit();
-                    }
-                } else {
-                    dvui.labelNoFmt(@src(), "Click \"Lint NavMesh\" to run the linter.", .{}, .{ .id_extra = 7554 });
-                }
-
-                // --- Integrity verifier (G2): structural data-structure
-                // invariants (freelist / link-refs / portal-symmetry / off-mesh /
-                // salt). The cached VerifyReport is freed before each re-verify
-                // and on teardown (null-after-free; no double-free). id_extra
-                // range 7580-7595.
-                if (dvui.button(@src(), "Verify Integrity", .{ .grayed = active_nav == null }, .{ .id_extra = 7580 })) {
-                    if (active_nav) |nm| {
-                        if (verify_report) |*old| {
-                            old.deinit(main_init.gpa);
-                            verify_report = null; // null-after-free
-                        }
-                        verify_report = navmesh_verify.verify(nm, main_init.gpa) catch null;
-                    }
-                }
-                if (verify_report) |*vrep| {
-                    if (vrep.ok) {
-                        dvui.labelNoFmt(@src(), "\u{2713} integrity OK", .{}, .{ .id_extra = 7581, .color_text = .{ .r = 140, .g = 220, .b = 140 } });
-                    } else {
-                        dvui.label(@src(), "integrity: {d} violation(s)", .{vrep.count}, .{ .id_extra = 7581, .color_text = .{ .r = 235, .g = 90, .b = 90 } });
-                        var vsc = dvui.scrollArea(@src(), .{}, .{ .expand = .horizontal, .min_size_content = .{ .h = 160 }, .id_extra = 7582 });
-                        for (vrep.violations.items, 0..) |*v, vi| {
-                            var vbuf: [160]u8 = undefined;
-                            const row = std.fmt.bufPrint(&vbuf, "[{s}] t{d}/p{d}/l{d}: {s}", .{ @tagName(v.invariant), v.tile, v.poly, v.link, v.message() }) catch v.message();
-                            dvui.labelNoFmt(@src(), row, .{}, .{ .id_extra = 7583 + vi, .color_text = .{ .r = 235, .g = 90, .b = 90 } });
-                        }
-                        vsc.deinit();
-                    }
-                }
-            }
+            // --- Validation (G1/G2) moved to its own floating window (toggle
+            // `show_validation`, built below). See the "Diagnostics" checkboxes
+            // above. ---
 
             // --- Scene persistence (.recastscene container) ---
             // Save only (Load is a follow-up). Solo sample only; reads geom + navmesh
@@ -1938,47 +1865,8 @@ pub fn main(main_init: std.process.Init) !void {
                 _ = dvui.checkbox(@src(), &grp.labels, "Show labels", .{ .id_extra = 361 });
             }
 
-            // --- Capture (cluster E, P2-1) ---
-            // Frame-count slider + mode radio {orbit|live} + output-dir text entry +
-            // Start/Stop. orbit reuses the bench orbit machinery (set bench=true on Start);
-            // live just grabs the current view each frame. Progress shown as done/total.
-            // id_extra 365..369 (after the 356..361 Layers range; ids 352..361 in use).
-            // PPM-only; reassemble with: ffmpeg -i <dir>/frame_%05d.ppm out.mp4
-            ui.section(@src(), "Capture");
-            {
-                ui.sliderInt(@src(), "frames {d:.0}", &capture_ui_frames, 1, 600);
-                {
-                    var row = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
-                    defer row.deinit();
-                    if (ui.radio(@src(), capture_state.mode == .orbit, "orbit", 365)) capture_state.mode = .orbit;
-                    if (ui.radio(@src(), capture_state.mode == .live, "live", 366)) capture_state.mode = .live;
-                }
-                {
-                    // Dir text entry — gated so typing here doesn't drive the camera/hotkeys.
-                    var te = dvui.textEntry(@src(), .{ .text = .{ .buffer = &capture_ui_dir } }, .{ .expand = .horizontal, .id_extra = 367 });
-                    te.deinit();
-                }
-                if (capture_state.active) {
-                    dvui.label(@src(), "capturing {d}/{d}", .{ capture_state.done, capture_state.total }, .{ .id_extra = 368 });
-                    if (dvui.button(@src(), "Stop", .{}, .{ .id_extra = 369 })) {
-                        capture_state.active = false; // mid-capture stop: no leak (per-frame defers freed buffers)
-                        capture_manifest.clearRetainingCapacity(); // drop the aborted run's partial lines
-                        if (capture_state.mode == .orbit) bench = false;
-                    }
-                } else {
-                    if (dvui.button(@src(), "Start", .{}, .{ .id_extra = 369 })) {
-                        const dir_s = std.mem.sliceTo(&capture_ui_dir, 0);
-                        if (dir_s.len > 0) {
-                            capture_manifest.clearRetainingCapacity();
-                            capture_state.start(dir_s, @intFromFloat(capture_ui_frames), capture_state.mode);
-                            if (capture_state.mode == .orbit) {
-                                bench = true; // sweep 360° via the orbit machinery
-                                bench_started = false; // re-seed the orbit center from current geom
-                            }
-                        }
-                    }
-                }
-            }
+            // --- Capture (cluster E, P2-1) moved to its own floating window
+            // (toggle `show_capture`, built below). See "Diagnostics" above. ---
 
             ui.section(@src(), "Debug Settings");
             switch (sample_kind) {
@@ -1999,6 +1887,179 @@ pub fn main(main_init: std.process.Init) !void {
             const n = bctx.getLogCount();
             while (i < n) : (i += 1) {
                 dvui.labelNoFmt(@src(), bctx.getLogText(i), .{}, .{ .id_extra = i });
+            }
+        }
+
+        // =====================================================================
+        // Diagnostic windows (declutter: moved OUT of the Properties scrollArea).
+        // Built AFTER the three primary windows so they layer on top; toggled by
+        // the "Diagnostics" checkboxes in Properties. Each is movable + resizable
+        // (resize = .all) and nudges off other windows (window_avoid = .nudge);
+        // its rect var persists user drags. windowHeader's openflag = the same
+        // toggle bool, so the window's X unchecks the box. Default rects cascade
+        // into the centre free area, width ~440 so Build Inspector rows fit.
+        // =====================================================================
+
+        // --- Build Inspector (B-1/B-2): Solo only ---
+        if (show_build_inspector) {
+            var fw = dvui.floatingWindow(@src(), .{ .rect = &build_inspector_win_rect, .resize = .all, .window_avoid = .nudge, .open_flag = &show_build_inspector }, .{ .id_extra = 20 });
+            defer fw.deinit();
+            _ = dvui.windowHeader("Build Inspector", "", &show_build_inspector);
+            var sc = dvui.scrollArea(@src(), .{}, .{ .expand = .both });
+            defer sc.deinit();
+            if (sample_kind == .solo) {
+                solo.drawBuildInspector();
+            } else {
+                dvui.labelNoFmt(@src(), "Solo sample only.", .{}, .{ .id_extra = 7401 });
+            }
+        }
+
+        // --- Profiler (C1): Solo only ---
+        if (solo.show_profiler) {
+            var fw = dvui.floatingWindow(@src(), .{ .rect = &profiler_win_rect, .resize = .all, .window_avoid = .nudge, .open_flag = &solo.show_profiler }, .{ .id_extra = 21 });
+            defer fw.deinit();
+            _ = dvui.windowHeader("Profiler", "", &solo.show_profiler);
+            var sc = dvui.scrollArea(@src(), .{}, .{ .expand = .both });
+            defer sc.deinit();
+            if (sample_kind == .solo) {
+                solo.drawProfiler();
+            } else {
+                dvui.labelNoFmt(@src(), "Solo sample only.", .{}, .{ .id_extra = 7505 });
+            }
+        }
+
+        // --- Memory (C3): works for all samples ---
+        if (solo.show_memory) {
+            var fw = dvui.floatingWindow(@src(), .{ .rect = &memory_win_rect, .resize = .all, .window_avoid = .nudge, .open_flag = &solo.show_memory }, .{ .id_extra = 22 });
+            defer fw.deinit();
+            _ = dvui.windowHeader("Memory", "", &solo.show_memory);
+            var sc = dvui.scrollArea(@src(), .{}, .{ .expand = .both });
+            defer sc.deinit();
+            switch (sample_kind) {
+                .solo => solo.drawMemory(),
+                .tile => tile.drawMemory(),
+                .temp => temp.drawMemory(),
+            }
+        }
+
+        // --- Validation (G1 linter + G2 integrity verifier): all samples ---
+        if (show_validation) {
+            var fw = dvui.floatingWindow(@src(), .{ .rect = &validation_win_rect, .resize = .all, .window_avoid = .nudge, .open_flag = &show_validation }, .{ .id_extra = 23 });
+            defer fw.deinit();
+            _ = dvui.windowHeader("Validation", "", &show_validation);
+            var sc = dvui.scrollArea(@src(), .{}, .{ .expand = .both });
+            defer sc.deinit();
+
+            const active_nav: ?*recast.detour.NavMesh = switch (sample_kind) {
+                .solo => solo.navMesh(),
+                .tile => tile.navMesh(),
+                .temp => temp.navMesh(),
+            };
+            var lrow = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal, .id_extra = 7550 });
+            if (dvui.button(@src(), "Lint NavMesh", .{ .grayed = active_nav == null }, .{ .id_extra = 7551 })) {
+                if (active_nav) |nm| {
+                    if (lint_report) |*old| {
+                        old.deinit(main_init.gpa);
+                        lint_report = null; // null-after-free
+                    }
+                    lint_report = navmesh_lint.lint(nm, 0.02, main_init.gpa) catch null;
+                }
+            }
+            _ = dvui.checkbox(@src(), &lint_highlight, "Highlight findings", .{ .id_extra = 7552, .gravity_y = 0.5 });
+            lrow.deinit();
+
+            if (lint_report) |*rep| {
+                dvui.label(@src(), "errors: {d}   warnings: {d}   info: {d}", .{ rep.error_count, rep.warn_count, rep.info_count }, .{ .id_extra = 7553 });
+                if (rep.findings.items.len == 0) {
+                    dvui.labelNoFmt(@src(), "No findings — navmesh is clean.", .{}, .{ .id_extra = 7554, .color_text = .{ .r = 140, .g = 220, .b = 140 } });
+                } else {
+                    var fsc = dvui.scrollArea(@src(), .{}, .{ .expand = .horizontal, .min_size_content = .{ .h = 160 }, .id_extra = 7555 });
+                    for (rep.findings.items, 0..) |*f, fi| {
+                        const col: dvui.Color = switch (f.severity) {
+                            .err => .{ .r = 235, .g = 90, .b = 90 },
+                            .warn => .{ .r = 235, .g = 200, .b = 80 },
+                            .info => .{ .r = 150, .g = 190, .b = 235 },
+                        };
+                        const badge = switch (f.severity) {
+                            .err => "E",
+                            .warn => "W",
+                            .info => "I",
+                        };
+                        var rbuf: [128]u8 = undefined;
+                        const row = std.fmt.bufPrint(&rbuf, "[{s}] {s}: {s}", .{ badge, @tagName(f.rule), f.message() }) catch f.message();
+                        dvui.labelNoFmt(@src(), row, .{}, .{ .id_extra = 7556 + fi, .color_text = col });
+                    }
+                    fsc.deinit();
+                }
+            } else {
+                dvui.labelNoFmt(@src(), "Click \"Lint NavMesh\" to run the linter.", .{}, .{ .id_extra = 7554 });
+            }
+
+            if (dvui.button(@src(), "Verify Integrity", .{ .grayed = active_nav == null }, .{ .id_extra = 7580 })) {
+                if (active_nav) |nm| {
+                    if (verify_report) |*old| {
+                        old.deinit(main_init.gpa);
+                        verify_report = null; // null-after-free
+                    }
+                    verify_report = navmesh_verify.verify(nm, main_init.gpa) catch null;
+                }
+            }
+            if (verify_report) |*vrep| {
+                if (vrep.ok) {
+                    dvui.labelNoFmt(@src(), "\u{2713} integrity OK", .{}, .{ .id_extra = 7581, .color_text = .{ .r = 140, .g = 220, .b = 140 } });
+                } else {
+                    dvui.label(@src(), "integrity: {d} violation(s)", .{vrep.count}, .{ .id_extra = 7581, .color_text = .{ .r = 235, .g = 90, .b = 90 } });
+                    var vsc = dvui.scrollArea(@src(), .{}, .{ .expand = .horizontal, .min_size_content = .{ .h = 160 }, .id_extra = 7582 });
+                    for (vrep.violations.items, 0..) |*v, vi| {
+                        var vbuf: [160]u8 = undefined;
+                        const row = std.fmt.bufPrint(&vbuf, "[{s}] t{d}/p{d}/l{d}: {s}", .{ @tagName(v.invariant), v.tile, v.poly, v.link, v.message() }) catch v.message();
+                        dvui.labelNoFmt(@src(), row, .{}, .{ .id_extra = 7583 + vi, .color_text = .{ .r = 235, .g = 90, .b = 90 } });
+                    }
+                    vsc.deinit();
+                }
+            }
+        }
+
+        // --- Capture (cluster E, P2-1): all samples. PPM-only; reassemble with:
+        // ffmpeg -i <dir>/frame_%05d.ppm out.mp4 ---
+        if (show_capture) {
+            var fw = dvui.floatingWindow(@src(), .{ .rect = &capture_win_rect, .resize = .all, .window_avoid = .nudge, .open_flag = &show_capture }, .{ .id_extra = 24 });
+            defer fw.deinit();
+            _ = dvui.windowHeader("Capture", "", &show_capture);
+            var sc = dvui.scrollArea(@src(), .{}, .{ .expand = .both });
+            defer sc.deinit();
+
+            ui.sliderInt(@src(), "frames {d:.0}", &capture_ui_frames, 1, 600);
+            {
+                var row = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
+                defer row.deinit();
+                if (ui.radio(@src(), capture_state.mode == .orbit, "orbit", 365)) capture_state.mode = .orbit;
+                if (ui.radio(@src(), capture_state.mode == .live, "live", 366)) capture_state.mode = .live;
+            }
+            {
+                // Dir text entry — gated so typing here doesn't drive the camera/hotkeys.
+                var te = dvui.textEntry(@src(), .{ .text = .{ .buffer = &capture_ui_dir } }, .{ .expand = .horizontal, .id_extra = 367 });
+                te.deinit();
+            }
+            if (capture_state.active) {
+                dvui.label(@src(), "capturing {d}/{d}", .{ capture_state.done, capture_state.total }, .{ .id_extra = 368 });
+                if (dvui.button(@src(), "Stop", .{}, .{ .id_extra = 369 })) {
+                    capture_state.active = false; // mid-capture stop: no leak (per-frame defers freed buffers)
+                    capture_manifest.clearRetainingCapacity(); // drop the aborted run's partial lines
+                    if (capture_state.mode == .orbit) bench = false;
+                }
+            } else {
+                if (dvui.button(@src(), "Start", .{}, .{ .id_extra = 369 })) {
+                    const dir_s = std.mem.sliceTo(&capture_ui_dir, 0);
+                    if (dir_s.len > 0) {
+                        capture_manifest.clearRetainingCapacity();
+                        capture_state.start(dir_s, @intFromFloat(capture_ui_frames), capture_state.mode);
+                        if (capture_state.mode == .orbit) {
+                            bench = true; // sweep 360° via the orbit machinery
+                            bench_started = false; // re-seed the orbit center from current geom
+                        }
+                    }
+                }
             }
         }
 

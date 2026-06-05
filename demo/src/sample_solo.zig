@@ -79,6 +79,7 @@ pub const SampleSolo = struct {
     // index into the history for the table/bar (default newest when null).
     profile_history: profiler.History = .{},
     show_profiler: bool = false,
+    show_memory: bool = false, // toggles the standalone Memory floating window
     profiler_sel: f32 = 0, // выбранный элемент истории (слайдер 0..len-1)
 
     // Build Artifact Detectors (B-3): cached report from the last "Scan artifacts"
