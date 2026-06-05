@@ -42,6 +42,13 @@ const TILE_SIZE: f32 = 6.0; // world units per tile (~20 cells @ cs=0.3)
 /// rebuildTile relies on.
 fn buildFlatTile(allocator: std.mem.Allocator, tx: i32, tz: i32) ![]u8 {
     var ctx = nav.Context.init(allocator);
+    // Silence the per-stage [PROGRESS] log spam. buildFlatTile runs the full
+    // recast pipeline 5x in this test; with logging on (the default) that emits
+    // hundreds of lines to stderr. Under `zig build test-integration` the test
+    // runs via `--listen=-`, where the build server captures the child's stderr
+    // over a pipe — the extra noise is pure overhead and only adds pressure to
+    // that capture path. The build itself is what we verify, not the log.
+    ctx.enableLog(false);
 
     const ox = @as(f32, @floatFromInt(tx)) * TILE_SIZE;
     const oz = @as(f32, @floatFromInt(tz)) * TILE_SIZE;
