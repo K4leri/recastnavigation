@@ -27,8 +27,12 @@ const InputGeom = ig.InputGeom;
 const ConvexVolume = ig.ConvexVolume;
 const area_types = @import("../area_types.zig");
 const poly_flags = @import("../poly_flags.zig");
+const registry_io = @import("../persist/registry_io.zig");
 const AreaType = area_types.AreaType;
 const Flag = poly_flags.Flag;
+
+// Note on import cycle: registry_io imports area_types/poly_flags (and
+// write_atomic/checksum), but NOT edit_op — so importing it here is acyclic.
 
 /// After any area-type / poly-flag mutation (apply or revert) the registries that
 /// feed baked tile data + the live query filters have changed: signal both a
@@ -123,6 +127,22 @@ pub const EditOp = union(enum) {
     /// A poly flag at bit `bit_index` was removed. apply removes, revert restores it.
     flag_remove: struct { bit_index: usize, flag: Flag },
 
+    // --- Whole-registry snapshot (preset apply) -------------------------------
+    /// Makes ANY whole-registry change (e.g. applying an area/flag PRESET) undo-able
+    /// by snapshotting the SERIALIZED registry blobs before and after the change.
+    /// apply/revert simply deserialize the relevant blobs back into the module-global
+    /// registries (deserialize == REPLACE). Owns its four heap slices; `deinit` frees
+    /// each exactly once. Single ownership: the op lives in exactly one UndoStack ring
+    /// slot at a time (moves are by value copy), so the four slices are freed exactly
+    /// once — no double-free across ring moves.
+    registry_snapshot: struct {
+        before_areas: []u8,
+        after_areas: []u8,
+        before_flags: []u8,
+        after_flags: []u8,
+        alloc: std.mem.Allocator,
+    },
+
     // --- Composite (group) edit -----------------------------------------------
     /// A group of sub-edits recorded / undone / redone as ONE unit (feature F3).
     /// Owns its `ops` slice on the heap; `apply` runs them FORWARD, `revert` runs
@@ -177,6 +197,13 @@ pub const EditOp = union(enum) {
                 poly_flags.removeFlag(f.bit_index);
                 // Flag DEFINITIONS do not touch baked tile data — no rebuild needed.
             },
+            .registry_snapshot => |s| {
+                // Redo: deserialize the AFTER blobs (deserialize == REPLACE globals).
+                // Flags BEFORE areas (area.flags references flag bits — load invariant).
+                _ = registry_io.deserializeFlags(s.after_flags) catch {};
+                _ = registry_io.deserializeAreas(s.after_areas) catch {};
+                markAreaDirty();
+            },
             .composite => |c| {
                 // Redo the group: replay sub-ops in FORWARD order.
                 for (c.ops) |op| op.apply(geom);
@@ -230,6 +257,13 @@ pub const EditOp = union(enum) {
                 poly_flags.restoreFlag(f.bit_index, f.flag.name(), f.flag.builtin);
                 // Flag DEFINITIONS do not touch baked tile data — no rebuild needed.
             },
+            .registry_snapshot => |s| {
+                // Undo: deserialize the BEFORE blobs back into the globals.
+                // Flags BEFORE areas (area.flags references flag bits — load invariant).
+                _ = registry_io.deserializeFlags(s.before_flags) catch {};
+                _ = registry_io.deserializeAreas(s.before_areas) catch {};
+                markAreaDirty();
+            },
             .composite => |c| {
                 // Undo the group: revert sub-ops in REVERSE order so paired
                 // inserts/deletes unwind in the inverse sequence they applied.
@@ -254,6 +288,13 @@ pub const EditOp = union(enum) {
                 for (c.ops) |*op| op.deinit();
                 c.alloc.free(c.ops);
             },
+            .registry_snapshot => |*s| {
+                // Free all four owned blobs exactly once.
+                s.alloc.free(s.before_areas);
+                s.alloc.free(s.after_areas);
+                s.alloc.free(s.before_flags);
+                s.alloc.free(s.after_flags);
+            },
             else => {},
         }
     }
@@ -272,6 +313,7 @@ pub const EditOp = union(enum) {
             .area_remove => "Remove Area Type",
             .flag_add => "Add Poly Flag",
             .flag_remove => "Remove Poly Flag",
+            .registry_snapshot => "Apply Preset",
             .composite => "Group Edit",
         };
     }
@@ -282,4 +324,23 @@ pub const EditOp = union(enum) {
 /// op frees it in `deinit`.
 pub fn makeComposite(alloc: std.mem.Allocator, ops: []EditOp) EditOp {
     return .{ .composite = .{ .ops = ops, .alloc = alloc } };
+}
+
+/// Wrap four already-heap-allocated serialized registry blobs into a
+/// `registry_snapshot` EditOp. The caller transfers ownership of all four slices
+/// (each allocated from `alloc`); the resulting op frees them in `deinit`.
+pub fn makeRegistrySnapshot(
+    alloc: std.mem.Allocator,
+    before_areas: []u8,
+    after_areas: []u8,
+    before_flags: []u8,
+    after_flags: []u8,
+) EditOp {
+    return .{ .registry_snapshot = .{
+        .before_areas = before_areas,
+        .after_areas = after_areas,
+        .before_flags = before_flags,
+        .after_flags = after_flags,
+        .alloc = alloc,
+    } };
 }

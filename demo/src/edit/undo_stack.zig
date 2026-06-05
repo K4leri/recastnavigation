@@ -594,6 +594,59 @@ test "composite revert is reverse-order: two index-deletes re-insert in order" {
     try std.testing.expectEqual(id_c, geom.volumes.items[0].id);
 }
 
+const registry_io = @import("../persist/registry_io.zig");
+
+test "registry_snapshot: undo restores pre-change registry, redo re-applies (no leak)" {
+    const edit_op = @import("edit_op.zig");
+    const alloc = std.testing.allocator;
+    var geom = InputGeom.init(alloc);
+    defer geom.deinit();
+    var st = UndoStack.init(alloc);
+    defer st.deinit();
+
+    area_types.resetToBuiltins();
+    poly_flags.resetToBuiltins();
+
+    // BEFORE: serialize the pristine builtin registries.
+    var before_a = try registry_io.serializeAreas(alloc);
+    const before_areas = try before_a.toOwnedSlice();
+    var before_f = try registry_io.serializeFlags(alloc);
+    const before_flags = try before_f.toOwnedSlice();
+
+    // Mutate: add a NEW area type ("Lava") + a new flag ("ladder").
+    const lava_id = area_types.addType().?;
+    area_types.get(lava_id).?.setName("Lava");
+    const ladder_bit = poly_flags.addFlag("ladder").?;
+    const ladder_idx: usize = @ctz(ladder_bit);
+
+    // AFTER: serialize the mutated registries.
+    var after_a = try registry_io.serializeAreas(alloc);
+    const after_areas = try after_a.toOwnedSlice();
+    var after_f = try registry_io.serializeFlags(alloc);
+    const after_flags = try after_f.toOwnedSlice();
+
+    // Record the snapshot op (takes ownership of the 4 blobs).
+    st.record(edit_op.makeRegistrySnapshot(alloc, before_areas, after_areas, before_flags, after_flags));
+
+    // The new type/flag exist right now (state == AFTER).
+    try std.testing.expect(area_types.get(lava_id) != null);
+    try std.testing.expect(poly_flags.get(ladder_idx) != null);
+
+    // Undo -> the new type/flag are GONE (registry == BEFORE).
+    try std.testing.expect(st.undo(&geom));
+    try std.testing.expectEqual(@as(?*area_types.AreaType, null), area_types.get(lava_id));
+    try std.testing.expectEqual(@as(?*poly_flags.Flag, null), poly_flags.get(ladder_idx));
+
+    // Redo -> they're back.
+    try std.testing.expect(st.redo(&geom));
+    try std.testing.expectEqualStrings("Lava", area_types.get(lava_id).?.name());
+    try std.testing.expectEqualStrings("ladder", poly_flags.get(ladder_idx).?.name());
+
+    // testing.allocator asserts no leak / no double-free of the 4 blobs on st.deinit().
+    area_types.resetToBuiltins();
+    poly_flags.resetToBuiltins();
+}
+
 test "ring eviction frees oldest, no leak" {
     var geom = InputGeom.init(std.testing.allocator);
     defer geom.deinit();
