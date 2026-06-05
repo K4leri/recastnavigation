@@ -1879,9 +1879,10 @@ pub fn main(main_init: std.process.Init) !void {
 
                 // Isolation mode radios (id_extra 346..348).
                 if (ui.radio(@src(), fl.iso_mode == .none, "Iso: none", 346)) fl.iso_mode = .none;
-                if (ui.radio(@src(), fl.iso_mode == .show_only, "Iso: show-only", 347)) fl.iso_mode = .show_only;
-                if (ui.radio(@src(), fl.iso_mode == .dim_others, "Iso: dim-others", 348)) fl.iso_mode = .dim_others;
+                if (ui.radio(@src(), fl.iso_mode == .show_only, "Iso: show-only (hide non-matching)", 347)) fl.iso_mode = .show_only;
+                if (ui.radio(@src(), fl.iso_mode == .dim_others, "Iso: dim-others (fade non-matching)", 348)) fl.iso_mode = .dim_others;
                 if (fl.iso_mode != .none) {
+                    dvui.labelNoFmt(@src(), "Pick a KEY + VALUE; polys whose key==value stay, the rest are hidden (show-only) or faded (dim-others). If the value matches NO polys, everything hides — check the value (e.g. tile must be a real (tx,ty); area must be a painted area id).", .{}, .{ .id_extra = 339 });
                     // Iso key radios (id_extra 349..351).
                     if (ui.radio(@src(), fl.iso_key == .tile, "by tile", 349)) fl.iso_key = .tile;
                     if (ui.radio(@src(), fl.iso_key == .area, "by area", 350)) fl.iso_key = .area;
