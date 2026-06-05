@@ -12,6 +12,7 @@ test {
     _ = @import("convex_surface.zig");
     _ = @import("render/color_scheme.zig");
     _ = @import("render/poly_visit.zig");
+    _ = @import("render/isolation.zig");
     _ = @import("persist/registry_io.zig");
     _ = @import("persist/scene_io.zig");
     _ = @import("persist/tile_store.zig");
