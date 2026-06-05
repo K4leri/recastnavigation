@@ -160,6 +160,17 @@ pub const InputGeom = struct {
     /// the import dispatcher (demo/src/io: STL/PLY/glTF) — the inline .obj path stays
     /// in loadMesh. Mirrors loadMesh's tail so all formats land in the same state.
     pub fn setMesh(self: *InputGeom, verts: []const f32, tris: []const i32) !void {
+        // Defence-in-depth (review I-1): validate every triangle index against the
+        // vertex count BEFORE computeNormals (which does unchecked v[a*3]). A hostile
+        // / malformed import (e.g. a glTF whose indices exceed its POSITION count)
+        // would otherwise OOB-panic here. Reject the whole mesh instead — protects
+        // ALL importers at the single sink, not just the validating ones (PLY/STL).
+        if (verts.len % 3 != 0) return error.InvalidMeshVerts;
+        const vert_count: i64 = @intCast(verts.len / 3);
+        for (tris) |idx| {
+            if (idx < 0 or idx >= vert_count) return error.InvalidMeshIndices;
+        }
+
         self.verts.clearRetainingCapacity();
         self.tris.clearRetainingCapacity();
         try self.verts.appendSlice(verts);

@@ -37,7 +37,17 @@ fn warn(comptime fmt: []const u8, args: anytype) void {
 /// Возвращает process exit-code (0 = успех). Не паникует на ошибках ввода.
 pub fn run(gpa: std.mem.Allocator, args: []const []const u8) u8 {
     if (args.len < 2) {
-        warn("usage: recast_demo <build|diff> ...\n", .{});
+        warn(
+            \\usage: recast_demo <subcommand> ...
+            \\  build    --geom <p> [--sample s] [--cfg k=v,...] --metrics <out|-> [--out-navmesh|obj|gltf|svg <p>]
+            \\  headless --config <run.json>     (geom+settings+queries+outputs in one file)
+            \\  batch    --geom <p> --matrix "k=v,v;..." --out <csv> [--queries <run.json>] [--out-json <p>]
+            \\  diff     --a <a.json> --b <b.json> [--eps <f>]   (exit 1 on divergence)
+            \\  bundle import <file.recastbundle>   (or pass a *.recastbundle path directly)
+            \\note: headless/batch report queries as "found" only when status == "ok"
+            \\      (a partial/failed path is NOT counted) -> nonzero exit if not all found.
+            \\
+        , .{});
         return 2;
     }
     const cmd = args[1];
@@ -53,7 +63,7 @@ pub fn run(gpa: std.mem.Allocator, args: []const []const u8) u8 {
         return 2;
     }
     if (std.mem.endsWith(u8, cmd, ".recastbundle")) return runBundleImport(gpa, cmd);
-    warn("unknown subcommand '{s}' (expected build|diff|bundle)\n", .{cmd});
+    warn("unknown subcommand '{s}' (expected build|headless|batch|diff|bundle|*.recastbundle)\n", .{cmd});
     return 2;
 }
 
