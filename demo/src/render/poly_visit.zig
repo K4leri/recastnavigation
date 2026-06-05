@@ -232,8 +232,8 @@ pub fn fillNavMeshFiltered(
     // --- Pass 2: outer-ring outline of every non-hidden poly ---
     dd.begin(.lines, 2.0);
 
-    for (0..@intCast(mesh.max_tiles)) |_ti| {
-        const tile = &mesh.tiles[_ti];
+    for (0..@intCast(mesh.max_tiles)) |ti| {
+        const tile = &mesh.tiles[ti];
         const hdr = tile.header orelse continue;
 
         for (0..@intCast(hdr.poly_count)) |i| {

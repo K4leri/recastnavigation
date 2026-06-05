@@ -1530,10 +1530,16 @@ pub fn main(main_init: std.process.Init) !void {
                 if (ui.radio(@src(), fl.clip_mode == .below, "Clip: below", 342)) fl.clip_mode = .below;
                 if (ui.radio(@src(), fl.clip_mode == .slab, "Clip: slab", 343)) fl.clip_mode = .slab;
                 if (fl.clip_mode != .off) {
-                    // Clip Y slider spans the scene's vertical bbox.
+                    // Clip Y slider spans the scene's vertical bbox. Only meaningful
+                    // once a mesh is loaded (otherwise bmin==bmax==0 -> a stuck,
+                    // misleading slider that would blank the navmesh at clip_y=0).
                     const y_lo = geom.bmin[1];
                     const y_hi = geom.bmax[1];
-                    _ = dvui.sliderEntry(@src(), "clip Y {d:.2}", .{ .value = &fl.clip_y, .min = y_lo, .max = y_hi, .interval = null }, .{ .expand = .horizontal, .id_extra = 344 });
+                    if (y_hi > y_lo) {
+                        _ = dvui.sliderEntry(@src(), "clip Y {d:.2}", .{ .value = &fl.clip_y, .min = y_lo, .max = y_hi, .interval = null }, .{ .expand = .horizontal, .id_extra = 344 });
+                    } else {
+                        dvui.label(@src(), "clip Y: load a mesh first", .{}, .{ .id_extra = 344 });
+                    }
                     if (fl.clip_mode == .slab)
                         _ = dvui.sliderEntry(@src(), "slab +-{d:.2}", .{ .value = &fl.slab_thickness, .min = 0.1, .max = 50, .interval = null }, .{ .expand = .horizontal, .id_extra = 345 });
                 }
@@ -1554,8 +1560,10 @@ pub fn main(main_init: std.process.Init) !void {
                             var ty: f32 = @floatFromInt(fl.iso_tile_y);
                             _ = dvui.sliderEntry(@src(), "tile x {d:.0}", .{ .value = &tx, .min = 0, .max = 64, .interval = 1 }, .{ .expand = .horizontal, .id_extra = 352 });
                             _ = dvui.sliderEntry(@src(), "tile y {d:.0}", .{ .value = &ty, .min = 0, .max = 64, .interval = 1 }, .{ .expand = .horizontal, .id_extra = 353 });
-                            fl.iso_tile_x = @intFromFloat(@round(tx));
-                            fl.iso_tile_y = @intFromFloat(@round(ty));
+                            // Clamp before the int cast (consistent with area/flags;
+                            // guards against a future widened slider range).
+                            fl.iso_tile_x = @intFromFloat(std.math.clamp(@round(tx), 0, 64));
+                            fl.iso_tile_y = @intFromFloat(std.math.clamp(@round(ty), 0, 64));
                         },
                         .area => {
                             // u8 area 0..63 via f32 proxy (id_extra 354).
