@@ -231,10 +231,11 @@ pub fn main(main_init: std.process.Init) !void {
     // When enabled and the scene is edited (convex/offmesh dirty or undo/redo),
     // a debounce countdown is (re)started. Once it reaches 0 a single save is
     // emitted to "<stem>__autosave.recastscene". ~45 frames ≈ 0.75 s at 60 fps.
-    var auto_save: bool = false;
+    var auto_save: bool = true; // on by default
     var autosave_countdown: i32 = 0; // counts down from AUTOSAVE_DELAY to 0
     var autosave_pending: bool = false; // true while a debounced save is in flight
     const AUTOSAVE_DELAY: i32 = 45;
+    var pending_delete: ?usize = null; // variant index awaiting delete confirmation
 
     // фикс-прямоугольники окон (как статичные окна RecastDemo по краям)
     var props_rect: dvui.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
@@ -921,15 +922,37 @@ pub fn main(main_init: std.process.Init) !void {
                         rebuildVariants(main_init.gpa, app.meshes_folder, cur_stem, &variants, &variants_stem, &bctx);
                     }
                 }
-                if (variants.len == 0) {
+                if (pending_delete) |pidx| {
+                    // Confirmation prompt (replaces the list until resolved).
+                    if (pidx < variants.len) {
+                        const dv = variants[pidx];
+                        var dbuf: [192]u8 = undefined;
+                        const dtxt = std.fmt.bufPrint(&dbuf, "Delete \"{s}\"? Permanently removes the saved scene.", .{dv.variant}) catch "Delete this variant permanently?";
+                        dvui.labelNoFmt(@src(), dtxt, .{}, .{});
+                        var crow = dvui.box(@src(), .{ .dir = .horizontal }, .{});
+                        defer crow.deinit();
+                        if (dvui.button(@src(), "Delete", .{}, .{ .id_extra = 5700 })) {
+                            deleteVariant(main_init.gpa, dv.path, &bctx);
+                            pending_delete = null;
+                            rebuildVariants(main_init.gpa, app.meshes_folder, cur_stem, &variants, &variants_stem, &bctx);
+                        }
+                        if (dvui.button(@src(), "Cancel", .{}, .{ .id_extra = 5701 })) {
+                            pending_delete = null;
+                        }
+                    } else {
+                        pending_delete = null; // list changed under us
+                    }
+                } else if (variants.len == 0) {
                     dvui.labelNoFmt(@src(), "(no saved variants)", .{}, .{});
                 } else {
-                    // Height fits the variant count (cap ~8 rows, scroll beyond), so a
-                    // short list shows no empty space — same idea as the Poly Flags window.
-                    const list_rows: f32 = @floatFromInt(@min(variants.len, 8));
+                    // Up to 5 rows tall; from the 6th variant on it scrolls (the box
+                    // does NOT keep growing — same height as for 5 entries).
+                    const list_rows: f32 = @floatFromInt(@min(variants.len, 5));
                     var vsc = dvui.scrollArea(@src(), .{}, .{ .expand = .horizontal, .min_size_content = .{ .h = list_rows * 30 } });
                     defer vsc.deinit();
                     for (variants, 0..) |v, vi| {
+                        var vrow = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal, .id_extra = vi });
+                        defer vrow.deinit();
                         // index 0 = newest -> highlighted as the default selection.
                         const lbl = if (vi == 0)
                             std.fmt.allocPrint(main_init.gpa, "{s}  (newest)", .{v.variant}) catch v.variant
@@ -938,6 +961,9 @@ pub fn main(main_init: std.process.Init) !void {
                         defer if (vi == 0 and lbl.ptr != v.variant.ptr) main_init.gpa.free(lbl);
                         if (dvui.button(@src(), lbl, .{}, .{ .id_extra = 5000 + vi, .expand = .horizontal })) {
                             loadSceneNow(main_init.gpa, app.meshes_folder, v.path, cur_name, &geom, &solo, &tile, &temp, &tester, &crowd_tool, &prune_tool, &cam, &bctx);
+                        }
+                        if (dvui.buttonIcon(@src(), "del", dvui.entypo.trash, .{}, .{}, .{ .id_extra = 5800 + vi, .gravity_y = 0.5 })) {
+                            pending_delete = vi;
                         }
                     }
                 }
@@ -1332,6 +1358,23 @@ fn variantOf(dir_name: []const u8, stem: []const u8) ?[]const u8 {
 }
 
 /// Free a variant cache slice + its remembered stem; reset both to empty.
+/// Permanently delete a scene-variant container directory. Guarded to only ever
+/// remove a path that ends in ".recastscene".
+fn deleteVariant(gpa: std.mem.Allocator, path: []const u8, bctx: *BuildContext) void {
+    if (!std.mem.endsWith(u8, path, ".recastscene")) {
+        bctx.context().log(.err, "Refused to delete non-scene path: {s}", .{path});
+        return;
+    }
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    std.Io.Dir.cwd().deleteTree(io, path) catch |e| {
+        bctx.context().log(.err, "Delete scene failed: {s}", .{@errorName(e)});
+        return;
+    };
+    bctx.context().log(.progress, "Deleted scene variant: {s}", .{path});
+}
+
 fn freeVariants(gpa: std.mem.Allocator, variants: *[]SceneVariant, stem: *[]const u8) void {
     for (variants.*) |v| {
         gpa.free(v.variant);
