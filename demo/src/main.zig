@@ -152,7 +152,7 @@ pub fn main(main_init: std.process.Init) !void {
     // С дефолтным LESS совпадающие фрагменты проигрывают z-тест -> навмеш невидим/мерцает.
     zgl.depthFunc(.less_or_equal);
     zgl.enable(.multisample); // 4x MSAA сглаживает копланарные швы граней вокселей (как RecastDemo)
-    std.debug.print("[GL] samples={d} BUILD_MARKER=props-live-v9 renderer={s} vendor={s}\n", .{ zgl.getInteger(.samples), zgl.getString(.renderer) orelse "?", zgl.getString(.vendor) orelse "?" });
+    std.debug.print("[GL] samples={d} BUILD_MARKER=props-live-v10 renderer={s} vendor={s}\n", .{ zgl.getInteger(.samples), zgl.getString(.renderer) orelse "?", zgl.getString(.vendor) orelse "?" });
     zgl.enable(.blend);
     zgl.blendFunc(.src_alpha, .one_minus_src_alpha);
 
@@ -1443,6 +1443,18 @@ pub fn main(main_init: std.process.Init) !void {
                                     if (inspect_vol.mode == .surface) {
                                         ui.slider(@src(), "band below {d:.2}", &inspect_vol.band_below, 0, bandmax);
                                         ui.slider(@src(), "band above {d:.2}", &inspect_vol.band_above, 0, bandmax);
+                                    }
+                                    // DIAG (FIX): dump ranges + staged values whenever any
+                                    // changes, to pin down the "values fly into space" jump.
+                                    {
+                                        const L = struct {
+                                            var last: [4]f32 = .{ -1e30, -1e30, -1e30, -1e30 };
+                                        };
+                                        const sv = [4]f32{ inspect_vol.hmin, inspect_vol.hmax, inspect_vol.band_below, inspect_vol.band_above };
+                                        if (sv[0] != L.last[0] or sv[1] != L.last[1] or sv[2] != L.last[2] or sv[3] != L.last[3]) {
+                                            L.last = sv;
+                                            std.debug.print("[INSP] bbox.y=[{d:.3}..{d:.3}] dy={d:.3} ypad={d:.3} range.y=[{d:.3}..{d:.3}] bandmax={d:.3} | hmin={d:.3} hmax={d:.3} bb={d:.3} ba={d:.3} live(hmin={d:.3} hmax={d:.3})\n", .{ geom.bmin[1], geom.bmax[1], dy, ypad, ylo, yhi, bandmax, inspect_vol.hmin, inspect_vol.hmax, inspect_vol.band_below, inspect_vol.band_above, live.hmin, live.hmax });
+                                        }
                                     }
                                     // Area dropdown — only `used` area types are offered.
                                     inspectorAreaDropdown(&inspect_vol.area);
