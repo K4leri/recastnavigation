@@ -17,6 +17,7 @@ const diagnose = @import("diag/diagnose.zig");
 const wnp = @import("diag/why_no_path.zig");
 const astar_player = @import("diag/astar_player.zig");
 const funnel = @import("diag/funnel.zig");
+const filter_compare = @import("diag/filter_compare.zig");
 
 const dt = recast.detour;
 const dbg = recast.debug;
@@ -149,10 +150,27 @@ pub const NavMeshTesterTool = struct {
     turn_refs: [MAX_POLYS]dt.PolyRef = undefined,
     nturn: usize = 0,
 
+    // --- Side-by-side filter comparison (cluster A, A4) ----------------------
+    // When ON (pathfind modes, both endpoints), run the SAME start/end route under
+    // up to 3 user-configured QueryFilters (each = an include/exclude mask pair +
+    // colour) and render each route in its colour with a legend (poly count + an
+    // approximate total cost + reaches Y/N). Recomputed ONLY on recalc / Run — the
+    // routes + results live in `compare`'s fixed scratch (no per-frame alloc).
+    // See diag/filter_compare.zig for the cost approximation (centroid-distance,
+    // reused from reachability.edgeWeight).
+    compare: filter_compare.Compare = undefined,
+
     pub fn init(alloc: std.mem.Allocator, dd_gl: *ddgl.DebugDrawGL) NavMeshTesterTool {
         var self = NavMeshTesterTool{ .alloc = alloc, .dd_gl = dd_gl, .filter = dt.QueryFilter.init() };
         self.applyFlags();
         area_types.applyCosts(&self.filter); // per-area movement cost from the registry
+        self.compare = filter_compare.Compare.init();
+        // Seed sensible defaults so the first toggle shows a meaningful diff:
+        // F1 = current include/exclude, F2 = same but exclude swim (water-free).
+        self.compare.variants[0].include = self.include_mask;
+        self.compare.variants[0].exclude = self.exclude_mask;
+        self.compare.variants[1].include = self.include_mask;
+        self.compare.variants[1].exclude = self.exclude_mask | PF.swim;
         return self;
     }
 
@@ -231,6 +249,27 @@ pub const NavMeshTesterTool = struct {
         self.nturn = nt;
     }
 
+    /// (Re)run the side-by-side filter comparison (A4) from the current start/end
+    /// under each enabled variant. Called ONLY from recalc (endpoints / filter
+    /// changed) and the "Run comparison" button — never per frame. No-op (clears
+    /// results) when the overlay is off or only meaningful in pathfind modes.
+    ///
+    /// Пересчёт сравнения фильтров. Только в recalc / по кнопке, не покадрово.
+    fn recomputeCompare(self: *NavMeshTesterTool) void {
+        if (!self.compare.on) {
+            for (&self.compare.results) |*r| r.* = .{};
+            return;
+        }
+        // Only the pathfind modes produce a start/end route to compare.
+        if (self.mode != .pathfind_follow and self.mode != .pathfind_straight and self.mode != .pathfind_sliced) {
+            for (&self.compare.results) |*r| r.* = .{};
+            return;
+        }
+        const q = self.query orelse return;
+        const nav = self.navmesh orelse return;
+        self.compare.run(q, nav, self.start_ref, self.end_ref, &self.spos, &self.epos, &self.filter);
+    }
+
     pub fn setNavMesh(self: *NavMeshTesterTool, nm: ?*dt.NavMesh) void {
         if (self.query) |q| {
             q.deinit();
@@ -243,6 +282,7 @@ pub const NavMeshTesterTool = struct {
         self.nturn = 0;
         self.spos_set = false;
         self.epos_set = false;
+        for (&self.compare.results) |*r| r.* = .{}; // stale routes can't apply to a new mesh
         self.freeHeatmap(); // stale heatmap can't apply to a new mesh
         // Reset the sliced-search player so a stale slice can't tick against the new
         // (freshly-initialised, never-sliced) query after a navmesh reload.
@@ -388,6 +428,12 @@ pub const NavMeshTesterTool = struct {
         // so this is the only place the funnel buffers are (re)built — never per
         // frame. render() only reads them.
         self.recomputeFunnel();
+
+        // Side-by-side filter comparison (A4): re-run the route under each enabled
+        // variant from the just-updated start/end. recalc fires exactly on the
+        // inputs that change the routes (click / flag / mode), so this is the only
+        // recompute site — never per frame. render() only reads the cached routes.
+        self.recomputeCompare();
     }
 
     /// Запускает живую диагностику why-no-path и сохраняет вердикт на инструменте.
@@ -674,6 +720,43 @@ pub const NavMeshTesterTool = struct {
         dd.depthMask(true);
     }
 
+    // ===== Side-by-side filter comparison (A4) ==============================
+
+    /// Draw each enabled variant's cached route as a coloured polyline joining the
+    /// route's poly centroids, raised +0.4 + 0.12*i in Y per variant so overlapping
+    /// corridors don't perfectly z-fight. Highlights the per-variant route polys in
+    /// the variant colour too (faint). Reads ONLY cached routes (recomputed in
+    /// recalc) — no queries here. Legend is panel text (drawCompareLegend).
+    ///
+    /// Рисует маршрут каждого варианта своим цветом (со смещением по Y).
+    fn drawCompare(self: *NavMeshTesterTool, dd: dbg.DebugDraw) void {
+        const nm = self.navmesh orelse return;
+        dd.depthMask(false);
+        for (&self.compare.variants, 0..) |*v, i| {
+            if (!v.enabled or !self.compare.results[i].valid) continue;
+            const r = self.compare.route(i);
+            if (r.len < 1) continue;
+            const yoff: f32 = 0.4 + 0.12 * @as(f32, @floatFromInt(i));
+            // faint poly fill in the variant colour (alpha already baked into v.color;
+            // re-tint lighter for the fill so it reads as "this filter's corridor").
+            const fill = (v.color & 0x00ffffff) | (@as(u32, 56) << 24);
+            for (r) |ref| dbg.debugDrawNavMeshPoly(dd, nm, ref, fill);
+            // polyline through centroids.
+            if (r.len > 1) {
+                dd.begin(.lines, 3.0);
+                var k: usize = 1;
+                while (k < r.len) : (k += 1) {
+                    const a = self.getPolyCenter(r[k - 1]);
+                    const b = self.getPolyCenter(r[k]);
+                    dd.vertexXYZ(a[0], a[1] + yoff, a[2], v.color);
+                    dd.vertexXYZ(b[0], b[1] + yoff, b[2], v.color);
+                }
+                dd.end();
+            }
+        }
+        dd.depthMask(true);
+    }
+
     /// Iterate funnel labels for the worldspace-label pass (drawn in main.zig,
     /// which owns cam/worldToScreen). Emits "P{i}" at each portal midpoint and
     /// "W{k}" at each ALL_CROSSINGS waypoint. Density-capped: skips entirely when
@@ -784,6 +867,13 @@ pub const NavMeshTesterTool = struct {
         if (self.funnel_on and self.npolys > 0 and
             (self.mode == .pathfind_straight or self.mode == .pathfind_sliced or self.mode == .pathfind_follow))
             self.drawFunnel(dd);
+
+        // Side-by-side filter comparison (A4): each enabled variant's route as a
+        // coloured polyline (offset +Y per variant to avoid z-fight). Reads only
+        // the cached routes (recomputed in recalc). The legend is panel text.
+        if (self.compare.on and
+            (self.mode == .pathfind_straight or self.mode == .pathfind_sliced or self.mode == .pathfind_follow))
+            self.drawCompare(dd);
 
         switch (self.mode) {
             .pathfind_follow => {
@@ -1037,6 +1127,13 @@ pub const NavMeshTesterTool = struct {
                 dvui.label(@src(), "portals: {d}  crossings: {d}  turns: {d}", .{ self.npolys -| 1, self.nfunnel, self.nturn }, .{});
         }
 
+        // Side-by-side filter comparison (A4). Up to 3 variant rows (enable +
+        // include/exclude per-flag checkboxes + colour swatch); the comparison
+        // reruns on recalc when ON, or via "Run comparison". Legend below shows
+        // each enabled variant's poly count + approx cost + reaches Y/N.
+        if (self.mode == .pathfind_follow or self.mode == .pathfind_straight or self.mode == .pathfind_sliced)
+            self.drawCompareControls();
+
         _ = dvui.separator(@src(), .{ .expand = .horizontal });
         const wpts = if (self.mode == .pathfind_follow) self.nsmooth else self.nstraight;
         dvui.label(@src(), "polys: {d}  waypoints: {d}", .{ self.npolys, wpts }, .{});
@@ -1128,6 +1225,80 @@ pub const NavMeshTesterTool = struct {
         dvui.labelNoFmt(@src(), "(Dijkstra mode: deferred — no core option)", .{}, .{});
     }
 
+    /// UI for the side-by-side filter comparison (A4): an ON toggle, up to 3
+    /// variant rows (enable + a colour swatch + per-flag include/exclude
+    /// checkboxes), a "Run comparison" button, and a legend listing each enabled
+    /// variant's poly count + approx cost + reaches Y/N. Editing anything that
+    /// changes a route re-runs the comparison (cheap; only on edit, not per frame).
+    ///
+    /// Управление сравнением фильтров (A4): тумблер + до 3 строк-вариантов + легенда.
+    fn drawCompareControls(self: *NavMeshTesterTool) void {
+        ui.section(@src(), "Compare filters");
+        var dirty = false;
+        if (dvui.checkbox(@src(), &self.compare.on, "Side-by-side filter comparison", .{ .id_extra = 0xC0 }))
+            dirty = true;
+
+        if (self.compare.on) {
+            for (&self.compare.variants, 0..) |*v, vi| {
+                const base: usize = 0xC100 + vi * 0x100;
+                {
+                    var hb = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal, .id_extra = base });
+                    defer hb.deinit();
+                    // colour swatch (small filled box, the variant's route colour).
+                    var sw = dvui.box(@src(), .{ .dir = .horizontal }, .{
+                        .id_extra = base + 1,
+                        .min_size_content = .{ .w = 14, .h = 14 },
+                        .gravity_y = 0.5,
+                        .color_fill = colToDvui(v.color),
+                        .background = true,
+                    });
+                    sw.deinit();
+                    if (dvui.checkbox(@src(), &v.enabled, v.label(), .{ .id_extra = base + 2 }))
+                        dirty = true;
+                }
+                if (v.enabled) {
+                    // Per-flag include/exclude — compact: one checkbox row each.
+                    if (compareFlagRow(v, true, base + 0x10)) dirty = true;
+                    if (compareFlagRow(v, false, base + 0x40)) dirty = true;
+                }
+            }
+            if (dvui.button(@src(), "Run comparison", .{}, .{ .id_extra = 0xC0FF }))
+                dirty = true;
+
+            // Legend: per enabled variant — poly count + approx cost + reaches.
+            for (&self.compare.variants, 0..) |*v, vi| {
+                if (!v.enabled) continue;
+                const r = self.compare.results[vi];
+                const reach: []const u8 = if (r.reaches) "Y" else "N";
+                dvui.label(@src(), "[#] {s}: {d} polys  cost {d:.1}  reaches:{s}", .{ v.label(), r.npolys, r.cost, reach }, .{ .id_extra = 0xCE00 + vi });
+            }
+        }
+
+        if (dirty) self.recomputeCompare();
+    }
+
+    /// One compact include- OR exclude-flag checkbox row for a comparison variant.
+    /// `inc=true` edits v.include, else v.exclude. `id_base` must be unique per row.
+    /// Returns true if any flag was toggled (caller re-runs the comparison).
+    fn compareFlagRow(v: *filter_compare.Variant, inc: bool, id_base: usize) bool {
+        var changed = false;
+        var hb = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal, .id_extra = id_base });
+        defer hb.deinit();
+        dvui.labelNoFmt(@src(), if (inc) "incl" else "excl", .{}, .{ .gravity_y = 0.5 });
+        var i: usize = 0;
+        while (i < poly_flags.MAX_FLAGS) : (i += 1) {
+            const fl = poly_flags.get(i) orelse continue;
+            const bit = poly_flags.bitOf(i).?;
+            const mask = if (inc) &v.include else &v.exclude;
+            var on = (mask.* & bit) != 0;
+            if (dvui.checkbox(@src(), &on, fl.name(), .{ .id_extra = id_base + 1 + i })) {
+                if (on) mask.* |= bit else mask.* &= ~bit;
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
     fn modeRadio(self: *NavMeshTesterTool, label: []const u8, m: ToolMode, id: usize) void {
         if (ui.radio(@src(), self.mode == m, label, id)) {
             self.mode = m;
@@ -1140,6 +1311,17 @@ fn dist2d(a: [3]f32, b: [3]f32) f32 {
     const dx = b[0] - a[0];
     const dz = b[2] - a[2];
     return @sqrt(dx * dx + dz * dz);
+}
+
+/// Decompose a packed debug `rgba` u32 (R in low byte) into a dvui.Color for the
+/// comparison swatch. Forces full alpha so the swatch reads solid in the panel.
+fn colToDvui(col: u32) dvui.Color {
+    return .{
+        .r = @intCast(col & 0xff),
+        .g = @intCast((col >> 8) & 0xff),
+        .b = @intCast((col >> 16) & 0xff),
+        .a = 255,
+    };
 }
 
 const SP_END: u8 = 0x02;

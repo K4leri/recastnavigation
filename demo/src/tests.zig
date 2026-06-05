@@ -33,4 +33,5 @@ test {
     _ = @import("diag/astar_player.zig");
     _ = @import("diag/funnel.zig");
     _ = @import("diag/reachability.zig");
+    _ = @import("diag/filter_compare.zig");
 }
