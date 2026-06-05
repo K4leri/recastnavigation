@@ -34,6 +34,9 @@ const startCol = dbg.rgba(51, 102, 0, 192);
 const endCol = dbg.rgba(128, 25, 0, 129);
 const pathCol = dbg.rgba(0, 0, 0, 64);
 
+/// FIX-8 diagnostic: capped budget of [DRAWSAFE] smoking-gun prints (dangerous refs).
+var diag_budget: i32 = 60;
+
 pub const ToolMode = enum {
     pathfind_follow,
     pathfind_straight,
@@ -870,29 +873,75 @@ pub const NavMeshTesterTool = struct {
         self.shape_nverts = 4;
     }
 
-    /// Draw a path / endpoint polygon via the faithful debug-draw, but ONLY after
-    /// validating the ref against the CURRENT mesh.
+    /// BULLETPROOF path/endpoint poly draw. Does NOT call the faithful
+    /// debugDrawNavMeshPoly: BOTH it AND getTileAndPolyByRef guard the tile index by
+    /// `< max_tiles` and THEN index `tiles[decoded.tile]` — but a panic `tiles[150]
+    /// len 149` was observed where `decoded.tile < max_tiles` yet `>= tiles.len`. Since
+    /// the navmesh allocates `tiles` to exactly `max_tiles` (navmesh.zig:305), that
+    /// inequality should be impossible — it points at a corrupt / stale navmesh read
+    /// (max_tiles field out of sync with the tiles slice), not a mere stale ref.
     ///
-    /// A held ref can outlive the mesh it was computed on: an in-place tile rebuild
-    /// (F6 incremental / autosave) mutates the navmesh's tiles WITHOUT re-pointing the
-    /// tool (no setNavMesh -> npolys/self.polys are NOT cleared), so the poly count can
-    /// shrink under a path that still references a now-out-of-range poly. The faithful
-    /// debugDrawNavMeshPoly indexes `tiles[decoded.tile]` and the poly array guarded
-    /// only by `< max_tiles` (which can exceed `tiles.len`, and never checks poly_count),
-    /// so a stale ref OOB-crashes it. Validate first; faithful src/* stays untouched.
+    /// So we validate against `tiles.len` (the ACTUAL slice) and self-draw the poly's
+    /// detail tris with a bounds check on EVERY access — a bad/inconsistent ref can
+    /// never OOB. `ref == 0` (cleared endpoint) is skipped. Faithful src/* untouched.
     ///
-    /// `ref == 0` (a cleared endpoint, post-setNavMesh) is skipped before the decode —
-    /// faithful would otherwise decode 0 -> poly 0 and highlight a bogus polygon.
+    /// DIAG (FIX-8): when a ref is "dangerous" (decoded.tile out of the slice, or the
+    /// navmesh's max_tiles != tiles.len) print the smoking gun, capped by diag_budget.
     fn drawPolySafe(self: *NavMeshTesterTool, dd: dbg.DebugDraw, nm: *const dt.NavMesh, ref: dt.PolyRef, col: u32) void {
         _ = self;
         if (ref == 0) return;
-        // tile bound FIRST: getTileAndPolyByRef itself indexes tiles[decoded.tile]
-        // guarded only by max_tiles, so it would OOB before it could reject the ref.
-        const decoded = nm.decodePolyId(ref);
-        if (@as(usize, decoded.tile) >= nm.tiles.len) return;
-        // salt + tile + poly_count validation; rejects a stale/shrunk-mesh ref.
-        _ = nm.getTileAndPolyByRef(ref) catch return;
-        dbg.debugDrawNavMeshPoly(dd, nm, ref, col);
+        const d = nm.decodePolyId(ref);
+        const tlen = nm.tiles.len;
+        const mt: usize = @intCast(nm.max_tiles);
+        const tile_oob = @as(usize, d.tile) >= tlen;
+        if ((tile_oob or mt != tlen) and diag_budget > 0) {
+            diag_budget -= 1;
+            std.debug.print("[DRAWSAFE] nm=0x{X} max_tiles={d} tiles.len={d} bits(s={d} t={d} p={d}) ref=0x{X} dec(tile={d} poly={d} salt={d}) tile_oob={} mt!=len={}\n", .{ @intFromPtr(nm), mt, tlen, nm.salt_bits, nm.tile_bits, nm.poly_bits, ref, d.tile, d.poly, d.salt, tile_oob, mt != tlen });
+        }
+        if (tile_oob) return;
+        // tile index now provably < tiles.len, so getTileAndPolyByRef can't OOB at its
+        // own tiles[decoded.tile]; it validates salt + header + poly_count for us.
+        const tp = nm.getTileAndPolyByRef(ref) catch return;
+        const tile = tp.tile;
+        const poly = tp.poly;
+        if (@as(usize, d.poly) >= tile.detail_meshes.len) return;
+        const pd = &tile.detail_meshes[d.poly];
+        const vc: usize = poly.vert_count;
+
+        dd.depthMask(false);
+        dd.begin(.tris, 1.0);
+        var ti: usize = 0;
+        while (ti < @as(usize, pd.tri_count)) : (ti += 1) {
+            const t_idx = (@as(usize, pd.tri_base) + ti) * 4;
+            if (t_idx + 3 >= tile.detail_tris.len) break;
+            const t = tile.detail_tris[t_idx .. t_idx + 4];
+            var pts: [3]*const [3]f32 = undefined;
+            var ok = true;
+            for (0..3) |k| {
+                if (t[k] < vc) {
+                    if (@as(usize, t[k]) >= poly.verts.len) {
+                        ok = false;
+                        break;
+                    }
+                    const v_idx = @as(usize, poly.verts[t[k]]) * 3;
+                    if (v_idx + 2 >= tile.verts.len) {
+                        ok = false;
+                        break;
+                    }
+                    pts[k] = @ptrCast(&tile.verts[v_idx]);
+                } else {
+                    const d_idx = (@as(usize, pd.vert_base) + (@as(usize, t[k]) - vc)) * 3;
+                    if (d_idx + 2 >= tile.detail_verts.len) {
+                        ok = false;
+                        break;
+                    }
+                    pts[k] = @ptrCast(&tile.detail_verts[d_idx]);
+                }
+            }
+            if (ok) for (pts) |p| dd.vertex(p, col);
+        }
+        dd.end();
+        dd.depthMask(true);
     }
 
     pub fn render(self: *NavMeshTesterTool) void {
