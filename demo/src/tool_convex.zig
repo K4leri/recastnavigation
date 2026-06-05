@@ -392,11 +392,21 @@ pub const ConvexVolumeTool = struct {
         const ed = &self.editor.?;
         const rgb = ed.hsv.toColor();
         const name = std.mem.sliceTo(&ed.name_buf, 0);
+        // For an EDIT, snapshot the slot's current value BEFORE we mutate it so
+        // undo can restore it byte-for-byte. For a NEW type, there is no "before".
+        var commit_id: ?usize = null;
+        var before: area_types.AreaType = undefined;
         const t: ?*area_types.AreaType = if (ed.is_new) blk: {
             const id = area_types.addType() orelse break :blk null;
             self.area = id; // select the freshly added type for painting
+            commit_id = id;
             break :blk area_types.get(id);
-        } else area_types.get(ed.edit_id);
+        } else blk: {
+            const at = area_types.get(ed.edit_id) orelse break :blk null;
+            before = at.*; // snapshot before mutation
+            commit_id = ed.edit_id;
+            break :blk at;
+        };
         if (t) |at| {
             at.setName(name);
             at.r = rgb.r;
@@ -405,6 +415,13 @@ pub const ConvexVolumeTool = struct {
             at.a = 255;
             at.flags = ed.flags;
             at.cost = ed.cost;
+            // Record the reversible op now that the slot holds its final value.
+            const id = commit_id.?;
+            if (ed.is_new) {
+                self.undo.record(.{ .area_add = .{ .id = id, .type = at.* } });
+            } else {
+                self.undo.record(.{ .area_edit = .{ .id = id, .before = before, .after = at.* } });
+            }
         }
         area_types.costs_dirty = true;
         area_types.rebuild_needed = true; // flags/type-list change needs a rebuild

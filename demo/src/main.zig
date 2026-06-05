@@ -959,7 +959,10 @@ pub fn main(main_init: std.process.Init) !void {
                     defer row.deinit();
                     dvui.label(@src(), "{s}  (0x{x:0>2})", .{ fl.name(), @as(u16, 1) << @intCast(i) }, .{ .id_extra = i });
                     if (!fl.builtin and dvui.button(@src(), "remove", .{}, .{ .id_extra = i, .gravity_x = 1.0 })) {
+                        // Capture the Flag BEFORE removing it so undo can restore it.
+                        const captured = fl.*;
                         poly_flags.removeFlag(i);
+                        undo_stack.record(.{ .flag_remove = .{ .bit_index = i, .flag = captured } });
                         // Defining/removing a flag doesn't touch baked tile data — a
                         // rebuild is only needed once a flag is assigned to an area
                         // type (handled in the area editor), so no rebuild_needed here.
@@ -977,7 +980,13 @@ pub fn main(main_init: std.process.Init) !void {
                 if (dvui.button(@src(), "Add Flag", .{}, .{})) {
                     const name = std.mem.sliceTo(&new_flag_name, 0);
                     if (name.len > 0) {
-                        _ = poly_flags.addFlag(name); // ASCII/English names only (font has no Cyrillic)
+                        // addFlag returns the bit value (1 << index); derive the bit
+                        // index so we can capture the new slot for undo.
+                        if (poly_flags.addFlag(name)) |bit| { // ASCII/English names only (font has no Cyrillic)
+                            const bit_index: usize = @ctz(bit);
+                            if (poly_flags.get(bit_index)) |nf|
+                                undo_stack.record(.{ .flag_add = .{ .bit_index = bit_index, .flag = nf.* } });
+                        }
                         @memset(&new_flag_name, 0);
                     }
                 }
