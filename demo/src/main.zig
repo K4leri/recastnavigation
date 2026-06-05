@@ -1511,6 +1511,11 @@ pub fn main(main_init: std.process.Init) !void {
             if (ui.radio(@src(), scheme_state.active == .flags, "Flags", 311)) scheme_state.active = .flags;
             if (ui.radio(@src(), scheme_state.active == .height, "Height", 312)) scheme_state.active = .height;
             if (ui.radio(@src(), scheme_state.active == .component, "Component", 313)) scheme_state.active = .component;
+            if (ui.radio(@src(), scheme_state.active == .cost, "Cost", 314)) scheme_state.active = .cost;
+            // NOTE: .region is intentionally absent from the UI — region IDs live in
+            // PolyMesh.regs (Recast build stage) and are not baked into the Detour
+            // navmesh. Wiring it up requires Solo-only PolyMesh.regs plumbing.
+            // (cluster E open question Q1: deferred)
 
             ui.section(@src(), "Debug Settings");
             switch (sample_kind) {

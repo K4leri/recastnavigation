@@ -13,6 +13,8 @@ const io_util = @import("io_util.zig");
 const ui = @import("ui.zig");
 const nav_io = @import("navmesh_io.zig");
 const convex_surface = @import("convex_surface.zig");
+const poly_visit = @import("render/poly_visit.zig");
+const scheme_state = @import("render/scheme_state.zig");
 
 const rc = recast.recast;
 const dt = recast.detour;
@@ -311,7 +313,10 @@ pub const SampleTempObstacles = struct {
     pub fn render(self: *SampleTempObstacles) void {
         self.dd_gl.area_to_col = sample.sampleAreaToCol;
         const dd = self.dd_gl.debugDraw();
-        if (self.navmesh) |*n| dbg.debugDrawNavMesh(dd, n, 0);
+        if (self.navmesh) |*n| {
+            dbg.debugDrawNavMesh(dd, n, 0);
+            if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
+        }
 
         // препятствия (цилиндры)
         const col = dbg.rgba(220, 64, 0, 200);

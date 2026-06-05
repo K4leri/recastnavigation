@@ -14,6 +14,8 @@ const io_util = @import("io_util.zig");
 const ui = @import("ui.zig");
 const nav_io = @import("navmesh_io.zig");
 const convex_surface = @import("convex_surface.zig");
+const poly_visit = @import("render/poly_visit.zig");
+const scheme_state = @import("render/scheme_state.zig");
 
 const rc = recast.recast;
 const dt = recast.detour;
@@ -352,17 +354,25 @@ pub const SampleTile = struct {
         const dd = self.dd_gl.debugDraw();
         switch (self.draw_mode) {
             .mesh => self.renderInputMesh(dd),
-            .navmesh => if (self.navmesh) |*n| dbg.debugDrawNavMesh(dd, n, 0),
+            .navmesh => if (self.navmesh) |*n| {
+                dbg.debugDrawNavMesh(dd, n, 0);
+                if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
+            },
             .navmesh_trans => {
                 self.renderInputMesh(dd);
-                if (self.navmesh) |*n| dbg.debugDrawNavMesh(dd, n, 0);
+                if (self.navmesh) |*n| {
+                    dbg.debugDrawNavMesh(dd, n, 0);
+                    if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
+                }
             },
             .navmesh_bvtree => if (self.navmesh) |*n| {
                 dbg.debugDrawNavMesh(dd, n, 0);
+                if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
                 dbg.debugDrawNavMeshBVTree(dd, n);
             },
             .navmesh_portals => if (self.navmesh) |*n| {
                 dbg.debugDrawNavMesh(dd, n, 0);
+                if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
                 dbg.debugDrawNavMeshPortals(dd, n);
             },
         }
