@@ -1163,9 +1163,13 @@ pub fn main(main_init: std.process.Init) !void {
                             .info => recast.debug.rgba(120, 180, 235, 160),
                         };
                         for (0..f.ref_count) |i| {
-                            // isValidPolyRef: a cached lint report can outlive a rebuild;
-                            // faithful debugDrawNavMeshPoly has no bounds check (OOB crash).
-                            if (f.refs[i] != 0 and nm.isValidPolyRef(f.refs[i])) recast.debug.debugDrawNavMeshPoly(dd, nm, f.refs[i], col);
+                            // A cached lint report can outlive a rebuild. Bound by the
+                            // ACTUAL tiles.len BEFORE isValidPolyRef (which itself indexes
+                            // tiles[decoded.tile] against max_tiles, which can exceed
+                            // tiles.len for a stale ref -> OOB). Faithful draw has no check.
+                            if (f.refs[i] == 0) continue;
+                            if (@as(usize, nm.decodePolyId(f.refs[i]).tile) >= nm.tiles.len) continue;
+                            if (nm.isValidPolyRef(f.refs[i])) recast.debug.debugDrawNavMeshPoly(dd, nm, f.refs[i], col);
                         }
                     }
                 }

@@ -760,7 +760,7 @@ pub const NavMeshTesterTool = struct {
             // faint poly fill in the variant colour (alpha already baked into v.color;
             // re-tint lighter for the fill so it reads as "this filter's corridor").
             const fill = (v.color & 0x00ffffff) | (@as(u32, 56) << 24);
-            for (r) |ref| if (nm.isValidPolyRef(ref)) dbg.debugDrawNavMeshPoly(dd, nm, ref, fill);
+            for (r) |ref| self.drawPolySafe(dd, nm, ref, fill);
             // polyline through centroids.
             if (r.len > 1) {
                 dd.begin(.lines, 3.0);
@@ -838,6 +838,22 @@ pub const NavMeshTesterTool = struct {
         self.shape_nverts = 4;
     }
 
+    /// Bounds-safe wrapper around faithful debugDrawNavMeshPoly. A STALE ref (a path
+    /// kept from a previous navmesh, then decoded with the NEW mesh's bit widths) can
+    /// yield decoded.tile that is < max_tiles yet >= tiles.len — and BOTH the faithful
+    /// draw AND isValidPolyRef/getTileAndPolyByRef index `tiles[decoded.tile]` guarded
+    /// only by `< max_tiles`, so they OOB-crash. Bound by the ACTUAL `tiles.len` FIRST
+    /// (before isValidPolyRef, which would itself OOB), then validate salt/poly, then
+    /// draw. Faithful src/* untouched.
+    fn drawPolySafe(self: *NavMeshTesterTool, dd: dbg.DebugDraw, nm: *const dt.NavMesh, ref: dt.PolyRef, col: u32) void {
+        _ = self;
+        if (ref == 0) return;
+        const d = nm.decodePolyId(ref);
+        if (@as(usize, d.tile) >= nm.tiles.len) return;
+        if (!nm.isValidPolyRef(ref)) return;
+        dbg.debugDrawNavMeshPoly(dd, nm, ref, col);
+    }
+
     pub fn render(self: *NavMeshTesterTool) void {
         // Per-frame incremental tick (Play): advance the live sliced search ONCE.
         self.tickSlice();
@@ -855,17 +871,15 @@ pub const NavMeshTesterTool = struct {
 
         // подсветка полигонов результата: start/end/path разными цветами (как оригинал)
         if (self.navmesh) |nm| {
-            // start/end подсвечиваются безусловно, в цикле пути — пропускаются (как upstream).
-            // ВАЖНО: faithful debugDrawNavMeshPoly индексирует mesh.tiles[decoded.tile]
-            // БЕЗ проверки границ — стейл/невалидный ref (напр. путь от прошлого навмеша
-            // после загрузки сцены, или partial-path к недостижимой точке) даёт OOB-краш.
-            // isValidPolyRef (salt+tile+poly bounds) защищает, не трогая ядро.
-            if (nm.isValidPolyRef(self.start_ref)) dbg.debugDrawNavMeshPoly(dd, nm, self.start_ref, startCol);
-            if (nm.isValidPolyRef(self.end_ref)) dbg.debugDrawNavMeshPoly(dd, nm, self.end_ref, endCol);
+            // start/end + path polys, all via drawPolySafe (tiles.len-bounded — guards
+            // stale refs that survive a navmesh swap; see drawPolySafe). Path skips
+            // start/end like upstream.
+            self.drawPolySafe(dd, nm, self.start_ref, startCol);
+            self.drawPolySafe(dd, nm, self.end_ref, endCol);
             for (0..self.npolys) |i| {
                 const r = self.polys[i];
                 if (r == self.start_ref or r == self.end_ref) continue;
-                if (nm.isValidPolyRef(r)) dbg.debugDrawNavMeshPoly(dd, nm, r, pathCol);
+                self.drawPolySafe(dd, nm, r, pathCol);
             }
         }
 

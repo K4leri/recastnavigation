@@ -366,8 +366,14 @@ pub const CrowdTool = struct {
                     const ag = c.getAgent(@intCast(i)) orelse continue;
                     if (!ag.active) continue;
                     const path = ag.corridor.getPath();
-                    // guard stale corridor refs (faithful poly-draw has no bounds check)
-                    for (0..ag.corridor.getPathCount()) |j| if (m.isValidPolyRef(path[j])) dbg.debugDrawNavMeshPoly(dd, m, path[j], dbg.rgba(255, 255, 255, 24));
+                    // guard stale corridor refs: bound by tiles.len BEFORE isValidPolyRef
+                    // (faithful poly-draw + isValidPolyRef check only against max_tiles,
+                    // which can exceed tiles.len for a stale ref -> OOB crash).
+                    for (0..ag.corridor.getPathCount()) |j| {
+                        const pr = path[j];
+                        if (@as(usize, m.decodePolyId(pr).tile) >= m.tiles.len) continue;
+                        if (m.isValidPolyRef(pr)) dbg.debugDrawNavMeshPoly(dd, m, pr, dbg.rgba(255, 255, 255, 24));
+                    }
                 }
             }
         }
