@@ -1491,6 +1491,18 @@ pub fn main(main_init: std.process.Init) !void {
             }
             _ = dvui.checkbox(@src(), &show_build_inspector, "Build Inspector", .{ .id_extra = 7402 });
 
+            // Build Profiler + Run History (C1): stage breakdown table + stacked
+            // bar + total_ms sparkline over the last N=16 builds. Solo only.
+            if (solo.show_profiler) {
+                if (sample_kind == .solo) {
+                    solo.drawProfiler();
+                } else {
+                    ui.section(@src(), "Profiler");
+                    dvui.labelNoFmt(@src(), "Solo sample only.", .{}, .{ .id_extra = 7505 });
+                }
+            }
+            _ = dvui.checkbox(@src(), &solo.show_profiler, "Profiler", .{ .id_extra = 7506 });
+
             // --- Polygon Inspector (B-4) ---
             // Shows a structured table for the polygon last picked via the
             // Disabled-tool inspection click (active_tool == .none + LMB on mesh).

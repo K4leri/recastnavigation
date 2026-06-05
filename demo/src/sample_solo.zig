@@ -19,6 +19,7 @@ const filter_state = @import("render/filter_state.zig");
 const view_state = @import("render/view_state.zig");
 const convex_surface = @import("convex_surface.zig");
 const build_stats = @import("diag/build_stats.zig");
+const profiler = @import("diag/profiler.zig");
 const artifacts = @import("diag/artifacts.zig");
 
 const rc = recast.recast;
@@ -68,6 +69,16 @@ pub const SampleSolo = struct {
     // Показывать ли дельту в Build Inspector. Сохраняется между кадрами.
     // Whether to show the diff panel in Build Inspector. Persists across frames.
     show_build_diff: bool = false,
+
+    // Build Profiler + Run History (C1): кольцо последних N=16 сборок (per-stage
+    // ms + total) для панели Profiler. VALUE-тип (фиксированный массив, без heap) —
+    // не требует deinit, не течёт. Заполняется ОДИН раз на успешную сборку.
+    // Build Profiler ring of the last N=16 builds (value type — no heap, no leak).
+    // Pushed once per successful build. show_profiler toggles the panel; selected
+    // index into the history for the table/bar (default newest when null).
+    profile_history: profiler.History = .{},
+    show_profiler: bool = false,
+    profiler_sel: f32 = 0, // выбранный элемент истории (слайдер 0..len-1)
 
     // Build Artifact Detectors (B-3): cached report from the last "Scan artifacts"
     // press (degenerate detail tris / tiny polys / dead-end polys + capped culprit
@@ -256,6 +267,17 @@ pub const SampleSolo = struct {
             bs.stage(.detail).dm_tris,
             bs.total_ms,
         });
+        // Build Profiler (C1): push a snapshot of THIS successful build into the
+        // run-history ring (once per build, not per frame). Headline counts come
+        // from the polymesh / regions stages already filled above.
+        self.profile_history.push(profiler.BuildProfile.fromBuildStats(
+            bs,
+            self.build_gen,
+            @intCast(bs.stage(.polymesh).pm_polys),
+            bs.stage(.regions).max_regions,
+        ));
+        // Default the history selector to the newest entry.
+        self.profiler_sel = @floatFromInt(self.profile_history.len - 1);
         return true;
     }
 
@@ -830,6 +852,86 @@ pub const SampleSolo = struct {
         }
 
         self.drawArtifactScan();
+    }
+
+    /// Build Profiler + Run History (C1). Таблица стадий выбранной сборки
+    /// (label | ms | %), горизонтальный stacked-bar (доли стадий в палитре),
+    /// sparkline total_ms по истории (новейший справа), селектор истории и
+    /// кнопка Clear. История читается из кеша (наполняется раз на сборку).
+    ///
+    /// Stage table (label | ms | %), a horizontal stacked bar (stage fractions
+    /// in the palette), a sparkline of total_ms across the run history, a history
+    /// selector and a Clear button. Reads cached history (filled once per build).
+    /// id_extra range 7490-7520 (no collision with B's 7400-7485).
+    pub fn drawProfiler(self: *SampleSolo) void {
+        ui.section(@src(), "Profiler");
+        const hist = &self.profile_history;
+        if (hist.len == 0) {
+            dvui.labelNoFmt(@src(), "Build the Solo mesh to profile.", .{}, .{ .id_extra = 7490 });
+            return;
+        }
+
+        // History selector (slider 0..len-1; default newest). Show its headline.
+        if (hist.len > 1) {
+            const maxf: f32 = @floatFromInt(hist.len - 1);
+            if (self.profiler_sel > maxf) self.profiler_sel = maxf;
+            ui.sliderInt(@src(), "history idx: {d:.0}", &self.profiler_sel, 0, maxf);
+        } else {
+            self.profiler_sel = 0;
+        }
+        const sel_i: usize = @intFromFloat(@round(std.math.clamp(self.profiler_sel, 0, @as(f32, @floatFromInt(hist.len - 1)))));
+        const profile = hist.at(sel_i) orelse hist.newest().?;
+
+        dvui.label(@src(), "build #{d}  ({s})  total {d:.1}ms  polys={d} regions={d}", .{
+            profile.gen, @tagName(profile.partition), profile.total_ms, profile.n_polys, profile.n_regions,
+        }, .{ .id_extra = 7491 });
+
+        // Stage table: label | ms | % for each RAN stage, + a total row.
+        var buf: [96]u8 = undefined;
+        inline for (0..build_stats.STAGE_COUNT) |i| {
+            const stage: build_stats.Stage = @enumFromInt(i);
+            const label = build_stats.stageLabel(stage);
+            if (profile.stage_ran[i]) {
+                const pct = profiler.stagePercent(profile, stage);
+                const row = std.fmt.bufPrint(&buf, "{s:<13} {d:>7.2}ms  {d:>5.1}%", .{ label, profile.stage_ms[i], pct }) catch buf[0..0];
+                dvui.labelNoFmt(@src(), row, .{}, .{ .id_extra = 7492 + i, .color_text = profiler.stageColor(i) });
+            } else {
+                const row = std.fmt.bufPrint(&buf, "{s:<13}      N/A", .{label}) catch buf[0..0];
+                dvui.labelNoFmt(@src(), row, .{}, .{ .id_extra = 7492 + i, .color_text = .{ .r = 140, .g = 140, .b = 140 } });
+            }
+        }
+        dvui.label(@src(), "total         {d:>7.2}ms  100.0%", .{profile.total_ms}, .{ .id_extra = 7500 });
+
+        // Stacked bar (full-width, ~16px). Grab a box rect and draw segments.
+        {
+            var bar = dvui.box(@src(), .{ .dir = .horizontal }, .{ .min_size_content = .{ .w = 200, .h = 16 }, .expand = .horizontal, .id_extra = 7501 });
+            const r = bar.data().rectScale().r;
+            bar.deinit();
+            profiler.drawStackedBar(profile, r.x, r.y, r.w, r.h);
+        }
+
+        // Sparkline of total_ms across the history (~30px), newest on the right.
+        {
+            var spark = dvui.box(@src(), .{ .dir = .horizontal }, .{ .min_size_content = .{ .w = 200, .h = 30 }, .expand = .horizontal, .id_extra = 7502 });
+            const r = spark.data().rectScale().r;
+            spark.deinit();
+            profiler.drawSparkline(hist, r.x, r.y, r.w, r.h, .{ .r = 120, .g = 220, .b = 160, .a = 255 });
+        }
+
+        // min/max total over the history (sparkline scale labels).
+        var lo: f32 = std.math.floatMax(f32);
+        var hi: f32 = -std.math.floatMax(f32);
+        for (0..hist.len) |i| {
+            const t = hist.at(i).?.total_ms;
+            if (t < lo) lo = t;
+            if (t > hi) hi = t;
+        }
+        dvui.label(@src(), "history n={d}  total min {d:.1}ms / max {d:.1}ms", .{ hist.len, lo, hi }, .{ .id_extra = 7503 });
+
+        if (dvui.button(@src(), "Clear history", .{}, .{ .id_extra = 7504 })) {
+            self.profile_history.clear();
+            self.profiler_sel = 0;
+        }
     }
 
     /// Tiny-poly area threshold (XZ world units²): a fraction of a cell's area, so
