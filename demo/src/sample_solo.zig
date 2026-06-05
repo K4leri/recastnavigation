@@ -59,6 +59,15 @@ pub const SampleSolo = struct {
     // Additive instrumentation, заполняется в doBuild. Действителен при build_gen>0.
     build_stats: build_stats.BuildStats = .{},
 
+    // Build Param Diff (B-2): снимок предыдущей сборки (один шаг истории).
+    // BuildStats — value-type (фиксированные массивы, без heap), копируется присваиванием.
+    // Build Param Diff (B-2): snapshot of the immediately previous build (one-deep history).
+    // BuildStats is a value type (fixed arrays, no heap pointers) — plain assignment suffices.
+    prev_build_stats: ?build_stats.BuildStats = null,
+    // Показывать ли дельту в Build Inspector. Сохраняется между кадрами.
+    // Whether to show the diff panel in Build Inspector. Persists across frames.
+    show_build_diff: bool = false,
+
     // промежуточные результаты (для отрисовки)
     hf: ?recast.Heightfield = null,
     chf: ?recast.CompactHeightfield = null,
@@ -156,6 +165,14 @@ pub const SampleSolo = struct {
         self.bctx.resetLog();
         const ctx = self.bctx.context();
         const s = &self.settings;
+
+        // Build Param Diff (B-2): снимаем текущие stats в prev ПЕРЕД reset(),
+        // только если уже была хотя бы одна успешная сборка (build_gen > 0).
+        // Build Param Diff (B-2): snapshot current stats into prev BEFORE reset(),
+        // but only when at least one successful build already exists (build_gen > 0).
+        if (self.build_gen > 0) {
+            self.prev_build_stats = self.build_stats;
+        }
 
         // Build Inspector (B-1): сброс per-stage статистики перед сборкой.
         self.build_stats.reset();
@@ -696,10 +713,13 @@ pub const SampleSolo = struct {
         dvui.label(@src(), "Build Time: {d:.1}ms", .{self.build_time_ms}, .{});
     }
 
-    /// Build Inspector (B-1): таблица из 7 стадий (счётчики + время) + total.
-    /// Рисуется в Properties-панели (main.zig) при наличии Solo-сборки.
-    /// Build Inspector table: 7 stage rows (counts + ms) + total line. Pure
-    /// formatting lives in diag/build_stats.zig; here we just render the rows.
+    /// Build Inspector (B-1 + B-2): таблица из 7 стадий (счётчики + время) + total.
+    /// При наличии предыдущей сборки и включённом чекбоксе — дополнительная строка
+    /// со знаковой дельтой под каждой стадией + итоговая Δtotal.
+    ///
+    /// Build Inspector table: 7 stage rows (counts + ms) + total. When a previous
+    /// build exists and "Show diff" is checked, an extra delta line is shown under
+    /// each stage row, plus a Δtotal line.
     pub fn drawBuildInspector(self: *SampleSolo) void {
         ui.section(@src(), "Build Inspector");
         if (self.build_gen == 0) {
@@ -715,8 +735,31 @@ pub const SampleSolo = struct {
             // N/A rows greyed; ran rows normal.
             const col: ?dvui.Color = if (st.ran) null else .{ .r = 140, .g = 140, .b = 140 };
             dvui.labelNoFmt(@src(), row, .{}, .{ .id_extra = 7410 + i, .color_text = col });
+
+            // B-2: delta line below each stage row (shown only when diff is on + prev exists).
+            if (self.show_build_diff) {
+                if (self.prev_build_stats) |prev| {
+                    var dbuf: [160]u8 = undefined;
+                    const delta = build_stats.diffStage(prev.stages[i], bs.stages[i], stage);
+                    const drow = build_stats.formatStageDelta(&dbuf, stage, delta);
+                    // дельта-строки выводим немного светлее / delta rows slightly dimmed
+                    dvui.labelNoFmt(@src(), drow, .{}, .{ .id_extra = 7430 + i, .color_text = .{ .r = 170, .g = 200, .b = 255 } });
+                }
+            }
         }
         dvui.label(@src(), "total: {d:.1}ms  ({s})", .{ bs.total_ms, @tagName(bs.partition) }, .{ .id_extra = 7420 });
+
+        // B-2: "Show diff vs previous" checkbox + Δtotal line.
+        _ = dvui.checkbox(@src(), &self.show_build_diff, "Show diff vs previous", .{ .id_extra = 7421 });
+        if (self.show_build_diff) {
+            if (self.prev_build_stats) |prev| {
+                const delta_total = bs.total_ms - prev.total_ms;
+                const sign: []const u8 = if (delta_total >= 0) "+" else "";
+                dvui.label(@src(), "Δtotal: {s}{d:.1}ms", .{ sign, delta_total }, .{ .id_extra = 7422 });
+            } else {
+                dvui.labelNoFmt(@src(), "no previous build to diff", .{}, .{ .id_extra = 7423 });
+            }
+        }
     }
 
     const SAVE_PATH = "solo_navmesh.bin";
