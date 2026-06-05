@@ -2213,6 +2213,9 @@ pub fn main(main_init: std.process.Init) !void {
             if (dvui.clickedEx(canvas.data(), .{ .rect = cr })) |ev| {
                 if (ev == .mouse and cr.contains(ev.mouse.p)) {
                     click_world = minimap.mapToWorld(ev.mouse.p.x, ev.mouse.p.y, bminx, bminz, bmaxx, bmaxz, cr.x, cr.y, cr.w, cr.h);
+                    // DIAG (DPI miss-click): report the click px, the canvas physical
+                    // rect, and the mapped world so a mismatch can be pinpointed.
+                    std.debug.print("[MINIMAP] click=({d:.1},{d:.1}) rect=(x{d:.1} y{d:.1} w{d:.1} h{d:.1}) -> world=({d:.2},{d:.2})  cursorOS=({d:.1},{d:.1})\n", .{ ev.mouse.p.x, ev.mouse.p.y, cr.x, cr.y, cr.w, cr.h, click_world.?[0], click_world.?[1], cur[0], cur[1] });
                 }
             }
             canvas.deinit();
@@ -3444,12 +3447,17 @@ fn drawPolyLabel(
 /// P1-4 fly-to: frame the camera on a world XZ point. Y is the scene bbox mid; a
 /// small bbox around the point is passed to cam.reset (reuses the existing framing
 /// logic — eye placed back+up at a comfortable distance, default angles).
-fn flyToXZ(cam: *Camera, geom: *const InputGeom, wx: f32, wz: f32) void {
+fn flyToXZ(cam: *Camera, geom: *const InputGeom, wx_in: f32, wz_in: f32) void {
     const ymid = (geom.bmin[1] + geom.bmax[1]) * 0.5;
-    // Frame size from the scene extent so the zoom matches the map (not a fixed
-    // distance that's huge for tiny meshes / tiny for big ones).
+    // Clamp the target INTO the scene bbox: a stray/edge click can't fling the
+    // camera outside the scene (which would push everything past the fog and look
+    // like a blackout). 1-unit pad keeps it just inside.
+    const wx = std.math.clamp(wx_in, geom.bmin[0], geom.bmax[0]);
+    const wz = std.math.clamp(wz_in, geom.bmin[2], geom.bmax[2]);
+    // Frame a comfortable overview (was 0.12 — too tight, the camera ended up
+    // almost inside the mesh and the fog hid everything but the immediate area).
     const ext = @max(@max(geom.bmax[0] - geom.bmin[0], geom.bmax[2] - geom.bmin[2]), 1.0);
-    const r = ext * 0.12;
+    const r = ext * 0.30;
     cam.reset(
         Vec3.init(wx - r, ymid - r, wz - r),
         Vec3.init(wx + r, ymid + r, wz + r),
