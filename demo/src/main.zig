@@ -27,6 +27,7 @@ const export_metrics = @import("io/export_metrics.zig");
 const export_obj = @import("io/export_obj.zig");
 const export_gltf = @import("io/export_gltf.zig");
 const export_svg = @import("io/export_svg.zig");
+const export_query = @import("io/export_query.zig");
 const scene_container = @import("persist/scene_container.zig");
 const InputGate = @import("input_gate.zig").InputGate;
 const tool_registry = @import("tool_registry.zig");
@@ -1945,6 +1946,12 @@ pub fn main(main_init: std.process.Init) !void {
                         exportSvgNow(main_init.gpa, nm, app.meshes_folder, &bctx);
                     }
                 }
+                // Query export (D4): доступна только когда активен tester и есть результат.
+                if (active_tool == .tester) {
+                    if (dvui.button(@src(), "Export Query Results (CSV+JSON)", .{}, .{ .id_extra = 6110 })) {
+                        exportQueryNow(main_init.gpa, &tester, app.meshes_folder, &bctx);
+                    }
+                }
             }
 
             ui.section(@src(), "Navmesh Colouring");
@@ -3466,6 +3473,76 @@ fn exportSvgNow(gpa: std.mem.Allocator, nm: *recast.detour.NavMesh, folder: []co
         return;
     };
     bctx.context().log(.progress, "Exported topology to {s}", .{path});
+}
+
+/// Экспорт результатов текущего запроса tester'а (D4): CSV + JSON.
+/// Файлы: export_query.csv и export_query.json в meshes_folder.
+/// Вызывается только из кнопки «Export Query Results (CSV+JSON)».
+fn exportQueryNow(gpa: std.mem.Allocator, tester: *NavMeshTesterTool, folder: []const u8, bctx: *BuildContext) void {
+    const rec_base = tester.currentQueryRecord() orelse {
+        bctx.context().log(.progress, "Export Query: no query to export (set start+end in Tester mode)", .{});
+        return;
+    };
+
+    // Скопировать corners во владеющий буфер (они указывают во внутреннюю память tester'а).
+    var corners_buf: [256][3]f32 = undefined;
+    const nc = @min(rec_base.corners.len, corners_buf.len);
+    @memcpy(corners_buf[0..nc], rec_base.corners[0..nc]);
+
+    // Скопировать path во владеющий буфер.
+    var path_buf: [256]u32 = undefined;
+    const np = @min(rec_base.path.len, path_buf.len);
+    @memcpy(path_buf[0..np], rec_base.path[0..np]);
+
+    const rec = export_query.QueryRecord{
+        .id = rec_base.id,
+        .kind = rec_base.kind,
+        .start = rec_base.start,
+        .end = rec_base.end,
+        .status = rec_base.status,
+        .path_len = rec_base.path_len,
+        .npolys = rec_base.npolys,
+        .nwaypoints = rec_base.nwaypoints,
+        .ms = rec_base.ms,
+        .include_flags = rec_base.include_flags,
+        .exclude_flags = rec_base.exclude_flags,
+        .corners = corners_buf[0..nc],
+        .path = path_buf[0..np],
+    };
+    const recs = [_]export_query.QueryRecord{rec};
+
+    // CSV
+    {
+        var aw = std.Io.Writer.Allocating.init(gpa);
+        defer aw.deinit();
+        export_query.writeCsv(&aw.writer, &recs) catch |e| {
+            bctx.context().log(.err, "Export Query CSV: write failed: {s}", .{@errorName(e)});
+            return;
+        };
+        const csv_path = std.fmt.allocPrint(gpa, "{s}/export_query.csv", .{folder}) catch return;
+        defer gpa.free(csv_path);
+        io_util.writeWholeFile(csv_path, aw.written(), gpa) catch |e| {
+            bctx.context().log(.err, "Export Query CSV: file write failed: {s}", .{@errorName(e)});
+            return;
+        };
+        bctx.context().log(.progress, "Exported query CSV to {s}", .{csv_path});
+    }
+
+    // JSON
+    {
+        const json = export_query.writeJson(gpa, &recs) catch |e| {
+            bctx.context().log(.err, "Export Query JSON: encode failed: {s}", .{@errorName(e)});
+            return;
+        };
+        defer gpa.free(json);
+        const json_path = std.fmt.allocPrint(gpa, "{s}/export_query.json", .{folder}) catch return;
+        defer gpa.free(json_path);
+        io_util.writeWholeFile(json_path, json, gpa) catch |e| {
+            bctx.context().log(.err, "Export Query JSON: file write failed: {s}", .{@errorName(e)});
+            return;
+        };
+        bctx.context().log(.progress, "Exported query JSON to {s}", .{json_path});
+    }
 }
 
 fn saveSceneNow(

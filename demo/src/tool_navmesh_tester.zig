@@ -20,6 +20,7 @@ const funnel = @import("diag/funnel.zig");
 const filter_compare = @import("diag/filter_compare.zig");
 const query_bench = @import("diag/query_bench.zig");
 const profiler = @import("diag/profiler.zig");
+const export_query = @import("io/export_query.zig");
 
 const dt = recast.detour;
 const dbg = recast.debug;
@@ -1564,6 +1565,97 @@ pub const NavMeshTesterTool = struct {
             self.mode = m;
             self.recalc();
         }
+    }
+
+    /// Собрать запись результата текущего запроса для экспорта (D4).
+    /// Возвращает null, если запроса нет (нет start/end или режим не pathfind).
+    /// corners/path указывают во ВНУТРЕННИЕ буферы tester'а (валидны до следующего
+    /// recalc) — caller копирует сразу при экспорте.
+    pub fn currentQueryRecord(self: *NavMeshTesterTool) ?export_query.QueryRecord {
+        // Только pathfind-режимы имеют корридор + straight/smooth путь.
+        switch (self.mode) {
+            .pathfind_follow, .pathfind_straight, .pathfind_sliced => {},
+            else => return null,
+        }
+        if (!self.spos_set or !self.epos_set) return null;
+        if (self.start_ref == 0 and self.end_ref == 0) return null;
+
+        const kind: []const u8 = @tagName(self.mode);
+
+        // status: на основе npolys и verdict (если валиден).
+        const status: []const u8 = if (!self.spos_set or !self.epos_set or
+            (self.start_ref == 0 or self.end_ref == 0))
+            "invalid"
+        else if (self.npolys == 0)
+            "failed"
+        else blk: {
+            // Проверяем дошёл ли путь до конца (last poly == end_ref).
+            const reached = self.npolys > 0 and self.polys[self.npolys - 1] == self.end_ref;
+            break :blk if (reached) "ok" else "partial";
+        };
+
+        // nwaypoints: для follow — nsmooth, для straight/sliced — nstraight.
+        const nwaypoints: u32 = @intCast(switch (self.mode) {
+            .pathfind_follow => self.nsmooth,
+            else => self.nstraight,
+        });
+
+        // path_len: сумма расстояний между corner-точками straight/sliced;
+        // для follow используем nsmooth-буфер (smooth).
+        var path_len: f32 = 0;
+        if (self.mode == .pathfind_follow) {
+            if (self.nsmooth > 1) {
+                var k: usize = 0;
+                while (k + 1 < self.nsmooth) : (k += 1) {
+                    const dx = self.smooth[(k + 1) * 3 + 0] - self.smooth[k * 3 + 0];
+                    const dy = self.smooth[(k + 1) * 3 + 1] - self.smooth[k * 3 + 1];
+                    const dz = self.smooth[(k + 1) * 3 + 2] - self.smooth[k * 3 + 2];
+                    path_len += @sqrt(dx * dx + dy * dy + dz * dz);
+                }
+            }
+        } else {
+            if (self.nstraight > 1) {
+                var k: usize = 0;
+                while (k + 1 < self.nstraight) : (k += 1) {
+                    const dx = self.straight[(k + 1) * 3 + 0] - self.straight[k * 3 + 0];
+                    const dy = self.straight[(k + 1) * 3 + 1] - self.straight[k * 3 + 1];
+                    const dz = self.straight[(k + 1) * 3 + 2] - self.straight[k * 3 + 2];
+                    path_len += @sqrt(dx * dx + dy * dy + dz * dz);
+                }
+            }
+        }
+
+        // corners: срез straight[0..nstraight*3] как [][3]f32 (для straight/sliced);
+        // для follow — пустой срез (waypoints в smooth, не в straight).
+        const corners: []const [3]f32 = if (self.mode != .pathfind_follow and self.nstraight > 0)
+            @as([*]const [3]f32, @ptrCast(&self.straight))[0..self.nstraight]
+        else
+            &[_][3]f32{};
+
+        // path: polys[0..npolys] как []const u32.
+        // PolyRef = u32 (default build) или u64 (-Dpolyref64).
+        // export_query.QueryRecord.path = []const u32.
+        // При polyref64 (u64) срез несовместим — отдаём пустой (npolys — счётчик в записи).
+        const path_raw: []const u32 = if (dt.PolyRef == u32)
+            self.polys[0..self.npolys]
+        else
+            &[_]u32{};
+
+        return export_query.QueryRecord{
+            .id = "Q0",
+            .kind = kind,
+            .start = self.spos,
+            .end = self.epos,
+            .status = status,
+            .path_len = path_len,
+            .npolys = @intCast(self.npolys),
+            .nwaypoints = nwaypoints,
+            .ms = 0, // таймер не реализован — возвращаем 0 (документировано)
+            .include_flags = self.filter.getIncludeFlags(),
+            .exclude_flags = self.filter.getExcludeFlags(),
+            .corners = corners,
+            .path = path_raw,
+        };
     }
 };
 
