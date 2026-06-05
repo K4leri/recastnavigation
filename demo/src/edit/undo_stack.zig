@@ -249,9 +249,12 @@ test "area_add undo removes the new type, redo re-creates it" {
     const r = area_types.get(id).?;
     try std.testing.expectEqualStrings("Lava", r.name());
     try std.testing.expectEqual(@as(u8, 9), r.r);
+    try std.testing.expectEqual(@as(u8, 8), r.g);
+    try std.testing.expectEqual(@as(u8, 7), r.b);
     try std.testing.expectEqual(@as(f32, 4.5), r.cost);
     try std.testing.expectEqual(@as(u16, 0x0A), r.flags);
     try std.testing.expect(!r.builtin);
+    try std.testing.expect(r.used);
     area_types.resetToBuiltins();
 }
 
@@ -287,6 +290,9 @@ test "area_edit undo restores before, redo applies after (name/color/cost/flags)
     try std.testing.expect(st.redo(&geom));
     const r = area_types.get(0).?;
     try std.testing.expectEqualStrings("Stone", r.name());
+    try std.testing.expectEqual(@as(u8, 1), r.r);
+    try std.testing.expectEqual(@as(u8, 2), r.g);
+    try std.testing.expectEqual(@as(u8, 3), r.b);
     try std.testing.expectEqual(@as(f32, 9.0), r.cost);
     try std.testing.expectEqual(@as(u16, 0x0C), r.flags);
     area_types.resetToBuiltins();
@@ -302,7 +308,11 @@ test "area_remove undo restores the type, redo removes it again" {
     const id = area_types.addType().?;
     var t = area_types.get(id).?;
     t.setName("Mud");
+    t.r = 50;
+    t.g = 100;
+    t.b = 150;
     t.cost = 6.0;
+    t.flags = 0x07;
     const captured = t.*;
     area_types.removeType(id);
     st.record(.{ .area_remove = .{ .id = id, .type = captured } });
@@ -312,7 +322,12 @@ test "area_remove undo restores the type, redo removes it again" {
     try std.testing.expect(st.undo(&geom));
     const r = area_types.get(id).?;
     try std.testing.expectEqualStrings("Mud", r.name());
+    try std.testing.expectEqual(@as(u8, 50), r.r);
+    try std.testing.expectEqual(@as(u8, 100), r.g);
+    try std.testing.expectEqual(@as(u8, 150), r.b);
     try std.testing.expectEqual(@as(f32, 6.0), r.cost);
+    try std.testing.expectEqual(@as(u16, 0x07), r.flags);
+    try std.testing.expect(!r.builtin);
 
     // Redo -> gone again.
     try std.testing.expect(st.redo(&geom));

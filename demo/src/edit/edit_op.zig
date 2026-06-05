@@ -111,11 +111,11 @@ pub const EditOp = union(enum) {
             },
             .flag_add => |f| {
                 poly_flags.restoreFlag(f.bit_index, f.flag.name(), f.flag.builtin);
-                markAreaDirty();
+                // Flag DEFINITIONS do not touch baked tile data — no rebuild needed.
             },
             .flag_remove => |f| {
                 poly_flags.removeFlag(f.bit_index);
-                markAreaDirty();
+                // Flag DEFINITIONS do not touch baked tile data — no rebuild needed.
             },
         }
     }
@@ -152,11 +152,11 @@ pub const EditOp = union(enum) {
             },
             .flag_add => |f| {
                 poly_flags.removeFlag(f.bit_index);
-                markAreaDirty();
+                // Flag DEFINITIONS do not touch baked tile data — no rebuild needed.
             },
             .flag_remove => |f| {
                 poly_flags.restoreFlag(f.bit_index, f.flag.name(), f.flag.builtin);
-                markAreaDirty();
+                // Flag DEFINITIONS do not touch baked tile data — no rebuild needed.
             },
         }
     }
