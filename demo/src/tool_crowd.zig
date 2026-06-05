@@ -12,6 +12,9 @@ const vh_mod = @import("value_history.zig");
 const ValueHistory = vh_mod.ValueHistory;
 const io_util = @import("io_util.zig");
 const why_stuck = @import("diag/why_stuck.zig");
+const crowd_replay = @import("diag/crowd_replay.zig");
+const CrowdEvent = crowd_replay.CrowdEvent;
+const EventLog = crowd_replay.EventLog;
 
 const dt = recast.detour;
 const dc = recast.detour_crowd;
@@ -91,6 +94,19 @@ pub const CrowdTool = struct {
     vod: ?dc.ObstacleAvoidanceDebugData = null,
     dbg_frame: u32 = 0,
 
+    // --- Crowd Record/Replay (Cluster J / P1) --------------------------------
+    // Журнал событий + монотонный кадровый счётчик. Запись (recording) логирует
+    // каждое пользовательское действие с текущим replay_frame. Реплей (replay_active)
+    // сбрасывает толпу и покадрово re-симулирует журнал ФИКСИРОВАННЫМ dt — детерминизм
+    // обеспечивается тем же навмешем + теми же событиями + фиксированным dt (ядро без RNG).
+    log: ?EventLog = null,
+    replay_frame: u64 = 0, // ++ каждый update() (общий счётчик и для записи, и для реплея)
+    recording: bool = false,
+    replay_active: bool = false,
+    replay_cursor: usize = 0, // индекс следующего непроигранного события
+    replay_frame_cur: u64 = 0, // текущий кадр в ходе реплея (для UI)
+    const REPLAY_DT: f32 = 1.0 / 60.0; // фиксированный шаг реплея
+
     pub fn init(alloc: std.mem.Allocator, dd_gl: *ddgl.DebugDrawGL) CrowdTool {
         return .{ .alloc = alloc, .dd_gl = dd_gl, .filter = dt.QueryFilter.init() };
     }
@@ -99,9 +115,40 @@ pub const CrowdTool = struct {
         if (self.crowd) |*c| c.deinit();
         if (self.query) |q| q.deinit();
         if (self.vod) |*v| v.deinit();
+        if (self.log) |*l| l.deinit();
         self.crowd = null;
         self.query = null;
         self.vod = null;
+        self.log = null;
+    }
+
+    /// Лениво создаёт журнал событий (alloc нужен, а init() — литерал без alloc-вызовов).
+    fn getLog(self: *CrowdTool) *EventLog {
+        if (self.log == null) self.log = EventLog.init(self.alloc);
+        return &self.log.?;
+    }
+
+    /// Логирует событие, если запись активна (и НЕ во время реплея — реплей не пишет в журнал).
+    fn record(self: *CrowdTool, ev: CrowdEvent) void {
+        if (!self.recording or self.replay_active) return;
+        self.getLog().append(ev) catch {};
+    }
+
+    /// Экспорт журнала в бинарь (через io_util.writeWholeFile) — сценарий пересылается.
+    pub fn saveLog(self: *CrowdTool, path: []const u8) !void {
+        const log = self.getLog();
+        const blob = try log.serialize(self.alloc);
+        defer self.alloc.free(blob);
+        try io_util.writeWholeFile(path, blob, self.alloc);
+    }
+
+    /// Импорт журнала из бинаря (перезаписывает текущий журнал).
+    pub fn loadLog(self: *CrowdTool, path: []const u8) !void {
+        const blob = try io_util.readWholeFile(path, self.alloc);
+        defer self.alloc.free(blob);
+        const log = self.getLog();
+        log.clear();
+        try log.deserialize(blob);
     }
 
     /// Re-push area costs into the crowd's filter 0 after they were edited.
@@ -237,11 +284,15 @@ pub const CrowdTool = struct {
                         best = i;
                     }
                 }
-                if (best) |bi| c.removeAgent(@intCast(bi));
+                if (best) |bi| {
+                    c.removeAgent(@intCast(bi));
+                    self.record(.{ .remove_agent = .{ .frame = self.replay_frame, .idx = @intCast(bi) } });
+                }
             } else {
                 var params = self.buildParams();
                 const idx = c.addAgent(ray_hit, &params) catch -1;
                 self.agent_count = c.getAgentCount();
+                if (idx >= 0) self.record(.{ .add_agent = .{ .frame = self.replay_frame, .pos = ray_hit.* } });
                 // New agent joins the current move target, if any (1:1 C++
                 // CrowdToolState::addAgent: `if (targetPolyRef) requestMoveTarget(...)`).
                 if (idx >= 0 and self.has_target and self.target_ref != 0) {
@@ -252,6 +303,9 @@ pub const CrowdTool = struct {
             if (shift) {
                 // Shift+ЛКМ = velocity-move БЕЗ pathfinder (setMoveTarget adjust=true в оригинале):
                 // requestMoveVelocity -> target_state=velocity -> агент ЗЕЛЁНЫЙ, идёт напрямую.
+                // Запись: храним целевую ТОЧКУ клика (vel — производная от позиций агентов;
+                // реплей пересчитает её тем же путём applyVelocityToward, что и здесь).
+                self.record(.{ .set_velocity = .{ .frame = self.replay_frame, .vel = ray_hit.* } });
                 for (0..self.agent_count) |i| {
                     const ag = c.getAgent(@intCast(i)) orelse continue;
                     if (!ag.active) continue;
@@ -277,6 +331,9 @@ pub const CrowdTool = struct {
                     self.target_pos = snapped;
                     self.target_ref = ref;
                     self.has_target = true;
+                    // Запись: храним сырую точку клика (реплей сам прогонит findNearestPoly,
+                    // чтобы получить тот же ref/snapped на том же навмеше).
+                    self.record(.{ .move_target = .{ .frame = self.replay_frame, .pos = ray_hit.* } });
                 }
             }
         } else if (self.mode == .toggle_polys) {
@@ -310,70 +367,187 @@ pub const CrowdTool = struct {
         }
     }
 
-    pub fn update(self: *CrowdTool, delta: f32) void {
-        if (!self.running) return;
-        if (self.crowd) |*c| {
-            // Прокидываем debug-инфо выделенного агента (для VO / path-opt визуализации).
-            self.debug.idx = if (self.selected) |s| @intCast(s) else -1;
-            if (self.vod) |*v| {
-                self.debug.vod = v;
-            } else self.debug.vod = null;
-            // Time the crowd update for the perf graph (1:1 CrowdToolState::update:
-            // crowdTotalTime/crowdSampleCount sampled around dtCrowd::update).
-            var timer = io_util.PerfTimer.start();
-            c.updateDebug(delta, &self.debug) catch {};
-            self.crowd_total_time.addSample(timer.readMs());
-            self.crowd_sample_count.addSample(@floatFromInt(c.getVelocitySampleCount()));
-            // Crowd Analytics: stuck count / avg+max speed по активным агентам (один проход).
-            var stuck: usize = 0;
-            var sum_speed: f32 = 0;
-            var max_speed: f32 = 0;
-            var n_active: usize = 0;
-            // Запись следа (как CrowdToolState::handleUpdate): кольцевой буфер позиций.
-            for (0..self.agent_count) |i| {
-                const ag = c.getAgent(@intCast(i)) orelse continue;
-                if (!ag.active) continue;
-                // аналитика скорости
-                const vx = ag.vel[0];
-                const vy = ag.vel[1];
-                const vz = ag.vel[2];
-                const sp = @sqrt(vx * vx + vy * vy + vz * vz);
-                sum_speed += sp;
-                if (sp > max_speed) max_speed = sp;
-                n_active += 1;
-                // аналитика «застрял»: тот же classify, что и why-stuck (gatherSignals).
-                const v = why_stuck.classify(gatherSignals(ag));
-                if (v != .moving and v != .arrived) stuck += 1;
-                var t = &self.trails[i];
-                t.htrail = (t.htrail + 1) % AGENT_MAX_TRAIL;
-                t.trail[t.htrail * 3 + 0] = ag.npos[0];
-                t.trail[t.htrail * 3 + 1] = ag.npos[1];
-                t.trail[t.htrail * 3 + 2] = ag.npos[2];
-            }
-            const avg_speed: f32 = if (n_active > 0) sum_speed / @as(f32, @floatFromInt(n_active)) else 0;
-            // max density: перебор ВСЕХ занятых ячеек прокси-сетки (тот же приём, что
-            // Show Prox Grid render ~456 — getBounds()+getItemCountAt; доказанно дёшево).
-            var max_density: usize = 0;
-            const grid = c.getGrid();
-            const b = grid.getBounds();
-            var gy: i32 = b[1];
-            while (gy <= b[3]) : (gy += 1) {
-                var gx: i32 = b[0];
-                while (gx <= b[2]) : (gx += 1) {
-                    const cnt = grid.getItemCountAt(gx, gy);
-                    if (cnt > max_density) max_density = cnt;
-                }
-            }
-            self.an_cur_stuck = stuck;
-            self.an_cur_avg = avg_speed;
-            self.an_cur_max = max_speed;
-            self.an_cur_density = max_density;
-            self.an_stuck_count.addSample(@floatFromInt(stuck));
-            self.an_avg_speed.addSample(avg_speed);
-            self.an_max_speed.addSample(max_speed);
-            self.an_max_density.addSample(@floatFromInt(max_density));
+    // --- Реплей: применение событий журнала к толпе (re-sim) -----------------
+    // Эти хелперы повторяют 1-в-1 эффект соответствующих веток onClick, но без
+    // записи в журнал и без зависимости от мыши. Семантика move/velocity — «всем
+    // активным агентам», как в onClick.
+
+    fn applyAddAgent(self: *CrowdTool, pos: *const [3]f32) void {
+        const c = if (self.crowd) |*cc| cc else return;
+        var params = self.buildParams();
+        const idx = c.addAgent(pos, &params) catch -1;
+        self.agent_count = c.getAgentCount();
+        if (idx >= 0 and self.has_target and self.target_ref != 0) {
+            _ = c.requestMoveTarget(idx, self.target_ref, &self.target_pos);
         }
     }
+
+    fn applyMoveTargetAt(self: *CrowdTool, pos: *const [3]f32) void {
+        const c = if (self.crowd) |*cc| cc else return;
+        const q = self.query orelse return;
+        const ext = [3]f32{ 2, 4, 2 };
+        var ref: dt.PolyRef = 0;
+        var snapped: [3]f32 = undefined;
+        _ = q.findNearestPoly(pos, &ext, &self.filter, &ref, &snapped) catch {};
+        if (ref != 0) {
+            for (0..self.agent_count) |i| _ = c.requestMoveTarget(@intCast(i), ref, &snapped);
+            self.target_pos = snapped;
+            self.target_ref = ref;
+            self.has_target = true;
+        }
+    }
+
+    fn applyVelocityToward(self: *CrowdTool, pos: *const [3]f32) void {
+        const c = if (self.crowd) |*cc| cc else return;
+        for (0..self.agent_count) |i| {
+            const ag = c.getAgent(@intCast(i)) orelse continue;
+            if (!ag.active) continue;
+            var vel = [3]f32{ pos[0] - ag.npos[0], pos[1] - ag.npos[1], pos[2] - ag.npos[2] };
+            const len = @sqrt(vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]);
+            if (len > 0.0001) {
+                const s = ag.params.max_speed / len;
+                vel[0] *= s;
+                vel[1] *= s;
+                vel[2] *= s;
+            }
+            _ = c.requestMoveVelocity(@intCast(i), &vel);
+        }
+    }
+
+    /// Сбрасывает толпу в стартовое состояние реплея: удаляет всех агентов,
+    /// чистит следы/цель/счётчики. Навмеш/фильтры/пресеты не трогаем (старт = текущий навмеш).
+    fn resetCrowdForReplay(self: *CrowdTool) void {
+        const c = if (self.crowd) |*cc| cc else return;
+        for (0..self.agent_count) |i| {
+            const ag = c.getAgent(@intCast(i)) orelse continue;
+            if (ag.active) c.removeAgent(@intCast(i));
+        }
+        self.agent_count = c.getAgentCount();
+        self.selected = null;
+        self.has_target = false;
+        self.target_ref = 0;
+        self.trails = [_]AgentTrail{.{}} ** MAX_AGENTS;
+    }
+
+    /// Запускает реплей: сбрасывает толпу и ставит проигрывание журнала с кадра 0.
+    /// Если журнал пуст — ничего не делает.
+    pub fn startReplay(self: *CrowdTool) void {
+        const log = if (self.log) |*l| l else return;
+        if (log.count() == 0) return;
+        self.recording = false;
+        self.resetCrowdForReplay();
+        self.replay_active = true;
+        self.replay_cursor = 0;
+        self.replay_frame_cur = 0;
+        self.running = true;
+    }
+
+    /// Один кадр реплея: применяет все события, чей frame == текущему кадру реплея,
+    /// затем один шаг симуляции фиксированным dt. Возвращает true, пока реплей идёт.
+    fn replayStep(self: *CrowdTool) void {
+        const log = if (self.log) |*l| l else {
+            self.replay_active = false;
+            return;
+        };
+        const items = log.events.items;
+        // Применяем все события на текущем кадре (в порядке журнала).
+        while (self.replay_cursor < items.len and items[self.replay_cursor].frame() <= self.replay_frame_cur) {
+            switch (items[self.replay_cursor]) {
+                .add_agent => |e| self.applyAddAgent(&e.pos),
+                .move_target => |e| self.applyMoveTargetAt(&e.pos),
+                .set_velocity => |e| self.applyVelocityToward(&e.vel),
+                .remove_agent => |e| {
+                    if (self.crowd) |*c| {
+                        c.removeAgent(@intCast(e.idx));
+                        self.agent_count = c.getAgentCount();
+                    }
+                },
+            }
+            self.replay_cursor += 1;
+        }
+        // Шаг симуляции фиксированным dt.
+        self.simStep(REPLAY_DT);
+        self.replay_frame_cur += 1;
+        // Реплей завершён, когда все события проиграны И толпа «успокоилась» — здесь
+        // упрощённо: останавливаем проигрывание событий, но продолжаем step ещё немного,
+        // чтобы агенты доехали. Закрываем реплей, как только курсор исчерпан и прошло
+        // достаточно «послесобытийных» кадров (held below by a tail counter).
+        if (self.replay_cursor >= items.len) {
+            // последний кадр события + хвост (3 сек при 60 fps) на доезд агентов
+            const last_frame = items[items.len - 1].frame();
+            if (self.replay_frame_cur > last_frame + 180) self.replay_active = false;
+        }
+    }
+
+    /// Чистый шаг симуляции толпы (без кадрового счётчика реплея) — общий код для
+    /// update() и реплея: debug-инфо, dtCrowd::update, аналитика, следы.
+    fn simStep(self: *CrowdTool, delta: f32) void {
+        const c = if (self.crowd) |*cc| cc else return;
+        self.debug.idx = if (self.selected) |s| @intCast(s) else -1;
+        if (self.vod) |*v| {
+            self.debug.vod = v;
+        } else self.debug.vod = null;
+        var timer = io_util.PerfTimer.start();
+        c.updateDebug(delta, &self.debug) catch {};
+        self.crowd_total_time.addSample(timer.readMs());
+        self.crowd_sample_count.addSample(@floatFromInt(c.getVelocitySampleCount()));
+        var stuck: usize = 0;
+        var sum_speed: f32 = 0;
+        var max_speed: f32 = 0;
+        var n_active: usize = 0;
+        for (0..self.agent_count) |i| {
+            const ag = c.getAgent(@intCast(i)) orelse continue;
+            if (!ag.active) continue;
+            const vx = ag.vel[0];
+            const vy = ag.vel[1];
+            const vz = ag.vel[2];
+            const sp = @sqrt(vx * vx + vy * vy + vz * vz);
+            sum_speed += sp;
+            if (sp > max_speed) max_speed = sp;
+            n_active += 1;
+            const v = why_stuck.classify(gatherSignals(ag));
+            if (v != .moving and v != .arrived) stuck += 1;
+            var t = &self.trails[i];
+            t.htrail = (t.htrail + 1) % AGENT_MAX_TRAIL;
+            t.trail[t.htrail * 3 + 0] = ag.npos[0];
+            t.trail[t.htrail * 3 + 1] = ag.npos[1];
+            t.trail[t.htrail * 3 + 2] = ag.npos[2];
+        }
+        const avg_speed: f32 = if (n_active > 0) sum_speed / @as(f32, @floatFromInt(n_active)) else 0;
+        var max_density: usize = 0;
+        const grid = c.getGrid();
+        const b = grid.getBounds();
+        var gy: i32 = b[1];
+        while (gy <= b[3]) : (gy += 1) {
+            var gx: i32 = b[0];
+            while (gx <= b[2]) : (gx += 1) {
+                const cnt = grid.getItemCountAt(gx, gy);
+                if (cnt > max_density) max_density = cnt;
+            }
+        }
+        self.an_cur_stuck = stuck;
+        self.an_cur_avg = avg_speed;
+        self.an_cur_max = max_speed;
+        self.an_cur_density = max_density;
+        self.an_stuck_count.addSample(@floatFromInt(stuck));
+        self.an_avg_speed.addSample(avg_speed);
+        self.an_max_speed.addSample(max_speed);
+        self.an_max_density.addSample(@floatFromInt(max_density));
+    }
+
+    pub fn update(self: *CrowdTool, delta: f32) void {
+        if (!self.running) return;
+        // Реплей: игнорируем входящий dt из main, степпим ФИКСИРОВАННЫМ REPLAY_DT
+        // (детерминизм). Один update()-кадр = один replayStep (1/60). main не трогаем.
+        if (self.replay_active) {
+            self.replayStep();
+            return;
+        }
+        // Обычный (live) ход: монотонный кадровый счётчик для записи.
+        self.replay_frame += 1;
+        self.simStep(delta);
+    }
+
 
     /// Draw the crowd perf graphs (1:1 CrowdToolState::handleRenderOverlay,
     /// showPerfGraph). Total update time (0..2 ms) + velocity sample count
@@ -824,6 +998,37 @@ pub const CrowdTool = struct {
                 "Off-mesh links DISABLED - agents reroute around them."
             else
                 "Off-mesh links enabled.", .{}, .{ .expand = .horizontal });
+        }
+
+        // Crowd Record/Replay (Cluster J / P1) — запись действий + детерминированный реплей.
+        if (ui.treeNode(@src(), "Crowd Record/Replay")) {
+            const n_ev = if (self.log) |*l| l.count() else 0;
+            if (!self.replay_active) {
+                _ = dvui.checkbox(@src(), &self.recording, "Record", .{});
+            } else {
+                dvui.labelNoFmt(@src(), "Record (disabled during replay)", .{}, .{});
+            }
+            dvui.label(@src(), "events recorded: {d}", .{n_ev}, .{});
+
+            if (self.replay_active) {
+                dvui.label(@src(), "REPLAY frame: {d}", .{self.replay_frame_cur}, .{});
+                if (dvui.button(@src(), "Stop Replay", .{}, .{})) self.replay_active = false;
+            } else {
+                if (dvui.button(@src(), "Play Recording", .{}, .{})) self.startReplay();
+            }
+
+            if (dvui.button(@src(), "Clear Log", .{}, .{})) {
+                if (self.log) |*l| l.clear();
+                self.replay_frame = 0;
+            }
+            // Disk-сериализация журнала (export/import) в meshes/crowd_replay.bin.
+            if (dvui.button(@src(), "Save Log -> meshes/crowd_replay.bin", .{}, .{})) {
+                self.saveLog("meshes/crowd_replay.bin") catch {};
+            }
+            if (dvui.button(@src(), "Load Log <- meshes/crowd_replay.bin", .{}, .{})) {
+                self.loadLog("meshes/crowd_replay.bin") catch {};
+            }
+            dvui.labelNoFmt(@src(), "Record -> act -> Play Recording (fixed 1/60 dt re-sim).", .{}, .{ .expand = .horizontal });
         }
 
         _ = dvui.separator(@src(), .{ .expand = .horizontal });
