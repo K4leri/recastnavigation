@@ -422,6 +422,51 @@ test "composite group: undo reverts BOTH, redo re-adds BOTH, slice freed once" {
     // testing.allocator asserts no leak / no double-free on st.deinit() above.
 }
 
+test "composite revert is reverse-order: two index-deletes re-insert in order" {
+    const edit_op = @import("edit_op.zig");
+    var geom = InputGeom.init(std.testing.allocator);
+    defer geom.deinit();
+    var st = UndoStack.init(std.testing.allocator);
+    defer st.deinit();
+
+    const triA = [_]f32{ 0, 0, 0, 1, 0, 0, 0, 0, 1 }; // id 1
+    const triB = [_]f32{ 5, 0, 0, 6, 0, 0, 5, 0, 1 }; // id 2
+    const triC = [_]f32{ 9, 0, 0, 9, 0, 1, 8, 0, 0 }; // id 3
+    try geom.addConvexVolume(&triA, 3, 0.0, 1.0, 0);
+    try geom.addConvexVolume(&triB, 3, 0.0, 1.0, 0);
+    try geom.addConvexVolume(&triC, 3, 0.0, 1.0, 0);
+    const id_a = geom.volumes.items[0].id;
+    const id_b = geom.volumes.items[1].id;
+    const id_c = geom.volumes.items[2].id;
+
+    // Group deletes index 0 twice: removes A (list [B,C]), then removes B (list [C]).
+    const op0 = EditOp{ .delete_volume = .{ .index = 0, .vol = geom.volumes.items[0] } };
+    geom.deleteConvexVolume(0);
+    const op1 = EditOp{ .delete_volume = .{ .index = 0, .vol = geom.volumes.items[0] } };
+    geom.deleteConvexVolume(0);
+    try std.testing.expectEqual(@as(usize, 1), geom.volumes.items.len);
+    try std.testing.expectEqual(id_c, geom.volumes.items[0].id);
+
+    const ops = try std.testing.allocator.alloc(EditOp, 2);
+    ops[0] = op0; // delete A
+    ops[1] = op1; // delete B
+    st.record(edit_op.makeComposite(std.testing.allocator, ops));
+
+    // Reverse revert: ops[1] re-inserts B at 0 -> [B,C]; ops[0] re-inserts A at 0
+    // -> [A,B,C]. FORWARD order would yield [B,A,C] (A inserted first, then B at 0
+    // pushes A down) — so the id ordering below proves reverse iteration.
+    try std.testing.expect(st.undo(&geom));
+    try std.testing.expectEqual(@as(usize, 3), geom.volumes.items.len);
+    try std.testing.expectEqual(id_a, geom.volumes.items[0].id);
+    try std.testing.expectEqual(id_b, geom.volumes.items[1].id);
+    try std.testing.expectEqual(id_c, geom.volumes.items[2].id);
+
+    // Redo replays forward: both deletes again -> only C remains.
+    try std.testing.expect(st.redo(&geom));
+    try std.testing.expectEqual(@as(usize, 1), geom.volumes.items.len);
+    try std.testing.expectEqual(id_c, geom.volumes.items[0].id);
+}
+
 test "ring eviction frees oldest, no leak" {
     var geom = InputGeom.init(std.testing.allocator);
     defer geom.deinit();

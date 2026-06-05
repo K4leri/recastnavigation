@@ -6,7 +6,11 @@
 //! Identity is by stable id, not array index, so a selection survives the
 //! add/remove churn that undo/redo performs:
 //!   - `volumes` holds ConvexVolume `.id` values (monotonic, never reused).
-//!   - `offmesh` holds off-mesh `.off_id` values.
+//!   - `offmesh` holds off-mesh `.off_id` values. NOTE: off_id is currently
+//!     INDEX-DERIVED (1000 + array length, see input_geom.zig) and is NOT stable
+//!     across deletion — deleting a middle connection and adding a new one reuses
+//!     an id. Off-mesh selection is therefore safe within a churn-free session but
+//!     can alias after delete+add until off_id is made monotonic (foundation TODO).
 
 const std = @import("std");
 const ig = @import("../input_geom.zig");
