@@ -63,6 +63,16 @@ const mp_vtable = tc.TileCacheMeshProcess.VTable{ .process = meshProcess };
 
 const Obstacle = struct { ref: tc.ObstacleRef, pos: [3]f32, radius: f32, height: f32 };
 
+// --- tilecache time-line (Cluster J / P0): obstacle event journal ---
+const ObstacleEventKind = enum { add, remove };
+const ObstacleEvent = struct {
+    kind: ObstacleEventKind,
+    pos: [3]f32,
+    /// Monotonic sequence (NOT wall-clock — std time/Date is unavailable in 0.16 demo scripts).
+    seq: u64,
+};
+const EVENT_LOG_SHOW = 8; // last N events shown in the panel
+
 pub const SampleTempObstacles = struct {
     alloc: std.mem.Allocator,
     settings: sample.CommonSettings = .{},
@@ -83,14 +93,41 @@ pub const SampleTempObstacles = struct {
 
     obstacles: std.array_list.Managed(Obstacle),
 
+    // --- tilecache time-line (Cluster J / P0) ---
+    /// Append-only journal of obstacle add/remove events (no compaction).
+    event_log: std.array_list.Managed(ObstacleEvent),
+    /// Monotonic counter feeding ObstacleEvent.seq (incremented per logged event).
+    event_seq: u64 = 0,
+    /// When ON, applyUpdates does NOT drain the whole queue at once; instead the
+    /// per-frame update() processes a bounded number of tiles so the rebuild is
+    /// visible over time. When OFF -> legacy behavior (drain whole queue on edit).
+    step_rebuild: bool = false,
+    /// Tiles processed per frame while step_rebuild is ON.
+    step_tiles_per_frame: i32 = 1,
+    /// Cached "pending updates" snapshot for the panel (read from tilecache.nupdate).
+    last_pending: usize = 0,
+
     pub fn init(alloc: std.mem.Allocator, bctx: *BuildContext, dd_gl: *ddgl.DebugDrawGL) SampleTempObstacles {
-        return .{ .alloc = alloc, .bctx = bctx, .dd_gl = dd_gl, .obstacles = std.array_list.Managed(Obstacle).init(alloc) };
+        return .{
+            .alloc = alloc,
+            .bctx = bctx,
+            .dd_gl = dd_gl,
+            .obstacles = std.array_list.Managed(Obstacle).init(alloc),
+            .event_log = std.array_list.Managed(ObstacleEvent).init(alloc),
+        };
     }
 
     pub fn deinit(self: *SampleTempObstacles) void {
         if (self.tilecache) |*t| t.deinit();
         if (self.navmesh) |*n| n.deinit();
         self.obstacles.deinit();
+        self.event_log.deinit();
+    }
+
+    /// Append an event to the obstacle journal (monotonic seq, append-only).
+    fn logEvent(self: *SampleTempObstacles, kind: ObstacleEventKind, pos: [3]f32) void {
+        self.event_seq += 1;
+        self.event_log.append(.{ .kind = kind, .pos = pos, .seq = self.event_seq }) catch {};
     }
 
     pub fn setGeom(self: *SampleTempObstacles, geom: *InputGeom) void {
@@ -269,7 +306,10 @@ pub const SampleTempObstacles = struct {
         const height: f32 = 2.0;
         const ref = t.addObstacle(&pos, radius, height) catch return;
         self.obstacles.append(.{ .ref = ref, .pos = pos, .radius = radius, .height = height }) catch {};
-        self.applyUpdates();
+        self.logEvent(.add, pos);
+        // Step rebuild ON: leave the request in the tilecache queue; per-frame
+        // update() will drain it one tile at a time so the regen is visible.
+        if (!self.step_rebuild) self.applyUpdates();
     }
 
     pub fn removeObstacleNear(self: *SampleTempObstacles, pos: [3]f32) void {
@@ -286,12 +326,17 @@ pub const SampleTempObstacles = struct {
             }
         }
         if (best) |i| {
+            const removed_pos = self.obstacles.items[i].pos;
             t.removeObstacle(self.obstacles.items[i].ref) catch {};
             _ = self.obstacles.orderedRemove(i);
-            self.applyUpdates();
+            self.logEvent(.remove, removed_pos);
+            if (!self.step_rebuild) self.applyUpdates();
         }
     }
 
+    /// Drain the ENTIRE tilecache update queue in one frame (legacy behavior).
+    /// The core TileCache.update processes one tile per call, so we loop until
+    /// up_to_date (out-param) reports the queue + requests are empty.
     fn applyUpdates(self: *SampleTempObstacles) void {
         const t = if (self.tilecache) |*tt| tt else return;
         const nm = if (self.navmesh) |*n| n else return;
@@ -300,13 +345,28 @@ pub const SampleTempObstacles = struct {
         while (!up_to_date and guard < 64) : (guard += 1) {
             _ = t.update(0, nm, &up_to_date) catch break;
         }
+        self.last_pending = t.nupdate;
     }
 
     pub fn update(self: *SampleTempObstacles, delta: f32) void {
         const t = if (self.tilecache) |*tt| tt else return;
         const nm = if (self.navmesh) |*n| n else return;
         var up_to_date = false;
-        _ = t.update(delta, nm, &up_to_date) catch {};
+        if (self.step_rebuild) {
+            // Step rebuild: process a bounded number of tiles this frame so the
+            // regeneration is spread across frames and visible. The core
+            // TileCache.update handles one tile per call; we call it up to
+            // step_tiles_per_frame times (stopping early once up_to_date).
+            var n: i32 = 0;
+            while (n < self.step_tiles_per_frame) : (n += 1) {
+                _ = t.update(delta, nm, &up_to_date) catch break;
+                if (up_to_date) break;
+            }
+        } else {
+            _ = t.update(delta, nm, &up_to_date) catch {};
+        }
+        // Snapshot pending tile count (read-only public field) for the panel.
+        self.last_pending = t.nupdate;
     }
 
     pub fn onClick(self: *SampleTempObstacles, _: *const [3]f32, ray_hit: *const [3]f32, shift: bool) void {
@@ -346,6 +406,25 @@ pub const SampleTempObstacles = struct {
                 dd.vertexXYZ(o.pos[0] + @cos(a1) * o.radius, o.pos[1] + o.height, o.pos[2] + @sin(a1) * o.radius, col);
             }
             dd.end();
+        }
+
+        // --- tilecache time-line (Cluster J / P0): highlight regenerating tiles ---
+        // While the tilecache has pending updates (nupdate > 0), draw the tight
+        // bbox of every tile currently queued for rebuild. Refs are taken from the
+        // public read-only update_queue[0..nupdate]; the exact tile bounds come from
+        // getTileByRef -> calcTightTileBounds (precise, NOT a coarse approximation).
+        if (self.tilecache) |*t| {
+            const hl = dbg.rgba(255, 200, 0, 220); // amber = regenerating
+            var i: usize = 0;
+            while (i < t.nupdate) : (i += 1) {
+                const ref = t.update_queue[i];
+                const ctile = t.getTileByRef(ref) orelse continue;
+                const header = ctile.header orelse continue;
+                var bmin: [3]f32 = undefined;
+                var bmax: [3]f32 = undefined;
+                t.calcTightTileBounds(header, &bmin, &bmax);
+                dbg.debugDrawBoxWire(dd, bmin[0], bmin[1], bmin[2], bmax[0], bmax[1], bmax[2], hl, 2.0);
+            }
         }
 
         // Scene overlays drawn regardless of the active tool (1:1 Sample::handleRender).
@@ -388,6 +467,31 @@ pub const SampleTempObstacles = struct {
         ui.section(@src(), "Tile Cache");
         dvui.label(@src(), "Obstacles  {d}", .{self.obstacles.items.len}, .{});
         dvui.label(@src(), "Navmesh Build Time  {d:.1} ms", .{self.build_time_ms}, .{});
+
+        // --- tilecache time-line (Cluster J / P0): step rebuild + counters + journal ---
+        ui.section(@src(), "Tile Cache Time-line");
+        _ = dvui.checkbox(@src(), &self.step_rebuild, "Step rebuild (1 tile/frame)", .{});
+        // pending updates: read live from tilecache.nupdate, fall back to snapshot.
+        const pending: usize = if (self.tilecache) |*t| t.nupdate else self.last_pending;
+        dvui.label(@src(), "Pending tile updates  {d}", .{pending}, .{});
+        // getObstacleCount() returns the tilecache obstacle *capacity* (max_obstacles),
+        // so we show both: live active count (our list) and capacity.
+        if (self.tilecache) |*t| {
+            dvui.label(@src(), "Obstacle slots (cap)  {d}", .{t.getObstacleCount()}, .{});
+        }
+        dvui.label(@src(), "Journal events  {d}", .{self.event_log.items.len}, .{});
+
+        // last N journal entries (kind + pos), newest first.
+        const n_ev = self.event_log.items.len;
+        const show = @min(n_ev, EVENT_LOG_SHOW);
+        var k: usize = 0;
+        while (k < show) : (k += 1) {
+            const ev = self.event_log.items[n_ev - 1 - k];
+            const kind_str = if (ev.kind == .add) "add" else "rem";
+            dvui.label(@src(), "#{d} {s} ({d:.1}, {d:.1}, {d:.1})", .{
+                ev.seq, kind_str, ev.pos[0], ev.pos[1], ev.pos[2],
+            }, .{ .id_extra = k });
+        }
 
         _ = dvui.separator(@src(), .{ .expand = .horizontal });
         if (dvui.button(@src(), "Save", .{}, .{})) self.saveNavMesh();
