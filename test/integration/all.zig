@@ -17,4 +17,5 @@ comptime {
     _ = @import("mergepolymesh_test.zig");
     _ = @import("dump_roundtrip_test.zig");
     _ = @import("detail_conformance_test.zig");
+    _ = @import("incremental_rebuild_test.zig");
 }
