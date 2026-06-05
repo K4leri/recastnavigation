@@ -511,7 +511,10 @@ pub fn main(main_init: std.process.Init) !void {
                 // last in-progress point first; fall through to the committed-edit
                 // stack only if there are no in-progress points to pop.
                 if (!(active_tool == .convex and convex_tool.undoPoint())) {
-                    if (undo_stack.undo(&geom)) geom_edited = true;
+                    if (undo_stack.undo(&geom)) {
+                        geom_edited = true;
+                        inspect_id = 0; // force the Properties panel to re-seed from the reverted object
+                    }
                 }
             }
             if (redo_now and !prev_redo) {
@@ -520,6 +523,7 @@ pub fn main(main_init: std.process.Init) !void {
                 // edit -> redo must re-apply the committed edit FIRST, then points.
                 if (undo_stack.redo(&geom)) {
                     geom_edited = true;
+                    inspect_id = 0; // re-seed the Properties panel after redo too
                 } else if (active_tool == .convex) {
                     _ = convex_tool.redoPoint();
                 }
@@ -1296,12 +1300,16 @@ pub fn main(main_init: std.process.Init) !void {
                 const convex_has_popped = active_tool == .convex and convex_tool.popped_pts.items.len >= 3;
                 if (dvui.button(@src(), "Undo", .{ .grayed = !can_u and !convex_has_pts }, .{ .id_extra = 970 })) {
                     if (!(active_tool == .convex and convex_tool.undoPoint())) {
-                        if (can_u and undo_stack.undo(&geom)) geom_edited = true;
+                        if (can_u and undo_stack.undo(&geom)) {
+                            geom_edited = true;
+                            inspect_id = 0; // re-seed Properties panel from the reverted object
+                        }
                     }
                 }
                 if (dvui.button(@src(), "Redo", .{ .grayed = !can_r and !convex_has_popped }, .{ .id_extra = 971 })) {
                     if (can_r and undo_stack.redo(&geom)) {
                         geom_edited = true;
+                        inspect_id = 0; // re-seed Properties panel after redo
                     } else if (active_tool == .convex) {
                         _ = convex_tool.redoPoint();
                     }
@@ -2236,6 +2244,7 @@ fn inspectorAreaDropdown(area_proxy: *f32) void {
     var ids: [area_types.MAX_AREA_TYPES]usize = undefined;
     var n: usize = 0;
     var cur_choice: usize = 0;
+    var cur_found = false;
     const cur_id: usize = @intFromFloat(std.math.clamp(@round(area_proxy.*), 0, 63));
     var i: usize = 0;
     while (i < area_types.MAX_AREA_TYPES) : (i += 1) {
@@ -2243,13 +2252,19 @@ fn inspectorAreaDropdown(area_proxy: *f32) void {
             if (t.used) {
                 labels[n] = t.name();
                 ids[n] = i;
-                if (i == cur_id) cur_choice = n;
+                if (i == cur_id) {
+                    cur_choice = n;
+                    cur_found = true;
+                }
                 n += 1;
             }
         }
     }
-    if (n == 0) {
-        dvui.label(@src(), "area: {d}", .{cur_id}, .{});
+    // No used types, or the object's current area id isn't one of them: show the
+    // raw id as a passthrough label and DO NOT overwrite area_proxy (a dropdown
+    // here would silently clobber the value to the first used type on frame 1).
+    if (n == 0 or !cur_found) {
+        dvui.label(@src(), "area: {d} (unlisted)", .{cur_id}, .{});
         return;
     }
     dvui.labelNoFmt(@src(), "Area", .{}, .{});

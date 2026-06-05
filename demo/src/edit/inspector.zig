@@ -116,9 +116,11 @@ test "buildAfterVolume maps fields and clamps hmin<=hmax (swap on inversion)" {
     try std.testing.expectEqual(@as(f32, 1.0), inv.hmin);
     try std.testing.expectEqual(@as(f32, 8.0), inv.hmax);
 
-    // Area clamps into [0,63].
-    const cl = buildAfterVolume(live, .{ .area = 200 });
-    try std.testing.expectEqual(@as(u8, 63), cl.area);
+    // Area clamps into [0,63] in both directions and at the boundary.
+    try std.testing.expectEqual(@as(u8, 63), buildAfterVolume(live, .{ .area = 200 }).area); // upper
+    try std.testing.expectEqual(@as(u8, 0), buildAfterVolume(live, .{ .area = -5 }).area); // negative -> 0, no wrap
+    try std.testing.expectEqual(@as(u8, 63), buildAfterVolume(live, .{ .area = 63 }).area); // exact boundary
+    try std.testing.expectEqual(@as(u8, 63), buildAfterVolume(live, .{ .area = 63.6 }).area); // round->64 then clamp->63
 }
 
 test "buildAfterOffmesh maps endpoints/rad/area/flags, clamps dir, preserves id" {
@@ -142,4 +144,8 @@ test "buildAfterOffmesh maps endpoints/rad/area/flags, clamps dir, preserves id"
     // dir 0 stays 0.
     const z = buildAfterOffmesh(live, .{ .dir = 0 });
     try std.testing.expectEqual(@as(u8, 0), z.dir);
+
+    // Off-mesh area clamps the same way (negative -> 0, overflow -> 63).
+    try std.testing.expectEqual(@as(u8, 0), buildAfterOffmesh(live, .{ .area = -1 }).area);
+    try std.testing.expectEqual(@as(u8, 63), buildAfterOffmesh(live, .{ .area = 999 }).area);
 }
