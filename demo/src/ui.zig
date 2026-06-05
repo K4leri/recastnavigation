@@ -9,14 +9,34 @@ pub fn section(src: std.builtin.SourceLocation, comptime text: []const u8) void 
     dvui.labelNoFmt(src, text, .{}, .{ .font = dvui.themeGet().font_heading, .id_extra = 1 });
 }
 
+// Drag-only слайдер с подписью значения. Чистый `dvui.slider` (по доле 0..1,
+// БЕЗ text-ввода с клавиатуры) вместо `dvui.sliderEntry`: у последнего режим
+// ввода значения с клавиатуры захватывал клавиатуру и делал остальное
+// приложение неуправляемым. Метка и слайдер делят `src`, слайдер получает
+// id_extra=1, чтобы dvui-id не конфликтовали (как в `section` выше).
+fn dragSlider(src: std.builtin.SourceLocation, comptime fmt: []const u8, value: *f32, min: f32, max: f32, step: ?f32) void {
+    var hb = dvui.box(src, .{ .dir = .horizontal }, .{ .expand = .horizontal });
+    defer hb.deinit();
+    var lbuf: [96]u8 = undefined;
+    const txt = std.fmt.bufPrint(&lbuf, fmt, .{value.*}) catch fmt;
+    dvui.labelNoFmt(src, txt, .{}, .{ .gravity_y = 0.5 });
+    var frac: f32 = if (max > min) (value.* - min) / (max - min) else 0;
+    frac = std.math.clamp(frac, 0, 1);
+    if (dvui.slider(src, .{ .fraction = &frac }, .{ .expand = .horizontal, .id_extra = 1, .gravity_y = 0.5 })) {
+        var v = min + frac * (max - min);
+        if (step) |s| v = min + @round((v - min) / s) * s;
+        value.* = std.math.clamp(v, min, max);
+    }
+}
+
 /// Слайдер f32 с подписью (формат должен содержать одно поле {d:...}).
 pub fn slider(src: std.builtin.SourceLocation, comptime fmt: []const u8, value: *f32, min: f32, max: f32) void {
-    _ = dvui.sliderEntry(src, fmt, .{ .value = value, .min = min, .max = max, .interval = null }, .{ .expand = .horizontal });
+    dragSlider(src, fmt, value, min, max, null);
 }
 
 /// Слайдер целого (через f32-прокси хранение в самом значении).
 pub fn sliderInt(src: std.builtin.SourceLocation, comptime fmt: []const u8, value: *f32, min: f32, max: f32) void {
-    _ = dvui.sliderEntry(src, fmt, .{ .value = value, .min = min, .max = max, .interval = 1 }, .{ .expand = .horizontal });
+    dragSlider(src, fmt, value, min, max, 1);
 }
 
 /// Radio-кнопка: возвращает true при клике. Тонкая обёртка над dvui.radio.
