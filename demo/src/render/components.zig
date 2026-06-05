@@ -25,6 +25,19 @@ pub const Components = struct {
     pub fn getByIndex(self: *const Components, tile_idx: usize, poly_idx: usize) u16 {
         return if (self.tile_comp[tile_idx]) |s| s[poly_idx] else 0;
     }
+
+    /// Component id for a poly REF (decodes ref -> tile/poly, bounds-checked).
+    /// Returns null for ref==0 or out-of-range refs. Used by diagnostics to test
+    /// topological (neutral) connectivity: same id => same flood-fill island.
+    /// Идентификатор компоненты по REF полигона (с декодированием и проверкой границ).
+    pub fn componentForRef(self: *const Components, nav: *const dt.NavMesh, ref: dt.PolyRef) ?u16 {
+        if (ref == 0) return null;
+        const d = nav.decodePolyId(ref);
+        if (d.tile >= self.tile_comp.len) return null;
+        const slot = self.tile_comp[d.tile] orelse return null;
+        if (d.poly >= slot.len) return null;
+        return slot[d.poly];
+    }
 };
 
 /// Flood-fill the whole navmesh into connected components.

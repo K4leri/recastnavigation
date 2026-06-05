@@ -10,6 +10,9 @@ const sample = @import("sample.zig");
 const area_types = @import("area_types.zig");
 const poly_flags = @import("poly_flags.zig");
 const ui = @import("ui.zig");
+const components = @import("render/components.zig");
+const diagnose = @import("diag/diagnose.zig");
+const wnp = @import("diag/why_no_path.zig");
 
 const dt = recast.detour;
 const dbg = recast.debug;
@@ -84,6 +87,15 @@ pub const NavMeshTesterTool = struct {
     shape_verts: [12]f32 = undefined,
     shape_nverts: usize = 0,
 
+    // WHY-NO-PATH verdict (A1): recomputed on every recalc that produces start/end
+    // refs. `verdict` is shown in the panel; `signals` feeds the Explain expander.
+    // `verdict_valid` gates display (false until a pathfind recalc with both refs).
+    verdict: diagnose.Verdict = .unknown,
+    signals: wnp.Signals = std.mem.zeroes(wnp.Signals),
+    verdict_valid: bool = false,
+    explain_open: bool = false,
+    diag_scratch: [MAX_POLYS]dt.PolyRef = undefined,
+
     // include/exclude filter masks (bits = poly_flags registry). Default: include
     // the four built-in flags, exclude none. Custom flags start unchecked.
     include_mask: u16 = PF.walk | PF.swim | PF.door | PF.jump,
@@ -147,6 +159,7 @@ pub const NavMeshTesterTool = struct {
         self.nsmooth = 0;
         self.ray_has = false;
         self.shape_nverts = 0;
+        self.verdict_valid = false;
 
         if (self.spos_set) {
             var snapped: [3]f32 = undefined;
@@ -245,6 +258,42 @@ pub const NavMeshTesterTool = struct {
                 }
             },
         }
+
+        // WHY-NO-PATH verdict (A1): only for the three pathfind modes, when both
+        // endpoints are placed (refs may still be 0 -> invalid_start/end verdict).
+        switch (self.mode) {
+            .pathfind_follow, .pathfind_straight, .pathfind_sliced => self.runDiagnosis(q),
+            else => {},
+        }
+    }
+
+    /// Запускает живую диагностику why-no-path и сохраняет вердикт на инструменте.
+    /// Components считаются on-demand из nav (O(polys+links)); дёшево для редких recalc.
+    /// Runs the live why-no-path diagnosis and stores the verdict on the tool.
+    fn runDiagnosis(self: *NavMeshTesterTool, q: *dt.NavMeshQuery) void {
+        if (!self.spos_set or !self.epos_set) return;
+        const nav = self.navmesh orelse return;
+
+        // Topological connectivity (filter-agnostic flood-fill). Compute fresh;
+        // if it fails (OOM), fall back to neutral-reach=false (real-gap bias) by
+        // passing an empty Components — componentForRef then returns null.
+        var comps = components.compute(nav, self.alloc) catch components.Components{ .alloc = self.alloc };
+        defer comps.deinit();
+
+        const res = diagnose.diagnose(
+            q,
+            nav,
+            &comps,
+            self.start_ref,
+            self.end_ref,
+            self.spos,
+            self.epos,
+            &self.filter,
+            self.diag_scratch[0..],
+        );
+        self.verdict = res.verdict;
+        self.signals = res.signals;
+        self.verdict_valid = true;
     }
 
     /// Box-полигон вокруг отрезка spos->epos (1-в-1 m_queryPoly в Tool_NavMeshTester).
@@ -283,6 +332,17 @@ pub const NavMeshTesterTool = struct {
                 if (r == self.start_ref or r == self.end_ref) continue;
                 dbg.debugDrawNavMeshPoly(dd, nm, r, pathCol);
             }
+        }
+
+        // WHY-NO-PATH culprit highlight (A1, best-effort): for invalid start/end
+        // draw the findNearestPoly search half-extents (ext={2,4,2}) as a circle at
+        // the offending endpoint — shows "the snap radius found no polygon here".
+        if (self.verdict_valid) {
+            const warn = dbg.rgba(255, 64, 64, 255);
+            if (self.verdict == .invalid_start and self.spos_set)
+                drawCircle(dd, self.spos, 2.0, warn);
+            if (self.verdict == .invalid_end and self.epos_set)
+                drawCircle(dd, self.epos, 2.0, warn);
         }
 
         // Старт/энд — wire-цилиндр агента (как upstream drawAgent), под depthMask(false).
@@ -518,6 +578,20 @@ pub const NavMeshTesterTool = struct {
         const wpts = if (self.mode == .pathfind_follow) self.nsmooth else self.nstraight;
         dvui.label(@src(), "polys: {d}  waypoints: {d}", .{ self.npolys, wpts }, .{});
         dvui.labelNoFmt(@src(), "Shift+LMB: start  LMB: end", .{}, .{});
+
+        // WHY-NO-PATH verdict panel (A1): status line + Explain expander. Shown only
+        // for pathfind modes once a recalc has produced a verdict.
+        if (self.verdict_valid) {
+            ui.section(@src(), "Why no path?");
+            const ok = self.verdict == .ok or self.verdict == .same_poly;
+            const icon: []const u8 = if (ok) "[OK] " else "[X] ";
+            dvui.label(@src(), "{s}{s}", .{ icon, wnp.reasonText(self.verdict) }, .{});
+            if (dvui.expander(@src(), "Explain", .{}, .{})) {
+                var ebuf: [512]u8 = undefined;
+                const txt = wnp.explainText(&ebuf, self.verdict, self.signals);
+                dvui.labelNoFmt(@src(), txt, .{}, .{});
+            }
+        }
     }
 
     fn modeRadio(self: *NavMeshTesterTool, label: []const u8, m: ToolMode, id: usize) void {
