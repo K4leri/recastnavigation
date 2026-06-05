@@ -36,6 +36,7 @@ const ConvexVolumeTool = @import("tool_convex.zig").ConvexVolumeTool;
 const CrowdTool = @import("tool_crowd.zig").CrowdTool;
 const NavMeshPruneTool = @import("tool_prune.zig").NavMeshPruneTool;
 const UndoStack = @import("edit/undo_stack.zig").UndoStack;
+const snap_mod = @import("edit/snap.zig");
 const Vec3 = recast.math.Vec3;
 
 const ActiveTool = tool_registry.ToolId; // { none, tester, prune, offmesh, convex, crowd }
@@ -225,6 +226,7 @@ pub fn main(main_init: std.process.Init) !void {
     var variants_stem: []const u8 = ""; // stem, для которого построен кэш (owned)
     defer freeVariants(main_init.gpa, &variants, &variants_stem);
     var pick_hit: ?Vec3 = null; // последняя точка пикинга по земле
+    var snap_cfg = snap_mod.SnapConfig{}; // snap state (mode=.off by default)
     const dt: f32 = 1.0 / 60.0;
 
     // --- Auto-save state (cluster F) ---
@@ -513,6 +515,7 @@ pub fn main(main_init: std.process.Init) !void {
             if (cam.pickRay(@floatCast(cur[0] * sx), @floatCast(cur[1] * sy), viewport)) |r| {
                 if (pickPoint(&geom, r.start, r.end)) |h| {
                     const shift = g_window.getKey(.left_shift) == .press;
+                    const ctrl_held = g_window.getKey(.left_control) == .press or g_window.getKey(.right_control) == .press;
                     const rs = r.start.toArray();
                     const hp = h.toArray();
                     if (sample_kind == .temp) {
@@ -523,11 +526,11 @@ pub fn main(main_init: std.process.Init) !void {
                             if (tester.query) |q| {
                                 const ext = [3]f32{ 2, 4, 2 };
                                 var ref: u32 = 0;
-                                var snap: [3]f32 = undefined;
-                                _ = q.findNearestPoly(&hp, &ext, &tester.filter, &ref, &snap) catch {};
+                                var poly_snap: [3]f32 = undefined;
+                                _ = q.findNearestPoly(&hp, &ext, &tester.filter, &ref, &poly_snap) catch {};
                                 if (ref != 0) {
                                     const flags = if (tester.navmesh) |nm| (nm.getPolyFlags(ref) catch 0) else 0;
-                                    std.debug.print("[POLY] ref={d} navmeshY={d:.2} clickHitY={d:.2} world=({d:.2},{d:.2},{d:.2}) flags=0x{x}\n", .{ ref, snap[1], hp[1], snap[0], snap[1], snap[2], flags });
+                                    std.debug.print("[POLY] ref={d} navmeshY={d:.2} clickHitY={d:.2} world=({d:.2},{d:.2},{d:.2}) flags=0x{x}\n", .{ ref, poly_snap[1], hp[1], poly_snap[0], poly_snap[1], poly_snap[2], flags });
                                 } else {
                                     std.debug.print("[POLY] под кликом нет полигона (hitY={d:.2}, world x={d:.2} z={d:.2})\n", .{ hp[1], hp[0], hp[2] });
                                 }
@@ -535,8 +538,27 @@ pub fn main(main_init: std.process.Init) !void {
                         },
                         .tester => tester.onClick(&rs, &hp, shift),
                         .prune => prune_tool.onClick(&rs, &hp, shift),
-                        .offmesh => offmesh_tool.onClick(&rs, &hp, shift),
-                        .convex => convex_tool.onClick(&rs, &hp, shift),
+                        .offmesh => blk: {
+                            // Apply snap for edit tools (bypass if Ctrl held).
+                            const use_snap = snap_cfg.mode != .off and !ctrl_held;
+                            if (use_snap) {
+                                const sr = snap_mod.snapPoint(&geom, hp, snap_cfg);
+                                offmesh_tool.onClick(&rs, &sr.pos, shift);
+                            } else {
+                                offmesh_tool.onClick(&rs, &hp, shift);
+                            }
+                            break :blk;
+                        },
+                        .convex => blk: {
+                            const use_snap = snap_cfg.mode != .off and !ctrl_held;
+                            if (use_snap) {
+                                const sr = snap_mod.snapPoint(&geom, hp, snap_cfg);
+                                convex_tool.onClick(&rs, &sr.pos, shift);
+                            } else {
+                                convex_tool.onClick(&rs, &hp, shift);
+                            }
+                            break :blk;
+                        },
                         .crowd => crowd_tool.onClick(&rs, &hp, shift),
                     }
                     pick_hit = h;
@@ -702,6 +724,34 @@ pub fn main(main_init: std.process.Init) !void {
             dd.end();
         }
 
+        // Snap hover marker: every frame when an edit tool is active and snap is on,
+        // show a small cross at the snap target for the last pick_hit (hover source).
+        // Color by snap kind: vertex=yellow, edge=cyan, grid=white, object=magenta.
+        if ((active_tool == .convex or active_tool == .offmesh) and snap_cfg.mode != .off) {
+            if (pick_hit) |ph| {
+                const snap_hover = snap_mod.snapPoint(&geom, ph.toArray(), snap_cfg);
+                if (snap_hover.kind != .off) {
+                    const sm_col: u32 = switch (snap_hover.kind) {
+                        .vertex => recast.debug.rgba(255, 230, 0, 255),
+                        .edge => recast.debug.rgba(0, 220, 220, 255),
+                        .grid => recast.debug.rgba(255, 255, 255, 255),
+                        .object => recast.debug.rgba(220, 0, 220, 255),
+                        .off => recast.debug.rgba(128, 128, 128, 255),
+                    };
+                    const sp = snap_hover.pos;
+                    const sm_r: f32 = 0.3; // marker arm length
+                    dd.begin(.lines, 2.5);
+                    dd.vertexXYZ(sp[0] - sm_r, sp[1], sp[2], sm_col);
+                    dd.vertexXYZ(sp[0] + sm_r, sp[1], sp[2], sm_col);
+                    dd.vertexXYZ(sp[0], sp[1], sp[2] - sm_r, sm_col);
+                    dd.vertexXYZ(sp[0], sp[1], sp[2] + sm_r, sm_col);
+                    dd.vertexXYZ(sp[0], sp[1], sp[2], sm_col);
+                    dd.vertexXYZ(sp[0], sp[1] + sm_r * 2.0, sp[2], sm_col);
+                    dd.end();
+                }
+            }
+        }
+
         z_r3d.end(); // конец 3D-прохода
         tracy.plotF("draw_calls", @floatFromInt(dd_gl.draw_calls));
         tracy.plotF("verts", @floatFromInt(dd_gl.verts_uploaded));
@@ -760,6 +810,23 @@ pub fn main(main_init: std.process.Init) !void {
                     .offmesh => offmesh_tool.drawMenu(),
                     .convex => convex_tool.drawMenu(),
                     .crowd => crowd_tool.drawMenu(),
+                }
+
+                // Snap UI: shown only for edit tools (convex / offmesh).
+                if (active_tool == .convex or active_tool == .offmesh) {
+                    ui.section(@src(), "Snap");
+                    if (ui.radio(@src(), snap_cfg.mode == .off, "Off", 330)) snap_cfg.mode = .off;
+                    if (ui.radio(@src(), snap_cfg.mode == .vertex, "Vertex", 331)) snap_cfg.mode = .vertex;
+                    if (ui.radio(@src(), snap_cfg.mode == .edge, "Edge", 332)) snap_cfg.mode = .edge;
+                    if (ui.radio(@src(), snap_cfg.mode == .grid, "Grid", 333)) snap_cfg.mode = .grid;
+                    if (ui.radio(@src(), snap_cfg.mode == .object, "Object", 334)) snap_cfg.mode = .object;
+                    if (snap_cfg.mode == .grid) {
+                        ui.slider(@src(), "Grid step = {d:.2}", &snap_cfg.grid_step, 0.1, 8.0);
+                    }
+                    if (snap_cfg.mode == .vertex or snap_cfg.mode == .edge or snap_cfg.mode == .object) {
+                        ui.slider(@src(), "Snap radius = {d:.1}", &snap_cfg.radius, 0.1, 5.0);
+                    }
+                    dvui.labelNoFmt(@src(), "Ctrl: bypass snap for this click", .{}, .{});
                 }
             }
 
