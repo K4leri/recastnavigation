@@ -413,6 +413,9 @@ fn decodeOneOffMesh(geom: *InputGeom, payload: []const u8) !void {
     try geom.off_area.append(area);
     try geom.off_flags.append(flags);
     try geom.off_id.append(id);
+    // Keep the monotonic counter ahead of every restored id so a fresh add after
+    // load can't collide with a loaded off_id.
+    if (id >= geom.next_off_id) geom.next_off_id = id + 1;
 }
 
 // ===========================================================================

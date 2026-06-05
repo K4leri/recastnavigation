@@ -609,6 +609,12 @@ pub fn main(main_init: std.process.Init) !void {
                 }
             }
         }
+        // Leaving the select tool mid-drag must drop any in-progress box so it
+        // neither renders nor resolves after switching back.
+        if (active_tool != .select and sel_drag_start != null) {
+            sel_drag_start = null;
+            sel_drag_cur = null;
+        }
         // --- Select-tool rubber-band: per-frame update + release resolution (F3) ---
         // While LMB is held in the select tool with a drag in progress, recompute the
         // current world hit each frame (for drawing the box). On the falling edge,
@@ -1982,7 +1988,7 @@ fn deleteSelected(alloc: std.mem.Allocator, geom: *InputGeom, sel: *Selection, u
     for (sel.volumes.items) |id| {
         for (geom.volumes.items, 0..) |*v, i| {
             if (v.id == id) {
-                vol_idx.append(i) catch {};
+                vol_idx.append(i) catch std.debug.print("[WARN] select: OOM resolving volume id {d}, deleting fewer\n", .{id});
                 break;
             }
         }
@@ -1991,7 +1997,7 @@ fn deleteSelected(alloc: std.mem.Allocator, geom: *InputGeom, sel: *Selection, u
     while (oc < geom.offMeshCount()) : (oc += 1) {
         for (sel.offmesh.items) |id| {
             if (geom.off_id.items[oc] == id) {
-                off_idx.append(oc) catch {};
+                off_idx.append(oc) catch std.debug.print("[WARN] select: OOM resolving off-mesh id {d}, deleting fewer\n", .{id});
                 break;
             }
         }

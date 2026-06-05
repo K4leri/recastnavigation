@@ -49,6 +49,10 @@ pub const InputGeom = struct {
     /// Next stable convex-volume id (monotonic; never reused). Starts at 1 so 0
     /// stays the "unassigned" sentinel.
     next_volume_id: u32 = 1,
+    /// Next stable off-mesh id (monotonic; never reused). Starts at 1000 to keep
+    /// the historical id base. A delete no longer recycles ids, so a Selection
+    /// holding an off_id never aliases a different connection after delete+add.
+    next_off_id: u32 = 1000,
 
     pub fn init(alloc: std.mem.Allocator) InputGeom {
         return .{
@@ -223,11 +227,10 @@ pub const InputGeom = struct {
         try self.off_dir.append(bidir);
         try self.off_area.append(area);
         try self.off_flags.append(flags);
-        // NOTE: index-derived (1000+len), NOT monotonic — an id is reused after a
-        // middle connection is removed. Stable-id consumers (cluster F/I) must not
-        // rely on off_id being unique across removal; making it monotonic like
-        // next_volume_id is tracked as a follow-up (changes upstream-faithful value).
-        try self.off_id.append(@intCast(1000 + self.off_id.items.len));
+        // Monotonic stable id (mirrors next_volume_id): never recycled on delete,
+        // so cluster F/I selection by off_id stays unambiguous across delete+add.
+        try self.off_id.append(self.next_off_id);
+        self.next_off_id += 1;
     }
     pub fn offMeshCount(self: *const InputGeom) usize {
         return self.off_rad.items.len;
