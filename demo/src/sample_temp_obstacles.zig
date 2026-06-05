@@ -16,6 +16,7 @@ const convex_surface = @import("convex_surface.zig");
 const poly_visit = @import("render/poly_visit.zig");
 const scheme_state = @import("render/scheme_state.zig");
 const filter_state = @import("render/filter_state.zig");
+const view_state = @import("render/view_state.zig");
 
 const rc = recast.recast;
 const dt = recast.detour;
@@ -315,13 +316,17 @@ pub const SampleTempObstacles = struct {
         self.dd_gl.area_to_col = sample.sampleAreaToCol;
         const dd = self.dd_gl.debugDraw();
         if (self.navmesh) |*n| {
-            // Cluster E (P0-2): filtered draw REPLACES faithful + plain overdraw
-            // when a clip/iso filter is active (else unclipped floors show through).
-            if (filter_state.active.active()) {
-                poly_visit.fillNavMeshFiltered(dd, n, scheme_state.active, filter_state.active, self.alloc);
-            } else {
-                dbg.debugDrawNavMesh(dd, n, 0);
-                if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
+            // Cluster E (P0-2/P1-1): navmesh group gate + wireframe/filter/faithful
+            // routing (mirrors sample_solo/sample_tile.drawNavmeshLayer).
+            if (view_state.groups.navmesh) {
+                if (view_state.wireframe) {
+                    poly_visit.outlineNavMesh(dd, n, scheme_state.active, filter_state.active, self.alloc);
+                } else if (filter_state.active.active()) {
+                    poly_visit.fillNavMeshFiltered(dd, n, scheme_state.active, filter_state.active, self.alloc);
+                } else {
+                    dbg.debugDrawNavMesh(dd, n, 0);
+                    if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
+                }
             }
         }
 
@@ -347,8 +352,9 @@ pub const SampleTempObstacles = struct {
             // Mesh bounds wireframe (1:1 Sample::handleRender — duDebugDrawBoxWire,
             // white 255,255,255,128). Marks the 3D object's extent.
             dbg.debugDrawBoxWire(dd, g.bmin[0], g.bmin[1], g.bmin[2], g.bmax[0], g.bmax[1], g.bmax[2], dbg.rgba(255, 255, 255, 128), 1.0);
-            g.drawConvexVolumes(dd);
-            g.drawOffMeshConnections(dd);
+            // Cluster E (P1-1): convex / off-mesh gated on their groups.
+            if (view_state.groups.convex) g.drawConvexVolumes(dd);
+            if (view_state.groups.offmesh) g.drawOffMeshConnections(dd);
         }
     }
 

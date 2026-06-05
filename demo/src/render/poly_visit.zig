@@ -111,6 +111,74 @@ fn buildCtx(ranges: *const SchemeRanges, tile: *const dt.MeshTile, p: *const dt.
     };
 }
 
+/// Numeric range (lo..hi) of the continuous schemes (height / cost) over the
+/// whole navmesh, for the legend's gradient min/max labels. For discrete schemes
+/// returns {0,0} (the legend uses discreteEntries instead). One full traversal —
+/// the legend calls it once per frame, same cost as a single fill's range scan.
+pub fn schemeRange(mesh: *const NavMesh, scheme: cs.ColorScheme) struct { lo: f32, hi: f32 } {
+    return switch (scheme) {
+        .height => blk: {
+            const r = heightRange(mesh);
+            break :blk .{ .lo = r.lo, .hi = r.hi };
+        },
+        .cost => blk: {
+            const r = costRange(mesh);
+            break :blk .{ .lo = r.lo, .hi = r.hi };
+        },
+        else => .{ .lo = 0, .hi = 0 },
+    };
+}
+
+/// Wireframe navmesh draw (cluster E, P1-1): ONLY the per-poly outer-ring outline
+/// (the `.lines` pass factored out of fillNavMeshFiltered) — no filled triangles.
+/// Routes through the SAME filter verdict so wireframe works with a clip/iso
+/// filter active OR inactive: an inactive filter (`.{}`) yields `.draw` for every
+/// poly, so the whole mesh is outlined; an active one hides/dims exactly as the
+/// filled draw would. Colours each ring by the active scheme (so wireframe still
+/// reflects the colouring), dimmed polys get the faint ring.
+pub fn outlineNavMesh(
+    dd: dbg.DebugDraw,
+    mesh: *const NavMesh,
+    scheme: cs.ColorScheme,
+    filter: isolation.Filter,
+    alloc: std.mem.Allocator,
+) void {
+    var ranges = SchemeRanges.compute(mesh, scheme, alloc);
+    defer ranges.deinit();
+
+    dd.depthMask(false);
+    dd.begin(.lines, 2.0);
+
+    for (0..@intCast(mesh.max_tiles)) |ti| {
+        const tile = &mesh.tiles[ti];
+        const hdr = tile.header orelse continue;
+
+        for (0..@intCast(hdr.poly_count)) |i| {
+            const p = &tile.polys[i];
+            if (p.getType() == .offmesh_connection) continue;
+
+            const v = isolation.verdictFor(filter, polyHeight(tile, p), hdr.x, hdr.y, p.getArea(), p.flags);
+            if (v == .hide) continue;
+
+            const ctx = buildCtx(&ranges, tile, p, ti, i);
+            const base_col = cs.colorForPoly(scheme, ctx);
+            const lc = if (v == .dim) dimCol(base_col) else base_col;
+
+            const vc: usize = p.vert_count;
+            for (0..vc) |k| {
+                const next = (k + 1) % vc;
+                const v0 = @as(usize, p.verts[k]) * 3;
+                const v1 = @as(usize, p.verts[next]) * 3;
+                dd.vertex(@ptrCast(&tile.verts[v0]), lc);
+                dd.vertex(@ptrCast(&tile.verts[v1]), lc);
+            }
+        }
+    }
+
+    dd.end();
+    dd.depthMask(true);
+}
+
 pub fn fillNavMesh(dd: dbg.DebugDraw, mesh: *const NavMesh, scheme: cs.ColorScheme, alloc: std.mem.Allocator) void {
     // Precompute scheme ranges/components once (height/cost ramps + components
     // each need a full mesh traversal); reused for every polygon below.

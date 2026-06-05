@@ -16,6 +16,7 @@ const nav_io = @import("navmesh_io.zig");
 const poly_visit = @import("render/poly_visit.zig");
 const scheme_state = @import("render/scheme_state.zig");
 const filter_state = @import("render/filter_state.zig");
+const view_state = @import("render/view_state.zig");
 const convex_surface = @import("convex_surface.zig");
 
 const rc = recast.recast;
@@ -365,6 +366,22 @@ pub const SampleSolo = struct {
         self.navmesh = navmesh;
     }
 
+    // Cluster E (P1-1): unified navmesh-layer draw shared by every draw_mode that
+    // shows the navmesh. Gated on the `navmesh` group; routes wireframe ->
+    // poly_visit.outlineNavMesh (works with filter on/off), else filtered draw
+    // (clip/iso active) else faithful + optional scheme overdraw.
+    fn drawNavmeshLayer(self: *SampleSolo, dd: dbg.DebugDraw, n: *dt.NavMesh) void {
+        if (!view_state.groups.navmesh) return;
+        if (view_state.wireframe) {
+            poly_visit.outlineNavMesh(dd, n, scheme_state.active, filter_state.active, self.alloc);
+        } else if (filter_state.active.active()) {
+            poly_visit.fillNavMeshFiltered(dd, n, scheme_state.active, filter_state.active, self.alloc);
+        } else {
+            dbg.debugDrawNavMesh(dd, n, 0);
+            if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
+        }
+    }
+
     // ========================================================================
     // RENDER
     // ========================================================================
@@ -396,8 +413,9 @@ pub const SampleSolo = struct {
         }
 
         // Инпут-меш как подложка (кроме navmesh_trans). Для вокселей варианты 1/3 — без меша.
+        // Cluster E (P1-1): gated on the `input_mesh` group.
         const skip_mesh = voxel_mode and (vv == 1 or vv == 3);
-        if (self.draw_mode != .navmesh_trans and !skip_mesh) self.renderInputMesh(dd);
+        if (view_state.groups.input_mesh and self.draw_mode != .navmesh_trans and !skip_mesh) self.renderInputMesh(dd);
 
         // Применяем стейт ВАРИАНТА для отрисовки вокселей (после меша, до switch).
         if (voxel_mode) {
@@ -445,33 +463,17 @@ pub const SampleSolo = struct {
                 if (d.nmeshes > 0) dbg.debugDrawPolyMeshDetail(dd, d);
             },
             .navmesh, .navmesh_trans => if (self.navmesh) |*n| {
-                // Cluster E (P0-2): when a clip/iso filter is active, the filtered
-                // draw REPLACES the faithful navmesh + plain overdraw (else unclipped
-                // floors show through). Otherwise: faithful + optional scheme overdraw.
-                if (filter_state.active.active()) {
-                    poly_visit.fillNavMeshFiltered(dd, n, scheme_state.active, filter_state.active, self.alloc);
-                } else {
-                    dbg.debugDrawNavMesh(dd, n, 0);
-                    if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
-                }
+                // Cluster E (P0-2/P1-1): navmesh group gate + wireframe/filter/faithful
+                // routing centralised in drawNavmeshLayer.
+                self.drawNavmeshLayer(dd, n);
             },
             // BVTree/Nodes: оригинал рисует САМ навмеш + overlay поверх (Sample_SoloMesh::render).
             .navmesh_bvtree => if (self.navmesh) |*n| {
-                if (filter_state.active.active()) {
-                    poly_visit.fillNavMeshFiltered(dd, n, scheme_state.active, filter_state.active, self.alloc);
-                } else {
-                    dbg.debugDrawNavMesh(dd, n, 0);
-                    if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
-                }
-                dbg.debugDrawNavMeshBVTree(dd, n);
+                self.drawNavmeshLayer(dd, n);
+                if (view_state.groups.navmesh) dbg.debugDrawNavMeshBVTree(dd, n);
             },
             .navmesh_nodes => if (self.navmesh) |*n| {
-                if (filter_state.active.active()) {
-                    poly_visit.fillNavMeshFiltered(dd, n, scheme_state.active, filter_state.active, self.alloc);
-                } else {
-                    dbg.debugDrawNavMesh(dd, n, 0);
-                    if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
-                }
+                self.drawNavmeshLayer(dd, n);
             },
         }
 
@@ -479,7 +481,7 @@ pub const SampleSolo = struct {
         // (duDebugDrawNavMeshPolysWithFlags(..., DISABLED, rgba(0,0,0,128))). Видно отключённые.
         // Gated under !filter.active(): the disabled overlay draws the FAITHFUL
         // (unclipped) navmesh and would visually fight the filtered/clipped draw.
-        if (!filter_state.active.active()) switch (self.draw_mode) {
+        if (view_state.groups.navmesh and !filter_state.active.active()) switch (self.draw_mode) {
             .navmesh, .navmesh_trans, .navmesh_bvtree, .navmesh_nodes => if (self.navmesh) |*n|
                 dbg.debugDrawNavMeshPolysWithFlags(dd, n, sample.SamplePolyFlags.disabled, dbg.rgba(0, 0, 0, 128)),
             else => {},
@@ -492,8 +494,9 @@ pub const SampleSolo = struct {
             // Mesh bounds wireframe (1:1 Sample::handleRender — duDebugDrawBoxWire,
             // white 255,255,255,128). Marks the 3D object's extent.
             dbg.debugDrawBoxWire(dd, g.bmin[0], g.bmin[1], g.bmin[2], g.bmax[0], g.bmax[1], g.bmax[2], dbg.rgba(255, 255, 255, 128), 1.0);
-            g.drawConvexVolumes(dd);
-            g.drawOffMeshConnections(dd);
+            // Cluster E (P1-1): convex / off-mesh gated on their groups.
+            if (view_state.groups.convex) g.drawConvexVolumes(dd);
+            if (view_state.groups.offmesh) g.drawOffMeshConnections(dd);
         }
 
         // ВОССТАНОВЛЕНИЕ GL-стейта после варианта вокселей — чтобы НЕ протекало в UI/др. режимы.

@@ -30,6 +30,9 @@ const ConvexVolume = @import("input_geom.zig").ConvexVolume;
 const SampleSolo = @import("sample_solo.zig").SampleSolo;
 const scheme_state = @import("render/scheme_state.zig");
 const filter_state = @import("render/filter_state.zig");
+const view_state = @import("render/view_state.zig");
+const legend = @import("render/legend.zig");
+const poly_visit = @import("render/poly_visit.zig");
 const SampleTile = @import("sample_tile.zig").SampleTile;
 const SampleTempObstacles = @import("sample_temp_obstacles.zig").SampleTempObstacles;
 const NavMeshTesterTool = @import("tool_navmesh_tester.zig").NavMeshTesterTool;
@@ -54,6 +57,7 @@ pub const opengl_error_handling = zgl.ErrorHandling.assert;
 
 var g_window: *zglfw.Window = undefined;
 var g_scroll: f64 = 0; // аккумулятор колеса (пишется из callback)
+var show_legend: bool = true; // Cluster E (P1-3): scheme legend corner overlay
 
 fn glGetProcAddress(p: zglfw.GlProc, proc: [:0]const u8) ?zgl.binding.FunctionPointer {
     _ = p;
@@ -1513,6 +1517,8 @@ pub fn main(main_init: std.process.Init) !void {
             if (ui.radio(@src(), scheme_state.active == .height, "Height", 312)) scheme_state.active = .height;
             if (ui.radio(@src(), scheme_state.active == .component, "Component", 313)) scheme_state.active = .component;
             if (ui.radio(@src(), scheme_state.active == .cost, "Cost", 314)) scheme_state.active = .cost;
+            // Cluster E (P1-3): legend overlay toggle.
+            _ = dvui.checkbox(@src(), &show_legend, "Legend", .{ .id_extra = 315 });
             // NOTE: .region is intentionally absent from the UI — region IDs live in
             // PolyMesh.regs (Recast build stage) and are not baked into the Detour
             // navmesh. Wiring it up requires Solo-only PolyMesh.regs plumbing.
@@ -1579,6 +1585,21 @@ pub fn main(main_init: std.process.Init) !void {
                         },
                     }
                 }
+            }
+
+            // --- Layers / Wireframe (cluster E, P1-1) ---
+            // Wireframe routes the navmesh draw through poly_visit.outlineNavMesh
+            // (edges only). The group checkboxes hide each scene group across all
+            // three samples. id_extra 356..361 (after the 340..355 iso range).
+            ui.section(@src(), "Layers / Wireframe");
+            {
+                const grp = &view_state.groups;
+                _ = dvui.checkbox(@src(), &view_state.wireframe, "Wireframe (navmesh edges)", .{ .id_extra = 356 });
+                _ = dvui.checkbox(@src(), &grp.input_mesh, "Show input mesh", .{ .id_extra = 357 });
+                _ = dvui.checkbox(@src(), &grp.navmesh, "Show navmesh", .{ .id_extra = 358 });
+                _ = dvui.checkbox(@src(), &grp.offmesh, "Show off-mesh links", .{ .id_extra = 359 });
+                _ = dvui.checkbox(@src(), &grp.convex, "Show convex volumes", .{ .id_extra = 360 });
+                _ = dvui.checkbox(@src(), &grp.labels, "Show labels", .{ .id_extra = 361 });
             }
 
             ui.section(@src(), "Debug Settings");
@@ -1781,8 +1802,9 @@ pub fn main(main_init: std.process.Init) !void {
             // Crowd perf graph (Show Perf Graph) — 2D overlay over the dvui frame.
             if (active_tool == .crowd) crowd_tool.renderPerfGraph(vh);
 
-            // подписи агентов толпы (индекс над агентом) — по чекбоксу Show Labels
-            if (active_tool == .crowd and crowd_tool.show_labels) {
+            // подписи агентов толпы (индекс над агентом) — по чекбоксу Show Labels.
+            // Cluster E (P1-1): also gated on the `labels` view group.
+            if (view_state.groups.labels and active_tool == .crowd and crowd_tool.show_labels) {
                 if (crowd_tool.crowd) |*c| {
                     for (0..crowd_tool.agent_count) |i| {
                         const ag = c.getAgent(@intCast(i)) orelse continue;
@@ -1803,7 +1825,7 @@ pub fn main(main_init: std.process.Init) !void {
             // При выделенном агенте (idx!=-1) + Show Neighbors рисуется белый "%.3f" КВАДРАТА
             // дистанции (neis.dist хранит distSqr, как DetourCrowd.cpp:215) в позиции соседа
             // на высоте npos.y + radius ВЫДЕЛЕННОГО агента. guard showDetailAll: для всех / только idx.
-            if (active_tool == .crowd and crowd_tool.debug.idx != -1 and crowd_tool.show_neighbors) {
+            if (view_state.groups.labels and active_tool == .crowd and crowd_tool.debug.idx != -1 and crowd_tool.show_neighbors) {
                 if (crowd_tool.crowd) |*c| {
                     for (0..crowd_tool.agent_count) |i| {
                         if (!crowd_tool.show_detail_all and @as(i32, @intCast(i)) != crowd_tool.debug.idx) continue;
@@ -1825,24 +1847,47 @@ pub fn main(main_init: std.process.Init) !void {
             }
 
             // подпись "TARGET" над целью толпы (как renderOverlay оригинала)
-            if (active_tool == .crowd and crowd_tool.has_target) {
+            if (view_state.groups.labels and active_tool == .crowd and crowd_tool.has_target) {
                 const wp = Vec3.init(crowd_tool.target_pos[0], crowd_tool.target_pos[1], crowd_tool.target_pos[2]);
                 if (cam.worldToScreen(wp, viewport)) |sp| {
                     if (sp.z >= 0 and sp.z <= 1) ui.screenTextEx(sp.x, vh - sp.y, "TARGET", white, true);
                 }
             }
 
-            // подписи тестов (T<index> над точкой старта)
-            if (active_test) |*t| {
-                for (t.tests.items, 0..) |tc, i| {
-                    const wp = Vec3.init(tc.spos[0], tc.spos[1] + 0.5, tc.spos[2]);
-                    if (cam.worldToScreen(wp, viewport)) |sp| {
-                        if (sp.z >= 0 and sp.z <= 1) {
-                            const txt = std.fmt.bufPrint(&tbuf, "T{d}", .{i}) catch continue;
-                            ui.screenTextEx(sp.x, vh - sp.y, txt, white, true);
+            // подписи тестов (T<index> над точкой старта) — gated on `labels` group.
+            if (view_state.groups.labels) {
+                if (active_test) |*t| {
+                    for (t.tests.items, 0..) |tc, i| {
+                        const wp = Vec3.init(tc.spos[0], tc.spos[1] + 0.5, tc.spos[2]);
+                        if (cam.worldToScreen(wp, viewport)) |sp| {
+                            if (sp.z >= 0 and sp.z <= 1) {
+                                const txt = std.fmt.bufPrint(&tbuf, "T{d}", .{i}) catch continue;
+                                ui.screenTextEx(sp.x, vh - sp.y, txt, white, true);
+                            }
                         }
                     }
                 }
+            }
+
+            // Cluster E (P1-3): scheme legend — top-right corner overlay. For the
+            // height/cost gradient bar we pass the navmesh value range (else 0..0).
+            if (show_legend) {
+                const scheme = scheme_state.active;
+                var lo: f32 = 0;
+                var hi: f32 = 0;
+                if (scheme == .height or scheme == .cost) {
+                    const nm = switch (sample_kind) {
+                        .solo => solo.navMesh(),
+                        .tile => tile.navMesh(),
+                        .temp => temp.navMesh(),
+                    };
+                    if (nm) |n| {
+                        const r = poly_visit.schemeRange(n, scheme);
+                        lo = r.lo;
+                        hi = r.hi;
+                    }
+                }
+                legend.draw(scheme, @floatFromInt(fb[0]), vh, lo, hi);
             }
 
             // экранные подсказки (нижний левый угол)
