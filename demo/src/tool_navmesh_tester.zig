@@ -116,6 +116,11 @@ pub const NavMeshTesterTool = struct {
     slice_auto: bool = false, // авто-продвижение каждый кадр (Play)
     slice_iters: i32 = 1, // итераций за один «Advance 1»/кадр Play
     slice_big: i32 = 20, // итераций за «Advance N»
+    // Throttle for Play: advance `slice_iters` only once every `slice_play_interval`
+    // FRAMES, so the search visibly grows step-by-step instead of finishing in a
+    // few frames. 1 = every frame (fastest); higher = slower. accum counts frames.
+    slice_play_interval: i32 = 10,
+    slice_play_accum: i32 = 0,
     slice_done_total: usize = 0, // суммарно выполнено A*-итераций
     slice_finished: bool = false, // поиск завершён (success/failure) + finalize сделан
     slice_status: dt.Status = .{}, // последний статус update/init (для status-строки)
@@ -547,8 +552,16 @@ pub const NavMeshTesterTool = struct {
     /// Покадровый тик: при Play продвигает поиск ровно на один update за кадр.
     fn tickSlice(self: *NavMeshTesterTool) void {
         if (self.mode != .pathfind_sliced) return;
-        if (!self.slice_auto or !self.slice_active or self.slice_finished) return;
+        if (!self.slice_auto or !self.slice_active or self.slice_finished) {
+            self.slice_play_accum = 0;
+            return;
+        }
         const q = self.query orelse return;
+        // Throttle: only advance once every slice_play_interval frames, so the
+        // frontier visibly grows instead of finishing in a handful of frames.
+        self.slice_play_accum += 1;
+        if (self.slice_play_accum < @max(self.slice_play_interval, 1)) return;
+        self.slice_play_accum = 0;
         self.advanceSlice(q, self.slice_iters);
     }
 
@@ -849,8 +862,17 @@ pub const NavMeshTesterTool = struct {
         _ = self;
         if (ref == 0) return;
         const d = nm.decodePolyId(ref);
-        if (@as(usize, d.tile) >= nm.tiles.len) return;
+        // Bound by BOTH the actual slice length AND max_tiles (faithful indexes
+        // tiles[tile] guarded only by max_tiles; the slice may be shorter). Use the
+        // smaller. DIAG: log the values so the impossible-looking crash is pinned.
+        const mt: usize = if (nm.max_tiles > 0) @intCast(nm.max_tiles) else 0;
+        const bound = @min(nm.tiles.len, mt);
+        if (@as(usize, d.tile) >= bound) {
+            std.debug.print("[DRAWSAFE skip] ref=0x{X} tile={d} polyfld={d} tiles.len={d} max_tiles={d}\n", .{ ref, d.tile, d.poly, nm.tiles.len, nm.max_tiles });
+            return;
+        }
         if (!nm.isValidPolyRef(ref)) return;
+        std.debug.print("[DRAWSAFE draw] ref=0x{X} tile={d} tiles.len={d} max_tiles={d}\n", .{ ref, d.tile, nm.tiles.len, nm.max_tiles });
         dbg.debugDrawNavMeshPoly(dd, nm, ref, col);
     }
 
@@ -871,6 +893,16 @@ pub const NavMeshTesterTool = struct {
 
         // подсветка полигонов результата: start/end/path разными цветами (как оригинал)
         if (self.navmesh) |nm| {
+            // DIAG: compare the RENDER navmesh (self.navmesh) against the navmesh the
+            // path was computed on (query's attached nav). If they differ (or differ
+            // in bit-widths / tile counts), path refs decode inconsistently -> OOB.
+            if (self.npolys > 0) {
+                const qnav = if (self.query) |q| q.getAttachedNavMesh() else null;
+                std.debug.print("[NAVID] render_nm=0x{X} tiles.len={d} max_tiles={d} bits(t={d},p={d},s={d})  query_nm=0x{X} npolys={d} start=0x{X} end=0x{X}\n", .{
+                    @intFromPtr(nm),                nm.tiles.len, nm.max_tiles, nm.tile_bits, nm.poly_bits, nm.salt_bits,
+                    if (qnav) |qn| @intFromPtr(qn) else 0, self.npolys, self.start_ref, self.end_ref,
+                });
+            }
             // start/end + path polys, all via drawPolySafe (tiles.len-bounded — guards
             // stale refs that survive a navmesh swap; see drawPolySafe). Path skips
             // start/end like upstream.
@@ -1344,13 +1376,21 @@ pub const NavMeshTesterTool = struct {
             }
         }
 
+        // Play speed: frames to wait between auto-advances (higher = slower Play).
+        var sp: f32 = @floatFromInt(self.slice_play_interval);
+        ui.sliderInt(@src(), "Play speed: 1 step / {d:.0} frame(s)", &sp, 1, 60);
+        self.slice_play_interval = @intFromFloat(sp);
+
         // Per-advance amounts. i32 fields bridged through f32 proxies for the slider.
         var it: f32 = @floatFromInt(self.slice_iters);
-        ui.sliderInt(@src(), "iters/advance: {d:.0}", &it, 1, 50);
+        ui.sliderInt(@src(), "A* iters per step: {d:.0}", &it, 1, 50);
         self.slice_iters = @intFromFloat(it);
         var big: f32 = @floatFromInt(self.slice_big);
-        ui.sliderInt(@src(), "advance N: {d:.0}", &big, 1, 200);
+        ui.sliderInt(@src(), "\"Advance N\" amount: {d:.0}", &big, 1, 200);
         self.slice_big = @intFromFloat(big);
+
+        // Quick help — the controls confused users.
+        dvui.labelNoFmt(@src(), "Play=auto-step (use Play speed to slow it)  Advance 1=one step  Advance N=jump  Finish=whole path  Reset=restart", .{}, .{ .id_extra = 77 });
 
         // Status line: iters / nodes used / current status word.
         const status_txt: []const u8 = if (self.slice_finished)
