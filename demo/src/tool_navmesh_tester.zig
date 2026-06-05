@@ -870,14 +870,28 @@ pub const NavMeshTesterTool = struct {
         self.shape_nverts = 4;
     }
 
-    /// Draw a path / endpoint polygon via the faithful debug-draw. Endpoint refs are
-    /// zeroed on navmesh swap (setNavMesh, FIX-8 root cause), so `ref == 0` here means
-    /// "no endpoint set" and we skip it — without this guard the faithful draw would
-    /// decode 0 → poly 0 and highlight a bogus polygon. Path refs come from findPath
-    /// on the CURRENT query, so they are always valid for this mesh.
+    /// Draw a path / endpoint polygon via the faithful debug-draw, but ONLY after
+    /// validating the ref against the CURRENT mesh.
+    ///
+    /// A held ref can outlive the mesh it was computed on: an in-place tile rebuild
+    /// (F6 incremental / autosave) mutates the navmesh's tiles WITHOUT re-pointing the
+    /// tool (no setNavMesh -> npolys/self.polys are NOT cleared), so the poly count can
+    /// shrink under a path that still references a now-out-of-range poly. The faithful
+    /// debugDrawNavMeshPoly indexes `tiles[decoded.tile]` and the poly array guarded
+    /// only by `< max_tiles` (which can exceed `tiles.len`, and never checks poly_count),
+    /// so a stale ref OOB-crashes it. Validate first; faithful src/* stays untouched.
+    ///
+    /// `ref == 0` (a cleared endpoint, post-setNavMesh) is skipped before the decode —
+    /// faithful would otherwise decode 0 -> poly 0 and highlight a bogus polygon.
     fn drawPolySafe(self: *NavMeshTesterTool, dd: dbg.DebugDraw, nm: *const dt.NavMesh, ref: dt.PolyRef, col: u32) void {
         _ = self;
         if (ref == 0) return;
+        // tile bound FIRST: getTileAndPolyByRef itself indexes tiles[decoded.tile]
+        // guarded only by max_tiles, so it would OOB before it could reject the ref.
+        const decoded = nm.decodePolyId(ref);
+        if (@as(usize, decoded.tile) >= nm.tiles.len) return;
+        // salt + tile + poly_count validation; rejects a stale/shrunk-mesh ref.
+        _ = nm.getTileAndPolyByRef(ref) catch return;
         dbg.debugDrawNavMeshPoly(dd, nm, ref, col);
     }
 
