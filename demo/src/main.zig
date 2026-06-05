@@ -36,6 +36,9 @@ const ConvexVolumeTool = @import("tool_convex.zig").ConvexVolumeTool;
 const CrowdTool = @import("tool_crowd.zig").CrowdTool;
 const NavMeshPruneTool = @import("tool_prune.zig").NavMeshPruneTool;
 const UndoStack = @import("edit/undo_stack.zig").UndoStack;
+const edit_op = @import("edit/edit_op.zig");
+const Selection = @import("edit/selection.zig").Selection;
+const selection_mod = @import("edit/selection.zig");
 const snap_mod = @import("edit/snap.zig");
 const Vec3 = recast.math.Vec3;
 
@@ -155,6 +158,11 @@ pub fn main(main_init: std.process.Init) !void {
     var undo_stack = UndoStack.init(main_init.gpa);
     defer undo_stack.deinit();
 
+    // Multi-select state (cluster F / F3). Tracks selected volume/off-mesh ids by
+    // STABLE id (survives undo/redo churn). Only meaningful for active_tool==.select.
+    var selection = Selection.init(main_init.gpa);
+    defer selection.deinit();
+
     var tester = NavMeshTesterTool.init(main_init.gpa, &dd_gl);
     defer tester.deinit();
     var offmesh_tool = OffMeshConnectionTool.init(&geom, &dd_gl, &undo_stack);
@@ -227,6 +235,12 @@ pub fn main(main_init: std.process.Init) !void {
     defer freeVariants(main_init.gpa, &variants, &variants_stem);
     var pick_hit: ?Vec3 = null; // последняя точка пикинга по земле
     var snap_cfg = snap_mod.SnapConfig{}; // snap state (mode=.off by default)
+    // Select-tool rubber-band drag (F3). `sel_drag_start` = world hit at LMB-down;
+    // `sel_drag_cur` = current cursor world hit while held (for drawing the box).
+    // Both null when not dragging. Active only for active_tool==.select.
+    var sel_drag_start: ?Vec3 = null;
+    var sel_drag_cur: ?Vec3 = null;
+    var prev_delete = false; // edge-detect Del (group-delete in select tool)
     const dt: f32 = 1.0 / 60.0;
 
     // --- Auto-save state (cluster F) ---
@@ -564,12 +578,91 @@ pub fn main(main_init: std.process.Init) !void {
                             break :blk;
                         },
                         .crowd => crowd_tool.onClick(&rs, &hp, shift),
+                        .select => {
+                            // F3 Select tool: Ctrl+LMB toggles the single object under
+                            // the cursor (no drag begins). Plain LMB begins a rubber-band
+                            // box (resolved on release). The release-side falling edge
+                            // (below) finishes the box or treats a tiny drag as a click.
+                            if (ctrl_held) {
+                                if (selection_mod.hitTest(&geom, hp[0], hp[2], 0.5)) |hit| {
+                                    switch (hit) {
+                                        .volume => |id| {
+                                            selection.toggleVolume(id) catch {};
+                                            std.debug.print("[INFO] select: toggle volume id={d} (selected {d})\n", .{ id, selection.count() });
+                                        },
+                                        .offmesh => |id| {
+                                            selection.toggleOffmesh(id) catch {};
+                                            std.debug.print("[INFO] select: toggle off-mesh id={d} (selected {d})\n", .{ id, selection.count() });
+                                        },
+                                    }
+                                }
+                                sel_drag_start = null;
+                                sel_drag_cur = null;
+                            } else {
+                                // Begin a box drag from this world point.
+                                sel_drag_start = h;
+                                sel_drag_cur = h;
+                            }
+                        },
                     }
                     pick_hit = h;
                 }
             }
         }
+        // --- Select-tool rubber-band: per-frame update + release resolution (F3) ---
+        // While LMB is held in the select tool with a drag in progress, recompute the
+        // current world hit each frame (for drawing the box). On the falling edge,
+        // either single-pick (tiny drag = click) or run the rubber-band rect select.
+        if (active_tool == .select and sel_drag_start != null) {
+            // Recompute the world point under the current cursor (same pickRay path).
+            const win_sz2 = g_window.getSize();
+            const sx2: f64 = if (win_sz2[0] > 0) @as(f64, @floatFromInt(fb[0])) / @as(f64, @floatFromInt(win_sz2[0])) else 1.0;
+            const sy2: f64 = if (win_sz2[1] > 0) @as(f64, @floatFromInt(fb[1])) / @as(f64, @floatFromInt(win_sz2[1])) else 1.0;
+            if (cam.pickRay(@floatCast(cur[0] * sx2), @floatCast(cur[1] * sy2), viewport)) |r2| {
+                if (pickPoint(&geom, r2.start, r2.end)) |h2| sel_drag_cur = h2;
+            }
+            // Falling edge: LMB was down last frame, now up -> resolve the drag.
+            if (prev_lmb and !lmb) {
+                const start = sel_drag_start.?;
+                const cur_w = sel_drag_cur orelse start;
+                const adx = @abs(cur_w.x - start.x);
+                const adz = @abs(cur_w.z - start.z);
+                if (adx < 0.25 and adz < 0.25) {
+                    // Tiny drag = click: replace selection with the single object under
+                    // the release point (or clear if nothing is there).
+                    selection.clear();
+                    if (selection_mod.hitTest(&geom, cur_w.x, cur_w.z, 0.5)) |hit| {
+                        switch (hit) {
+                            .volume => |id| selection.toggleVolume(id) catch {},
+                            .offmesh => |id| selection.toggleOffmesh(id) catch {},
+                        }
+                    }
+                    std.debug.print("[INFO] select: click-pick -> {d} selected\n", .{selection.count()});
+                } else {
+                    selection_mod.rubberBand(&selection, &geom, start.x, start.z, cur_w.x, cur_w.z) catch {};
+                    std.debug.print("[INFO] select: box -> {d} volume(s), {d} off-mesh selected\n", .{ selection.volumes.items.len, selection.offmesh.items.len });
+                }
+                sel_drag_start = null;
+                sel_drag_cur = null;
+            }
+        }
         prev_lmb = lmb;
+
+        // --- Group delete (F3): Del key in select tool removes all selected objects
+        // as ONE composite edit. Edge-triggered, gated by keyboardFree (so it never
+        // fires while typing in a dvui text field). Descending-index deletes keep the
+        // index math stable; composite.revert (reverse order) re-inserts exactly.
+        if (active_tool == .select and gate.keyboardFree()) {
+            const del_now = g_window.getKey(.delete) == .press;
+            if (del_now and !prev_delete and !selection.isEmpty()) {
+                deleteSelected(main_init.gpa, &geom, &selection, &undo_stack);
+                selection.clear();
+                geom_edited = true;
+            }
+            prev_delete = del_now;
+        } else {
+            prev_delete = false;
+        }
 
         // перестройка navmesh, если инструмент изменил геометрию (или undo/redo
         // изменил geom — F1: navmesh должен отразить откат/повтор правки).
@@ -727,6 +820,70 @@ pub fn main(main_init: std.process.Init) !void {
             .offmesh => offmesh_tool.render(),
             .convex => convex_tool.render(),
             .crowd => crowd_tool.render(),
+            .select => {},
+        }
+
+        // --- Select-tool highlight overlay (F3) -------------------------------
+        // Bright-yellow XZ outlines for selected volumes, highlighted markers for
+        // selected off-mesh endpoints, and the in-progress rubber-band rectangle.
+        if (active_tool == .select) {
+            const hl = recast.debug.rgba(255, 255, 0, 255); // bright yellow highlight
+            // Selected convex volumes: closed XZ line-loop at the volume's hmax height.
+            for (geom.volumes.items) |*vol| {
+                if (!selection.containsVolume(vol.id)) continue;
+                const n: usize = @intCast(vol.nverts);
+                if (n < 2) continue;
+                const hy = vol.hmax;
+                dd.begin(.lines, 3.0);
+                var k: usize = 0;
+                while (k < n) : (k += 1) {
+                    const a = k * 3;
+                    const b = ((k + 1) % n) * 3;
+                    dd.vertexXYZ(vol.verts[a + 0], hy, vol.verts[a + 2], hl);
+                    dd.vertexXYZ(vol.verts[b + 0], hy, vol.verts[b + 2], hl);
+                }
+                dd.end();
+            }
+            // Selected off-mesh links: highlight both endpoints with a small cross.
+            var oi: usize = 0;
+            while (oi < geom.offMeshCount()) : (oi += 1) {
+                if (!selection.containsOffmesh(geom.off_id.items[oi])) continue;
+                const v = geom.off_verts.items[oi * 6 ..][0..6];
+                dd.begin(.lines, 3.0);
+                for ([_]usize{ 0, 3 }) |o| {
+                    const ex2 = v[o + 0];
+                    const ey2 = v[o + 1];
+                    const ez2 = v[o + 2];
+                    dd.vertexXYZ(ex2 - 0.4, ey2, ez2, hl);
+                    dd.vertexXYZ(ex2 + 0.4, ey2, ez2, hl);
+                    dd.vertexXYZ(ex2, ey2, ez2 - 0.4, hl);
+                    dd.vertexXYZ(ex2, ey2, ez2 + 0.4, hl);
+                    dd.vertexXYZ(ex2, ey2, ez2, hl);
+                    dd.vertexXYZ(ex2, ey2 + 0.8, ez2, hl);
+                }
+                dd.end();
+            }
+            // In-progress rubber-band rectangle on the ground at the start height.
+            if (sel_drag_start) |s| {
+                if (sel_drag_cur) |c| {
+                    const ry = s.y;
+                    const x0 = s.x;
+                    const z0 = s.z;
+                    const x1 = c.x;
+                    const z1 = c.z;
+                    const rc = recast.debug.rgba(255, 255, 120, 255);
+                    dd.begin(.lines, 2.0);
+                    dd.vertexXYZ(x0, ry, z0, rc);
+                    dd.vertexXYZ(x1, ry, z0, rc);
+                    dd.vertexXYZ(x1, ry, z0, rc);
+                    dd.vertexXYZ(x1, ry, z1, rc);
+                    dd.vertexXYZ(x1, ry, z1, rc);
+                    dd.vertexXYZ(x0, ry, z1, rc);
+                    dd.vertexXYZ(x0, ry, z1, rc);
+                    dd.vertexXYZ(x0, ry, z0, rc);
+                    dd.end();
+                }
+            }
         }
 
         // тест-кейсы: посчитать пути один раз (когда query привязан к нужному сэмплу), затем рисовать кеш
@@ -835,6 +992,22 @@ pub fn main(main_init: std.process.Init) !void {
                     .offmesh => offmesh_tool.drawMenu(),
                     .convex => convex_tool.drawMenu(),
                     .crowd => crowd_tool.drawMenu(),
+                    .select => {
+                        // F3 selection panel: live count + clear / delete buttons.
+                        dvui.label(@src(), "Selected: {d} volume(s), {d} off-mesh", .{ selection.volumes.items.len, selection.offmesh.items.len }, .{});
+                        var row = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
+                        defer row.deinit();
+                        if (dvui.button(@src(), "Clear selection", .{ .grayed = selection.isEmpty() }, .{ .id_extra = 980 })) {
+                            selection.clear();
+                        }
+                        if (dvui.button(@src(), "Delete selected", .{ .grayed = selection.isEmpty() }, .{ .id_extra = 981 })) {
+                            if (!selection.isEmpty()) {
+                                deleteSelected(main_init.gpa, &geom, &selection, &undo_stack);
+                                selection.clear();
+                                geom_edited = true;
+                            }
+                        }
+                    },
                 }
 
                 // Snap UI: shown only for edit tools (convex / offmesh).
@@ -1786,6 +1959,68 @@ fn pickPoint(geom: *const InputGeom, start: Vec3, end: Vec3) ?Vec3 {
         return Vec3.init(s[0] + (e[0] - s[0]) * t, s[1] + (e[1] - s[1]) * t, s[2] + (e[2] - s[2]) * t);
     }
     return rayGroundHit(start, end);
+}
+
+/// Group-delete every selected object (F3) as ONE composite undo edit.
+///
+/// Resolves the selected STABLE ids to current array indices, then deletes in
+/// DESCENDING index order so each delete leaves the remaining target indices
+/// valid. Each delete is captured (full ConvexVolume / 6-field OffMeshData + its
+/// former index) into an ops slice in deletion order. The composite's `revert`
+/// runs the ops in REVERSE, so the ascending-index re-inserts reconstruct the
+/// original list exactly (the invariant proved by the composite undo_stack test).
+/// On any allocation failure the captured ops are freed and nothing is recorded
+/// (the geom mutations already happened are left as-is — a no-undo edge case).
+fn deleteSelected(alloc: std.mem.Allocator, geom: *InputGeom, sel: *Selection, undo_stack: *UndoStack) void {
+    const Managed = std.array_list.Managed;
+    // Collect current indices for each selected id (skip ids no longer present).
+    var vol_idx = Managed(usize).init(alloc);
+    defer vol_idx.deinit();
+    var off_idx = Managed(usize).init(alloc);
+    defer off_idx.deinit();
+
+    for (sel.volumes.items) |id| {
+        for (geom.volumes.items, 0..) |*v, i| {
+            if (v.id == id) {
+                vol_idx.append(i) catch {};
+                break;
+            }
+        }
+    }
+    var oc: usize = 0;
+    while (oc < geom.offMeshCount()) : (oc += 1) {
+        for (sel.offmesh.items) |id| {
+            if (geom.off_id.items[oc] == id) {
+                off_idx.append(oc) catch {};
+                break;
+            }
+        }
+    }
+
+    // Sort both descending so we delete from the back forward (stable indices).
+    std.mem.sort(usize, vol_idx.items, {}, comptime std.sort.desc(usize));
+    std.mem.sort(usize, off_idx.items, {}, comptime std.sort.desc(usize));
+
+    const total = vol_idx.items.len + off_idx.items.len;
+    if (total == 0) return;
+
+    var ops = alloc.alloc(edit_op.EditOp, total) catch return;
+    var n: usize = 0;
+
+    // Volumes first (descending), then off-mesh (descending). Capture BEFORE delete.
+    for (vol_idx.items) |i| {
+        ops[n] = .{ .delete_volume = .{ .index = i, .vol = geom.volumes.items[i] } };
+        n += 1;
+        geom.deleteConvexVolume(i);
+    }
+    for (off_idx.items) |i| {
+        ops[n] = .{ .delete_offmesh = .{ .index = i, .data = edit_op.OffMeshData.capture(geom, i) } };
+        n += 1;
+        geom.deleteOffMeshConnection(i);
+    }
+
+    undo_stack.record(edit_op.makeComposite(alloc, ops));
+    std.debug.print("[INFO] select: group-delete {d} volume(s) + {d} off-mesh (composite)\n", .{ vol_idx.items.len, off_idx.items.len });
 }
 
 /// Пересечение луча (start->end) с плоскостью y=0.
