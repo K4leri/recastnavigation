@@ -1903,7 +1903,7 @@ pub fn main(main_init: std.process.Init) !void {
                     // sibling "<stem>.recastbundle". Requires a saved scene first.
                     if (dvui.button(@src(), "Export Bundle", .{}, .{ .id_extra = 990 })) {
                         if (variants.len > 0) {
-                            exportBundleNow(main_init.gpa, app.meshes_folder, cur_stem, variants[0].path, &bctx);
+                            exportBundleNow(main_init.gpa, app.meshes_folder, cur_stem, variants[0].path, &tester, &bctx);
                         } else {
                             bctx.context().log(.err, "Export Bundle: save the scene first (no variants).", .{});
                         }
@@ -3740,6 +3740,7 @@ fn exportBundleNow(
     folder: []const u8,
     stem: []const u8,
     container_path: []const u8,
+    tester: *NavMeshTesterTool,
     bctx: *BuildContext,
 ) void {
     const out_path = std.fmt.allocPrint(gpa, "{s}/{s}.recastbundle", .{ folder, stem }) catch |e| {
@@ -3747,11 +3748,32 @@ fn exportBundleNow(
         return;
     };
     defer gpa.free(out_path);
-    bundle_io.exportBundle(gpa, container_path, null, out_path) catch |e| {
+
+    // I-4 repro manifest: if the tester holds a query+result, snapshot it as
+    // repro/query.json inside the bundle (the "expected" for compare on import).
+    // No query -> repro stays null (bundle is scene-only). Copy the corridor/corners
+    // out of the tester's internal buffers before serialising (lifetime safety).
+    var repro_json: ?[]u8 = null;
+    defer if (repro_json) |rj| gpa.free(rj);
+    if (tester.currentQueryRecord()) |rec_base| {
+        var corners_buf: [256][3]f32 = undefined;
+        const nc = @min(rec_base.corners.len, corners_buf.len);
+        @memcpy(corners_buf[0..nc], rec_base.corners[0..nc]);
+        var path_buf: [256]u32 = undefined;
+        const np = @min(rec_base.path.len, path_buf.len);
+        @memcpy(path_buf[0..np], rec_base.path[0..np]);
+        var rec = rec_base;
+        rec.corners = corners_buf[0..nc];
+        rec.path = path_buf[0..np];
+        repro_json = export_query.writeJson(gpa, &[_]export_query.QueryRecord{rec}) catch null;
+    }
+
+    bundle_io.exportBundle(gpa, container_path, repro_json, out_path) catch |e| {
         bctx.context().log(.err, "Export Bundle failed ({s}): {s}", .{ out_path, @errorName(e) });
         return;
     };
-    bctx.context().log(.progress, "Exported bundle {s} (from {s})", .{ out_path, container_path });
+    const repro_note: []const u8 = if (repro_json != null) " +repro" else "";
+    bctx.context().log(.progress, "Exported bundle {s} (from {s}){s}", .{ out_path, container_path, repro_note });
 }
 
 /// Import a bug-report bundle: pick the NEWEST "*.recastbundle" in `folder`, restore
