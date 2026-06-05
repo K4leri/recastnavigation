@@ -22,6 +22,10 @@ const Vec3 = recast.math.Vec3;
 
 pub const DrawMode = enum { mesh, navmesh, navmesh_trans, navmesh_bvtree, navmesh_portals };
 
+/// (tx,ty) tile coordinate — key for the dirty-tile set (cluster F6).
+pub const TileCoord = struct { x: i32, y: i32 };
+pub const DirtyTiles = std.AutoHashMap(TileCoord, void);
+
 pub const SampleTile = struct {
     alloc: std.mem.Allocator,
     settings: sample.CommonSettings = .{},
@@ -38,13 +42,74 @@ pub const SampleTile = struct {
 
     navmesh: ?dt.NavMesh = null,
 
+    // Dirty-tile set for incremental rebuild (cluster F6). An edit registers the
+    // (tx,ty) tiles whose bbox it touches via markDirtyBBox; the main loop drains
+    // this via rebuildDirty when "Incremental rebuild" is on.
+    dirty_tiles: DirtyTiles = undefined,
+    incremental: bool = true, // default ON for Tile (Solo is always a single full build)
+
     pub fn init(alloc: std.mem.Allocator, bctx: *BuildContext, dd_gl: *ddgl.DebugDrawGL) SampleTile {
-        return .{ .alloc = alloc, .bctx = bctx, .dd_gl = dd_gl };
+        return .{ .alloc = alloc, .bctx = bctx, .dd_gl = dd_gl, .dirty_tiles = DirtyTiles.init(alloc) };
     }
 
     pub fn deinit(self: *SampleTile) void {
         if (self.navmesh) |*n| n.deinit();
         self.navmesh = null;
+        self.dirty_tiles.deinit();
+    }
+
+    /// Number of tiles currently marked dirty (for the "N tiles dirty" indicator).
+    pub fn dirtyCount(self: *const SampleTile) usize {
+        return self.dirty_tiles.count();
+    }
+
+    /// Map an axis-aligned XZ edit bbox to the tiles it touches and mark them dirty.
+    /// CONSERVATIVE: the range is expanded by ±1 tile on each side, because an edit
+    /// near a tile border affects neighbour tiles through `border_size` (the
+    /// per-tile rasterisation reaches `border_size` cells past the tile boundary).
+    /// Requires a navmesh (for calcTileLoc); no-op if there is none yet.
+    pub fn markDirtyBBox(self: *SampleTile, minx: f32, minz: f32, maxx: f32, maxz: f32) void {
+        const nm = if (self.navmesh) |*n| n else return;
+        const geom = self.geom orelse return;
+        // Valid tile grid [0,tw)×[0,th) — same derivation as build().
+        var gw: i32 = 0;
+        var gh: i32 = 0;
+        recast.RecastConfig.calcGridSize(
+            Vec3.init(geom.bmin[0], geom.bmin[1], geom.bmin[2]),
+            Vec3.init(geom.bmax[0], geom.bmax[1], geom.bmax[2]),
+            self.settings.cell_size,
+            &gw,
+            &gh,
+        );
+        const ts: i32 = @intFromFloat(self.tile_size);
+        const tw = @divTrunc(gw + ts - 1, ts);
+        const th = @divTrunc(gh + ts - 1, ts);
+
+        const lo = nm.calcTileLoc(Vec3.init(minx, 0, minz));
+        const hi = nm.calcTileLoc(Vec3.init(maxx, 0, maxz));
+        // ±1 conservative expansion, then clamp to the valid grid so we never mark
+        // off-grid tiles (a full build never produces those).
+        var ty: i32 = @max(0, lo.y - 1);
+        while (ty <= @min(th - 1, hi.y + 1)) : (ty += 1) {
+            var tx: i32 = @max(0, lo.x - 1);
+            while (tx <= @min(tw - 1, hi.x + 1)) : (tx += 1) {
+                self.dirty_tiles.put(.{ .x = tx, .y = ty }, {}) catch {};
+            }
+        }
+    }
+
+    /// Rebuild every dirty tile incrementally, then clear the set. Returns the
+    /// number of tiles rebuilt. Mirrors what a full build() would have produced for
+    /// exactly those tiles (rebuildTile uses the same per-tile path).
+    pub fn rebuildDirty(self: *SampleTile) usize {
+        if (self.navmesh == null) return 0;
+        var n: usize = 0;
+        var it = self.dirty_tiles.keyIterator();
+        while (it.next()) |k| {
+            if (self.rebuildTile(k.x, k.y)) n += 1;
+        }
+        self.dirty_tiles.clearRetainingCapacity();
+        return n;
     }
 
     pub fn setGeom(self: *SampleTile, geom: *InputGeom) void {
@@ -112,6 +177,48 @@ pub const SampleTile = struct {
         self.build_time_ms = timer.readMs();
         self.build_gen +%= 1;
         ctx.log(.progress, "Tile build: {d} tiles in {d:.1} ms", .{ self.tiles_built, self.build_time_ms });
+        return true;
+    }
+
+    /// Incremental single-tile rebuild (cluster F6). Removes any existing tile(s)
+    /// at (tx,ty) from the live navmesh, then rebuilds JUST that tile via the same
+    /// per-tile `buildTileMesh` path `build()` uses — so the result is byte-identical
+    /// to that tile from a full `build()`.
+    ///
+    /// Preconditions: a navmesh already exists (a prior `build()`), and the geom is
+    /// set. `bmin/bmax` are recomputed from geom EXACTLY as `build()` does, so the
+    /// tile origin / border expansion match the full build verbatim.
+    ///
+    /// Returns true if the navmesh was updated (whether or not the rebuilt tile
+    /// produced data — an empty tile is a valid "removed only" outcome). Returns
+    /// false only if there is no navmesh/geom to operate on.
+    pub fn rebuildTile(self: *SampleTile, tx: i32, ty: i32) bool {
+        const geom = self.geom orelse return false;
+        const navmesh = if (self.navmesh) |*n| n else return false;
+        const ctx = self.bctx.context();
+
+        // bmin/bmax come from geom — identical to build()'s computation.
+        const bmin = Vec3.init(geom.bmin[0], geom.bmin[1], geom.bmin[2]);
+        const bmax = Vec3.init(geom.bmax[0], geom.bmax[1], geom.bmax[2]);
+
+        // Remove existing tile(s) at this (tx,ty) across all layers. The tile sample
+        // only builds layer 0, but getTilesAt + removeTile is the upstream-faithful
+        // way to clear the slot (it also unstitches neighbour portal links).
+        // removeTile frees the old data because tiles were added with free_data=true.
+        {
+            const MAX = 32;
+            var tiles: [MAX]*dt.MeshTile = undefined;
+            const n = navmesh.getTilesAt(tx, ty, &tiles, MAX);
+            for (0..n) |i| {
+                const ref = navmesh.getTileRef(tiles[i]);
+                if (ref != 0) _ = navmesh.removeTile(ref) catch {};
+            }
+        }
+
+        // Rebuild just this tile via the SAME private path build() uses. If it
+        // produces no data (empty tile), the slot simply stays removed — correct.
+        _ = self.buildTileMesh(ctx, geom, tx, ty, bmin, bmax, navmesh);
+        self.build_gen +%= 1;
         return true;
     }
 
@@ -314,6 +421,13 @@ pub const SampleTile = struct {
             dvui.label(@src(), "Max Polys  {d}", .{@as(i32, 1) << poly_bits}, .{});
         }
 
+        _ = dvui.separator(@src(), .{ .expand = .horizontal });
+        // F6: incremental rebuild. ON by default for Tile; when off, edits trigger a
+        // full build() (old behaviour). Shows how many tiles are currently dirty.
+        _ = dvui.checkbox(@src(), &self.incremental, "Incremental rebuild", .{});
+        if (self.incremental) {
+            dvui.label(@src(), "{d} tiles dirty", .{self.dirtyCount()}, .{});
+        }
         _ = dvui.separator(@src(), .{ .expand = .horizontal });
         if (dvui.button(@src(), "Save", .{}, .{})) self.saveNavMesh();
         if (dvui.button(@src(), "Load", .{}, .{})) self.loadNavMesh();
