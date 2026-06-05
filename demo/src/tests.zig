@@ -40,5 +40,6 @@ test {
     _ = @import("diag/poly_inspect.zig");
     _ = @import("diag/artifacts.zig");
     _ = @import("diag/navmesh_lint.zig");
+    _ = @import("diag/navmesh_verify.zig");
     _ = @import("diag/mem_budget.zig");
 }

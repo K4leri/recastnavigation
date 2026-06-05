@@ -54,6 +54,7 @@ const inspector = @import("edit/inspector.zig");
 const presets = @import("edit/presets.zig");
 const poly_inspect = @import("diag/poly_inspect.zig");
 const navmesh_lint = @import("diag/navmesh_lint.zig");
+const navmesh_verify = @import("diag/navmesh_verify.zig");
 const Vec3 = recast.math.Vec3;
 
 const ActiveTool = tool_registry.ToolId; // { none, tester, prune, offmesh, convex, crowd }
@@ -282,6 +283,11 @@ pub fn main(main_init: std.process.Init) !void {
     var lint_report: ?navmesh_lint.LintReport = null;
     defer if (lint_report) |*r| r.deinit(main_init.gpa);
     var lint_highlight: bool = false; // overdraw culprit refs in a warning colour
+    // G2 Validation panel: cached VerifyReport from the last "Verify Integrity"
+    // click. Owns a heap ArrayList -> freed before re-verify and on the deferred
+    // teardown; null-after-free so the deferred deinit never double-frees.
+    var verify_report: ?navmesh_verify.VerifyReport = null;
+    defer if (verify_report) |*r| r.deinit(main_init.gpa);
     var overlay_cap_warned = false; // P1-2: logged once when labels:all hits the cap
     // P1-4 minimap fly-to entry state.
     var minimap_rect: dvui.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
@@ -344,11 +350,13 @@ pub fn main(main_init: std.process.Init) !void {
     // sample's navMesh(), print findings to stdout, set the process exit code to
     // the error-count, and exit WITHOUT opening the GUI (clean headless CI path).
     var lint_headless = false;
+    var verify_headless = false;
     {
         var it = try std.process.Args.Iterator.initAllocator(main_init.minimal.args, main_init.gpa);
         defer it.deinit();
         while (it.next()) |a| {
             if (std.mem.eql(u8, a, "--lint")) lint_headless = true;
+            if (std.mem.eql(u8, a, "--verify")) verify_headless = true;
             if (std.mem.eql(u8, a, "--bench")) bench = true;
             if (std.mem.startsWith(u8, a, "--capture=")) {
                 // "<dir>,<frames>" — split on the last comma so dir names may contain none.
@@ -390,6 +398,13 @@ pub fn main(main_init: std.process.Init) !void {
     // Clean CI gate. Parsed AFTER the arg block so lint_headless is set.
     if (lint_headless) {
         runLintHeadless(main_init.gpa, solo.navMesh());
+    }
+
+    // --- --verify headless path: run the integrity verifier over the navmesh
+    // built at startup, print violations, and exit with code = violation count
+    // (clamped u8; 0 = clean for CI). Mirrors --lint exactly.
+    if (verify_headless) {
+        runVerifyHeadless(main_init.gpa, solo.navMesh());
     }
 
     if (shot_draw) |dm| {
@@ -1680,6 +1695,35 @@ pub fn main(main_init: std.process.Init) !void {
                 } else {
                     dvui.labelNoFmt(@src(), "Click \"Lint NavMesh\" to run the linter.", .{}, .{ .id_extra = 7554 });
                 }
+
+                // --- Integrity verifier (G2): structural data-structure
+                // invariants (freelist / link-refs / portal-symmetry / off-mesh /
+                // salt). The cached VerifyReport is freed before each re-verify
+                // and on teardown (null-after-free; no double-free). id_extra
+                // range 7580-7595.
+                if (dvui.button(@src(), "Verify Integrity", .{ .grayed = active_nav == null }, .{ .id_extra = 7580 })) {
+                    if (active_nav) |nm| {
+                        if (verify_report) |*old| {
+                            old.deinit(main_init.gpa);
+                            verify_report = null; // null-after-free
+                        }
+                        verify_report = navmesh_verify.verify(nm, main_init.gpa) catch null;
+                    }
+                }
+                if (verify_report) |*vrep| {
+                    if (vrep.ok) {
+                        dvui.labelNoFmt(@src(), "\u{2713} integrity OK", .{}, .{ .id_extra = 7581, .color_text = .{ .r = 140, .g = 220, .b = 140 } });
+                    } else {
+                        dvui.label(@src(), "integrity: {d} violation(s)", .{vrep.count}, .{ .id_extra = 7581, .color_text = .{ .r = 235, .g = 90, .b = 90 } });
+                        var vsc = dvui.scrollArea(@src(), .{}, .{ .expand = .horizontal, .min_size_content = .{ .h = 160 }, .id_extra = 7582 });
+                        for (vrep.violations.items, 0..) |*v, vi| {
+                            var vbuf: [160]u8 = undefined;
+                            const row = std.fmt.bufPrint(&vbuf, "[{s}] t{d}/p{d}/l{d}: {s}", .{ @tagName(v.invariant), v.tile, v.poly, v.link, v.message() }) catch v.message();
+                            dvui.labelNoFmt(@src(), row, .{}, .{ .id_extra = 7583 + vi, .color_text = .{ .r = 235, .g = 90, .b = 90 } });
+                        }
+                        vsc.deinit();
+                    }
+                }
             }
 
             // --- Scene persistence (.recastscene container) ---
@@ -2694,6 +2738,29 @@ fn runLintHeadless(gpa: std.mem.Allocator, nav: ?*recast.detour.NavMesh) noretur
         .{ report.error_count, report.warn_count, report.info_count },
     );
     const code: u8 = @intCast(@min(report.error_count, @as(usize, 255)));
+    std.process.exit(code);
+}
+
+/// --verify headless runner: verify `nav`'s structural invariants, print each
+/// violation "[INVARIANT] tile/poly/link: message" to stderr, and exit the
+/// process with code = violation count (clamped to u8; 0 = clean for CI). No
+/// navmesh -> exit(2). Mirrors runLintHeadless. Never returns.
+fn runVerifyHeadless(gpa: std.mem.Allocator, nav: ?*recast.detour.NavMesh) noreturn {
+    const out = nav orelse {
+        std.debug.print("[verify] no navmesh built (load a mesh / build failed)\n", .{});
+        std.process.exit(2);
+    };
+    var report = navmesh_verify.verify(out, gpa) catch |e| {
+        std.debug.print("[verify] error: {s}\n", .{@errorName(e)});
+        std.process.exit(2);
+    };
+    defer report.deinit(gpa);
+
+    for (report.violations.items) |*v| {
+        std.debug.print("[{s}] tile {d}/poly {d}/link {d}: {s}\n", .{ @tagName(v.invariant), v.tile, v.poly, v.link, v.message() });
+    }
+    std.debug.print("[verify] {d} violation(s)\n", .{report.count});
+    const code: u8 = @intCast(@min(report.count, @as(usize, 255)));
     std.process.exit(code);
 }
 
