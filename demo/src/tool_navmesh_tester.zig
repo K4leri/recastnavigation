@@ -755,7 +755,7 @@ pub const NavMeshTesterTool = struct {
             // faint poly fill in the variant colour (alpha already baked into v.color;
             // re-tint lighter for the fill so it reads as "this filter's corridor").
             const fill = (v.color & 0x00ffffff) | (@as(u32, 56) << 24);
-            for (r) |ref| dbg.debugDrawNavMeshPoly(dd, nm, ref, fill);
+            for (r) |ref| if (nm.isValidPolyRef(ref)) dbg.debugDrawNavMeshPoly(dd, nm, ref, fill);
             // polyline through centroids.
             if (r.len > 1) {
                 dd.begin(.lines, 3.0);
@@ -851,12 +851,16 @@ pub const NavMeshTesterTool = struct {
         // подсветка полигонов результата: start/end/path разными цветами (как оригинал)
         if (self.navmesh) |nm| {
             // start/end подсвечиваются безусловно, в цикле пути — пропускаются (как upstream).
-            if (self.start_ref != 0) dbg.debugDrawNavMeshPoly(dd, nm, self.start_ref, startCol);
-            if (self.end_ref != 0) dbg.debugDrawNavMeshPoly(dd, nm, self.end_ref, endCol);
+            // ВАЖНО: faithful debugDrawNavMeshPoly индексирует mesh.tiles[decoded.tile]
+            // БЕЗ проверки границ — стейл/невалидный ref (напр. путь от прошлого навмеша
+            // после загрузки сцены, или partial-path к недостижимой точке) даёт OOB-краш.
+            // isValidPolyRef (salt+tile+poly bounds) защищает, не трогая ядро.
+            if (nm.isValidPolyRef(self.start_ref)) dbg.debugDrawNavMeshPoly(dd, nm, self.start_ref, startCol);
+            if (nm.isValidPolyRef(self.end_ref)) dbg.debugDrawNavMeshPoly(dd, nm, self.end_ref, endCol);
             for (0..self.npolys) |i| {
                 const r = self.polys[i];
                 if (r == self.start_ref or r == self.end_ref) continue;
-                dbg.debugDrawNavMeshPoly(dd, nm, r, pathCol);
+                if (nm.isValidPolyRef(r)) dbg.debugDrawNavMeshPoly(dd, nm, r, pathCol);
             }
         }
 

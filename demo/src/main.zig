@@ -577,8 +577,10 @@ pub fn main(main_init: std.process.Init) !void {
                 Vec3.init(geom.bmax[0], geom.bmax[1], geom.bmax[2]),
             );
         }
-        // C — переключить режим отсечения граней (0=off, 1=back, 2=front) для подбора winding
-        const c_now = g_window.getKey(.c) == .press;
+        // K — переключить режим отсечения граней (0=off, 1=back, 2=front) для подбора winding.
+        // (Раньше было на C — конфликтовало с Ctrl+C=copy в Select-инструменте: copy
+        //  одновременно дёргал cull и ломал картинку.)
+        const c_now = g_window.getKey(.k) == .press;
         if (c_now and !prev_c) {
             dd_gl.cull_mode = (dd_gl.cull_mode + 1) % 3;
             const names = [_][]const u8{ "off", "back", "front" };
@@ -591,9 +593,10 @@ pub fn main(main_init: std.process.Init) !void {
             std.debug.print("[CAM] --cam={d:.1},{d:.1},{d:.2},{d:.2},{d:.2}\n", .{ cam.eulers[0], cam.eulers[1], cam.pos.x, cam.pos.y, cam.pos.z });
         }
         prev_p = p_now;
-        // Клавиша V — вариант рендера вокселей (8 шт). Активный вариант — в заголовке окна.
+        // Клавиша J — вариант рендера вокселей (8 шт). Активный вариант — в заголовке окна.
+        // (Раньше было на V — конфликтовало с Ctrl+V=paste.)
         const vox_names = [_][:0]const u8{ "0:BASE mesh+fog+back+LEQUAL", "1:NO-MESH", "2:NO-FOG", "3:NO-MESH+NO-FOG", "4:CULL-OFF", "5:CULL-FRONT", "6:LESS", "7:NO-BLEND" };
-        const v_now = g_window.getKey(.v) == .press;
+        const v_now = g_window.getKey(.j) == .press;
         if (v_now and !prev_v) {
             dd_gl.voxel_variant +%= 1;
             std.debug.print("[VOXVAR] {s}\n", .{vox_names[dd_gl.voxel_variant % 8]});
@@ -1145,7 +1148,9 @@ pub fn main(main_init: std.process.Init) !void {
                             .info => recast.debug.rgba(120, 180, 235, 160),
                         };
                         for (0..f.ref_count) |i| {
-                            if (f.refs[i] != 0) recast.debug.debugDrawNavMeshPoly(dd, nm, f.refs[i], col);
+                            // isValidPolyRef: a cached lint report can outlive a rebuild;
+                            // faithful debugDrawNavMeshPoly has no bounds check (OOB crash).
+                            if (f.refs[i] != 0 and nm.isValidPolyRef(f.refs[i])) recast.debug.debugDrawNavMeshPoly(dd, nm, f.refs[i], col);
                         }
                     }
                 }
