@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **Follow-mode path now crosses off-mesh connections.** The smooth/follow path
+  (`smoothPath`) only handled the END steer flag, not
+  `DT_STRAIGHTPATH_OFFMESH_CONNECTION`; since `moveAlongSurface` can't traverse an
+  off-mesh link, the dotted path stalled at the connection mouth (never over the
+  arrow nor on to the agent). Added the off-mesh branch 1:1 with upstream
+  Tool_NavMeshTester (advance the corridor over the link via
+  `getOffMeshConnectionPolyEndPoints`, teleport to the far endpoint, continue).
+  Off-mesh scene save/load was verified correct (two new deterministic repro
+  tests). (`demo/src/tool_navmesh_tester.zig`)
+
 ## [0.2.0] - 2026-06-05
 
 ### Added — Navmesh Debug & Analysis Platform (demo GUI)
