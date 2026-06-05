@@ -18,5 +18,6 @@ test {
     _ = @import("persist/scene_container.zig");
     _ = @import("edit/undo_stack.zig");
     _ = @import("edit/edit_op.zig");
+    _ = @import("edit/selection.zig");
     _ = @import("edit/snap.zig");
 }
