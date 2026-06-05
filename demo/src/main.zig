@@ -570,7 +570,8 @@ pub fn main(main_init: std.process.Init) !void {
         if (g_window.getKey(.d) == .press) cam.moveLocal(d, 0, 0);
         if (g_window.getKey(.q) == .press) cam.moveLocal(0, -d, 0);
         if (g_window.getKey(.e) == .press) cam.moveLocal(0, d, 0);
-        if (g_window.getKey(.f) == .press or g_window.getKey(.home) == .press) {
+        // R — сброс вида (раньше было на F/Home; F освобождена под edit-режим).
+        if (g_window.getKey(.r) == .press) {
             cam.reset(
                 Vec3.init(geom.bmin[0], geom.bmin[1], geom.bmin[2]),
                 Vec3.init(geom.bmax[0], geom.bmax[1], geom.bmax[2]),

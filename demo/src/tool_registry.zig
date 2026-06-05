@@ -23,7 +23,7 @@ pub const entries = [_]ToolEntry{
     .{ .id = .convex, .label = "Create Convex Volumes", .radio_id = 203, .hint = "LMB: add point, click red point to build   Shift+LMB: delete volume" },
     .{ .id = .crowd, .label = "Create Crowds", .radio_id = 204, .hint = "Create/Move/Select via Tools panel" },
     .{ .id = .select, .label = "Select / Edit", .radio_id = 207, .hint = "LMB drag empty: box   drag selected: move   Ctrl+LMB: toggle   Ctrl+C/V: copy/paste   Del: delete" },
-    .{ .id = .none, .label = "Disabled", .radio_id = 205, .hint = "RMB: rotate   WASD/QE: move   wheel: zoom   F: reset view" },
+    .{ .id = .none, .label = "Disabled", .radio_id = 205, .hint = "RMB: rotate   WASD/QE: move   wheel: zoom   R: reset view" },
 };
 
 comptime {
