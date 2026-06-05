@@ -152,7 +152,7 @@ pub fn main(main_init: std.process.Init) !void {
     // С дефолтным LESS совпадающие фрагменты проигрывают z-тест -> навмеш невидим/мерцает.
     zgl.depthFunc(.less_or_equal);
     zgl.enable(.multisample); // 4x MSAA сглаживает копланарные швы граней вокселей (как RecastDemo)
-    std.debug.print("[GL] samples={d} BUILD_MARKER=props-live-v8 renderer={s} vendor={s}\n", .{ zgl.getInteger(.samples), zgl.getString(.renderer) orelse "?", zgl.getString(.vendor) orelse "?" });
+    std.debug.print("[GL] samples={d} BUILD_MARKER=props-live-v9 renderer={s} vendor={s}\n", .{ zgl.getInteger(.samples), zgl.getString(.renderer) orelse "?", zgl.getString(.vendor) orelse "?" });
     zgl.enable(.blend);
     zgl.blendFunc(.src_alpha, .one_minus_src_alpha);
 
@@ -1428,16 +1428,21 @@ pub fn main(main_init: std.process.Init) !void {
                                         inspect_vol.mode = .prism;
                                     if (ui.radio(@src(), inspect_vol.mode == .surface, "Surface (draped slab)", 941))
                                         inspect_vol.mode = .surface;
-                                    // NOTE: drag-only ui.slider, NOT dvui.sliderEntry —
-                                    // sliderEntry's click/entry mode snapped the value to
-                                    // the slider min (hmin -> -100, an infinite downward
-                                    // tube) and captured the keyboard. ui.slider is what the
-                                    // rest of the app uses and behaves correctly.
-                                    ui.slider(@src(), "hmin {d:.2}", &inspect_vol.hmin, -100, 100);
-                                    ui.slider(@src(), "hmax {d:.2}", &inspect_vol.hmax, -100, 100);
+                                    // Drag-only ui.slider (NOT dvui.sliderEntry, which
+                                    // snapped to min + grabbed the keyboard). Ranges are
+                                    // SCENE-RELATIVE (the model's Y bbox ± a small pad), not
+                                    // a fixed ±100 — a fixed huge span made a tiny drag jump
+                                    // the value "into space" on a small scene.
+                                    const dy = geom.bmax[1] - geom.bmin[1];
+                                    const ypad = @max(@as(f32, 2.0), dy * 0.25);
+                                    const ylo = geom.bmin[1] - ypad;
+                                    const yhi = geom.bmax[1] + ypad;
+                                    const bandmax = @max(@as(f32, 5.0), dy);
+                                    ui.slider(@src(), "hmin {d:.2}", &inspect_vol.hmin, ylo, yhi);
+                                    ui.slider(@src(), "hmax {d:.2}", &inspect_vol.hmax, ylo, yhi);
                                     if (inspect_vol.mode == .surface) {
-                                        ui.slider(@src(), "band below {d:.2}", &inspect_vol.band_below, 0, 50);
-                                        ui.slider(@src(), "band above {d:.2}", &inspect_vol.band_above, 0, 50);
+                                        ui.slider(@src(), "band below {d:.2}", &inspect_vol.band_below, 0, bandmax);
+                                        ui.slider(@src(), "band above {d:.2}", &inspect_vol.band_above, 0, bandmax);
                                     }
                                     // Area dropdown — only `used` area types are offered.
                                     inspectorAreaDropdown(&inspect_vol.area);
@@ -1473,15 +1478,24 @@ pub fn main(main_init: std.process.Init) !void {
                                     }
                                     ui.section(@src(), "Properties — Off-Mesh");
                                     dvui.label(@src(), "id: {d}", .{sel_id}, .{});
+                                    // SCENE-RELATIVE ranges (model bbox per axis ± pad) so a
+                                    // small drag nudges, not "flies into space".
+                                    const pad = @max(@as(f32, 2.0), (geom.bmax[0] - geom.bmin[0]) * 0.1);
+                                    const xlo = geom.bmin[0] - pad;
+                                    const xhi = geom.bmax[0] + pad;
+                                    const oylo = geom.bmin[1] - pad;
+                                    const oyhi = geom.bmax[1] + pad;
+                                    const zlo = geom.bmin[2] - pad;
+                                    const zhi = geom.bmax[2] + pad;
                                     dvui.labelNoFmt(@src(), "Start (x,y,z)", .{}, .{});
-                                    ui.slider(@src(), "sx {d:.2}", &inspect_off.start[0], -1000, 1000);
-                                    ui.slider(@src(), "sy {d:.2}", &inspect_off.start[1], -1000, 1000);
-                                    ui.slider(@src(), "sz {d:.2}", &inspect_off.start[2], -1000, 1000);
+                                    ui.slider(@src(), "sx {d:.2}", &inspect_off.start[0], xlo, xhi);
+                                    ui.slider(@src(), "sy {d:.2}", &inspect_off.start[1], oylo, oyhi);
+                                    ui.slider(@src(), "sz {d:.2}", &inspect_off.start[2], zlo, zhi);
                                     dvui.labelNoFmt(@src(), "End (x,y,z)", .{}, .{});
-                                    ui.slider(@src(), "ex {d:.2}", &inspect_off.end[0], -1000, 1000);
-                                    ui.slider(@src(), "ey {d:.2}", &inspect_off.end[1], -1000, 1000);
-                                    ui.slider(@src(), "ez {d:.2}", &inspect_off.end[2], -1000, 1000);
-                                    ui.slider(@src(), "radius {d:.2}", &inspect_off.rad, 0, 50);
+                                    ui.slider(@src(), "ex {d:.2}", &inspect_off.end[0], xlo, xhi);
+                                    ui.slider(@src(), "ey {d:.2}", &inspect_off.end[1], oylo, oyhi);
+                                    ui.slider(@src(), "ez {d:.2}", &inspect_off.end[2], zlo, zhi);
+                                    ui.slider(@src(), "radius {d:.2}", &inspect_off.rad, 0, 10);
                                     // Direction toggle (0 = one-way, 1 = bidirectional).
                                     {
                                         var biz = inspect_off.dir != 0;
