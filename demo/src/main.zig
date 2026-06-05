@@ -1799,11 +1799,26 @@ pub fn main(main_init: std.process.Init) !void {
                 if (ui.radio(@src(), fl.clip_mode == .below, "Clip: below", 342)) fl.clip_mode = .below;
                 if (ui.radio(@src(), fl.clip_mode == .slab, "Clip: slab", 343)) fl.clip_mode = .slab;
                 if (fl.clip_mode != .off) {
-                    // Clip Y slider spans the scene's vertical bbox. Only meaningful
-                    // once a mesh is loaded (otherwise bmin==bmax==0 -> a stuck,
-                    // misleading slider that would blank the navmesh at clip_y=0).
-                    const y_lo = geom.bmin[1];
-                    const y_hi = geom.bmax[1];
+                    // Clip Y slider spans the NAVMESH's vertical range (poly centroid
+                    // heights) — the same value the clip predicate compares against —
+                    // NOT the input-geom bbox (which includes walls/ceilings far above
+                    // the walkable surface, making most of the slider useless). Falls
+                    // back to the geom bbox if no navmesh is built yet.
+                    const clip_nm = switch (sample_kind) {
+                        .solo => solo.navMesh(),
+                        .tile => tile.navMesh(),
+                        .temp => temp.navMesh(),
+                    };
+                    var y_lo: f32 = geom.bmin[1];
+                    var y_hi: f32 = geom.bmax[1];
+                    if (clip_nm) |nm| {
+                        const hr = poly_visit.schemeRange(nm, .height);
+                        if (hr.hi > hr.lo) {
+                            // pad a touch so the extremes are reachable
+                            y_lo = hr.lo - 0.5;
+                            y_hi = hr.hi + 0.5;
+                        }
+                    }
                     if (y_hi > y_lo) {
                         _ = dvui.sliderEntry(@src(), "clip Y {d:.2}", .{ .value = &fl.clip_y, .min = y_lo, .max = y_hi, .interval = null }, .{ .expand = .horizontal, .id_extra = 344 });
                     } else {
