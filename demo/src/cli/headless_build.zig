@@ -246,6 +246,99 @@ fn finish(
 
 const NavMesh = @import("recast-nav").detour.NavMesh;
 
+// ===========================================================================
+// Reusable build pipeline (cluster H): «geom + settings -> built navmesh» with
+// a callback so the navmesh (owned by a stack-resident sample) stays alive for
+// the duration of the caller's work (queries, metrics, …). headless_run.zig
+// (config/batch) uses this instead of re-implementing the per-sample switch.
+// ===========================================================================
+
+/// Результат сборки, передаваемый в callback: живой навмеш + метаданные сборки.
+pub const BuiltNav = struct {
+    mesh: *NavMesh,
+    geom: *const InputGeom,
+    sample_name: []const u8,
+    build_ms: f32,
+    tile_size: ?f32,
+};
+
+pub const BuildError = error{
+    LoadGeomFailed,
+    EmptyGeom,
+    BuildFailed,
+    NoNavmesh,
+};
+
+/// Собрать навмеш выбранным сэмплом (ОБЩИЙ build-путь с GUI — R-D1) и вызвать
+/// `cb(ctx, BuiltNav)` пока навмеш ещё жив. Геометрия/сэмпл живут на стеке этой
+/// функции и деинициализируются после возврата cb. Ошибки сборки -> BuildError
+/// (логируются в stderr). Возвращает значение, которое вернул cb.
+pub fn buildNavmesh(
+    gpa: std.mem.Allocator,
+    geom_path: []const u8,
+    settings: sample.CommonSettings,
+    sample_kind: SampleKind,
+    tile_size_opt: ?f32,
+    ctx: anytype,
+    comptime cb: fn (@TypeOf(ctx), BuiltNav) anyerror!void,
+) anyerror!void {
+    var dd: ddgl.DebugDrawGL = undefined; // GL-free заглушка (см. шапку файла).
+
+    var bctx = BuildContext.init(gpa);
+    bctx.wire();
+    defer bctx.deinit();
+
+    var geom = InputGeom.init(gpa);
+    defer geom.deinit();
+
+    import_geom.loadInto(&geom, geom_path) catch |e| {
+        warn("[run] load geom '{s}' failed: {s}\n", .{ geom_path, @errorName(e) });
+        return BuildError.LoadGeomFailed;
+    };
+    if (geom.triCount() == 0) {
+        warn("[run] geom '{s}' has 0 triangles\n", .{geom_path});
+        return BuildError.EmptyGeom;
+    }
+
+    const sample_name: []const u8 = switch (sample_kind) {
+        .solo => "solo",
+        .tile => "tile",
+        .temp => "temp",
+    };
+
+    switch (sample_kind) {
+        .solo => {
+            var s = SampleSolo.init(gpa, &bctx, &dd);
+            defer s.deinit();
+            s.settings = settings;
+            s.setGeom(&geom);
+            if (!s.build()) return BuildError.BuildFailed;
+            const mesh = s.navMesh() orelse return BuildError.NoNavmesh;
+            return cb(ctx, .{ .mesh = mesh, .geom = &geom, .sample_name = sample_name, .build_ms = s.build_time_ms, .tile_size = null });
+        },
+        .tile => {
+            var s = SampleTile.init(gpa, &bctx, &dd);
+            defer s.deinit();
+            s.settings = settings;
+            if (tile_size_opt) |ts| s.tile_size = ts;
+            s.setGeom(&geom);
+            if (!s.build()) return BuildError.BuildFailed;
+            const mesh = s.navMesh() orelse return BuildError.NoNavmesh;
+            return cb(ctx, .{ .mesh = mesh, .geom = &geom, .sample_name = sample_name, .build_ms = s.build_time_ms, .tile_size = s.tile_size });
+        },
+        .temp => {
+            var s = SampleTempObstacles.init(gpa, &bctx, &dd);
+            defer s.deinit();
+            s.settings = settings;
+            if (tile_size_opt) |ts| s.tile_size = ts;
+            s.setGeom(&geom);
+            if (!s.build()) return BuildError.BuildFailed;
+            const mesh = s.navMesh() orelse return BuildError.NoNavmesh;
+            return cb(ctx, .{ .mesh = mesh, .geom = &geom, .sample_name = sample_name, .build_ms = s.build_time_ms, .tile_size = s.tile_size });
+        },
+    }
+}
+
 fn exportObj(gpa: std.mem.Allocator, mesh: *const NavMesh, path: []const u8) !void {
     var g = try nav_export.navObjFaces(gpa, mesh);
     defer g.deinit(gpa);

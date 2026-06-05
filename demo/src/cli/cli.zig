@@ -13,6 +13,7 @@ const std = @import("std");
 const sample = @import("../sample.zig");
 const headless = @import("headless_build.zig");
 const diff_mod = @import("diff.zig");
+const headless_run = @import("headless_run.zig");
 const io_util = @import("../io_util.zig");
 const bundle_io = @import("../persist/bundle_io.zig");
 
@@ -22,6 +23,8 @@ const bundle_io = @import("../persist/bundle_io.zig");
 pub fn isSubcommand(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "build") or
         std.mem.eql(u8, arg, "diff") or
+        std.mem.eql(u8, arg, "headless") or
+        std.mem.eql(u8, arg, "batch") or
         std.mem.eql(u8, arg, "bundle") or
         std.mem.endsWith(u8, arg, ".recastbundle");
 }
@@ -41,6 +44,8 @@ pub fn run(gpa: std.mem.Allocator, args: []const []const u8) u8 {
     const rest = args[2..];
     if (std.mem.eql(u8, cmd, "build")) return runBuild(gpa, rest);
     if (std.mem.eql(u8, cmd, "diff")) return runDiff(gpa, rest);
+    if (std.mem.eql(u8, cmd, "headless")) return runHeadless(gpa, rest);
+    if (std.mem.eql(u8, cmd, "batch")) return headless_run.runBatch(gpa, rest);
     // `bundle import <path>` OR a bare `<path>.recastbundle` (drag-onto-exe).
     if (std.mem.eql(u8, cmd, "bundle")) {
         if (rest.len >= 2 and std.mem.eql(u8, rest[0], "import")) return runBundleImport(gpa, rest[1]);
@@ -233,6 +238,33 @@ fn applyOne(settings: *sample.CommonSettings, tile_size: *?f32, key: []const u8,
         return false;
     }
     return true;
+}
+
+// ===========================================================================
+// headless — config-driven build + queries (cluster H)
+// ===========================================================================
+
+/// `recast_demo headless --config run.json`. Делегирует в headless_run.runConfig.
+fn runHeadless(gpa: std.mem.Allocator, args: []const []const u8) u8 {
+    var config: ?[]const u8 = null;
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const a = args[i];
+        if (std.mem.eql(u8, a, "--config")) {
+            config = nextVal(args, &i) orelse {
+                warn("[headless] --config: missing value\n", .{});
+                return 2;
+            };
+        } else {
+            warn("[headless] unknown argument '{s}'\n", .{a});
+            return 2;
+        }
+    }
+    const c = config orelse {
+        warn("[headless] --config <run.json> is required\n", .{});
+        return 2;
+    };
+    return headless_run.runConfig(gpa, c);
 }
 
 // ===========================================================================
