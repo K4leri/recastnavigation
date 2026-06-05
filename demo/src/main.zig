@@ -52,6 +52,7 @@ const snap_mod = @import("edit/snap.zig");
 const Clipboard = @import("edit/clipboard.zig").Clipboard;
 const inspector = @import("edit/inspector.zig");
 const presets = @import("edit/presets.zig");
+const poly_inspect = @import("diag/poly_inspect.zig");
 const Vec3 = recast.math.Vec3;
 
 const ActiveTool = tool_registry.ToolId; // { none, tester, prune, offmesh, convex, crowd }
@@ -270,6 +271,9 @@ pub fn main(main_init: std.process.Init) !void {
     var variants_stem: []const u8 = ""; // stem, для которого построен кэш (owned)
     defer freeVariants(main_init.gpa, &variants, &variants_stem);
     var pick_hit: ?Vec3 = null; // последняя точка пикинга по земле
+    // B-4 Polygon Inspector: poly-ref picked by the Disabled-tool inspection click.
+    // 0 = nothing inspected; non-zero = ref of the last clicked polygon.
+    var inspected_ref: u32 = 0;
     var overlay_cap_warned = false; // P1-2: logged once when labels:all hits the cap
     // P1-4 minimap fly-to entry state.
     var minimap_rect: dvui.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
@@ -640,13 +644,18 @@ pub fn main(main_init: std.process.Init) !void {
                         temp.onClick(&rs, &hp, shift); // препятствия
                     } else switch (active_tool) {
                         .none => {
-                            // Инспекция: клик по навмешу печатает инфо полигона под точкой.
+                            // Инспекция: клик по навмешу показывает инфо полигона под точкой
+                            // в панели Polygon Inspector (B-4). Stderr-лог сохранён для
+                            // headless-наблюдаемости.
+                            // Inspection click: shows polygon info in the Polygon Inspector
+                            // panel (B-4). stderr log kept for headless observability.
                             if (tester.query) |q| {
                                 const ext = [3]f32{ 2, 4, 2 };
                                 var ref: u32 = 0;
                                 var poly_snap: [3]f32 = undefined;
                                 _ = q.findNearestPoly(&hp, &ext, &tester.filter, &ref, &poly_snap) catch {};
                                 if (ref != 0) {
+                                    inspected_ref = ref; // B-4: store for panel
                                     const flags = if (tester.navmesh) |nm| (nm.getPolyFlags(ref) catch 0) else 0;
                                     std.debug.print("[POLY] ref={d} navmeshY={d:.2} clickHitY={d:.2} world=({d:.2},{d:.2},{d:.2}) flags=0x{x}\n", .{ ref, poly_snap[1], hp[1], poly_snap[0], poly_snap[1], poly_snap[2], flags });
                                 } else {
@@ -1481,6 +1490,84 @@ pub fn main(main_init: std.process.Init) !void {
                 }
             }
             _ = dvui.checkbox(@src(), &show_build_inspector, "Build Inspector", .{ .id_extra = 7402 });
+
+            // --- Polygon Inspector (B-4) ---
+            // Shows a structured table for the polygon last picked via the
+            // Disabled-tool inspection click (active_tool == .none + LMB on mesh).
+            // Visible whenever inspected_ref != 0; "no polygon inspected" otherwise.
+            //
+            // Панель инспектора полигона (B-4). Отображает таблицу для последнего
+            // полигона, выбранного кликом в режиме Disabled (active_tool == .none).
+            {
+                ui.section(@src(), "Polygon Inspector");
+                if (inspected_ref == 0) {
+                    dvui.labelNoFmt(@src(), "No polygon inspected.", .{}, .{ .id_extra = 7440 });
+                    dvui.labelNoFmt(@src(), "Click the navmesh (no tool selected).", .{}, .{ .id_extra = 7441 });
+                } else if (tester.navmesh) |nm| {
+                    // Recompute per-frame (cheap single-poly read, no alloc).
+                    // Перевычисляем каждый кадр — дёшево, одна poly, нет аллокаций.
+                    if (poly_inspect.inspect(nm, inspected_ref)) |info| {
+                        // Ref row
+                        {
+                            var ref_buf: [16]u8 = undefined;
+                            const ref_str = poly_inspect.formatRefText(&ref_buf, info.ref);
+                            dvui.label(@src(), "Ref:   {s}", .{ref_str}, .{ .id_extra = 7442 });
+                        }
+                        // Area row: id + registry name
+                        {
+                            var area_buf: [64]u8 = undefined;
+                            const area_nm: ?[]const u8 = if (area_types.get(info.area)) |at| at.name() else null;
+                            const area_str = poly_inspect.formatAreaText(&area_buf, info.area, area_nm);
+                            dvui.label(@src(), "Area:  {s}", .{area_str}, .{ .id_extra = 7443 });
+                        }
+                        // Flags row: bit names + hex
+                        {
+                            var fl_buf: [128]u8 = undefined;
+                            const fl_str = poly_inspect.formatFlagsText(&fl_buf, info.flags);
+                            dvui.label(@src(), "Flags: {s}", .{fl_str}, .{ .id_extra = 7444 });
+                        }
+                        // Vert count + centroid
+                        dvui.label(@src(), "Verts: {d}", .{info.vert_count}, .{ .id_extra = 7445 });
+                        dvui.label(@src(), "Centroid: ({d:.2}, {d:.2}, {d:.2})", .{ info.centroid[0], info.centroid[1], info.centroid[2] }, .{ .id_extra = 7446 });
+                        // Y range
+                        dvui.label(@src(), "Y range: [{d:.2} .. {d:.2}]", .{ info.y_min, info.y_max }, .{ .id_extra = 7447 });
+                        // Links
+                        dvui.label(@src(), "Links: {d}", .{info.link_count}, .{ .id_extra = 7448 });
+                        // Neighbours expander
+                        if (dvui.expander(@src(), "Neighbours", .{}, .{ .id_extra = 7449 })) {
+                            if (info.neighbour_count == 0) {
+                                dvui.labelNoFmt(@src(), "  (boundary — no neighbours)", .{}, .{ .id_extra = 7450 });
+                            } else {
+                                var ni: u32 = 0;
+                                while (ni < info.neighbour_count) : (ni += 1) {
+                                    var nb_buf: [16]u8 = undefined;
+                                    const nb_str = poly_inspect.formatRefText(&nb_buf, info.neighbours[ni]);
+                                    dvui.label(@src(), "  [{d}] {s}", .{ ni, nb_str }, .{ .id_extra = 7451 + ni });
+                                }
+                            }
+                        }
+                        // Clear button
+                        if (dvui.button(@src(), "Clear", .{}, .{ .id_extra = 7459 })) {
+                            inspected_ref = 0;
+                        }
+                    } else {
+                        // Bad/stale ref (tile reloaded, mesh rebuilt, etc.) — no crash.
+                        // Плохой/устаревший ref (тайл перезагружен, меш пересобран) — без краша.
+                        dvui.labelNoFmt(@src(), "Ref is stale (mesh rebuilt?).", .{}, .{ .id_extra = 7440 });
+                        {
+                            var ref_buf: [16]u8 = undefined;
+                            const ref_str = poly_inspect.formatRefText(&ref_buf, inspected_ref);
+                            dvui.label(@src(), "Last ref: {s}", .{ref_str}, .{ .id_extra = 7441 });
+                        }
+                        if (dvui.button(@src(), "Clear", .{}, .{ .id_extra = 7459 })) {
+                            inspected_ref = 0;
+                        }
+                    }
+                } else {
+                    // No navmesh loaded yet.
+                    dvui.labelNoFmt(@src(), "No navmesh loaded.", .{}, .{ .id_extra = 7440 });
+                }
+            }
 
             // --- Scene persistence (.recastscene container) ---
             // Save only (Load is a follow-up). Solo sample only; reads geom + navmesh
