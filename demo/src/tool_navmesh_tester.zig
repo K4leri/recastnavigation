@@ -1816,6 +1816,40 @@ fn smoothPath(q: *dt.NavMeshQuery, start_ref: dt.PolyRef, spos: *const [3]f32, e
                 nsmooth += 1;
             }
             break;
+        } else if ((steer_flag & SP_OFFMESH) != 0 and inRange(&iter_pos, &steer_pos, SLOP, 1.0)) {
+            // Reached an off-mesh connection (the steer target is on an off-mesh poly).
+            // moveAlongSurface can't cross it, so advance the corridor up to and OVER
+            // the connection and teleport iter_pos to its far endpoint, then keep
+            // walking — 1:1 with upstream Tool_NavMeshTester. Without this the follow
+            // (smooth) path stalls at the connection mouth: the dotted line stops at the
+            // arrow and never reaches the far side / the agent.
+            var prev_ref: dt.PolyRef = 0;
+            var poly_ref: dt.PolyRef = polys[0];
+            var npos: usize = 0;
+            while (npos < npolys and poly_ref != steer_ref) {
+                prev_ref = poly_ref;
+                poly_ref = polys[npos];
+                npos += 1;
+            }
+            // Drop the consumed polys (up to AND including the off-mesh entry poly).
+            var k: usize = npos;
+            while (k < npolys) : (k += 1) polys[k - npos] = polys[k];
+            npolys -= npos;
+            // Hand out the link's endpoints and jump to the far side.
+            if (q.getAttachedNavMesh()) |m| {
+                var con_start: [3]f32 = undefined;
+                var con_end: [3]f32 = undefined;
+                if (m.getOffMeshConnectionPolyEndPoints(prev_ref, poly_ref, &con_start, &con_end)) |_| {
+                    if (nsmooth < max_pts) { // near end (entry of the link)
+                        out[nsmooth * 3 ..][0..3].* = con_start;
+                        nsmooth += 1;
+                    }
+                    iter_pos = con_end; // far end
+                    var eh: f32 = iter_pos[1];
+                    _ = q.getPolyHeight(if (npolys > 0) polys[0] else poly_ref, &iter_pos, &eh) catch {};
+                    iter_pos[1] = eh;
+                } else |_| {}
+            }
         }
         if (nsmooth < max_pts) {
             out[nsmooth * 3 ..][0..3].* = iter_pos;

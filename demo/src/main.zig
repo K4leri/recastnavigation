@@ -182,7 +182,7 @@ pub fn main(main_init: std.process.Init) !void {
     // С дефолтным LESS совпадающие фрагменты проигрывают z-тест -> навмеш невидим/мерцает.
     zgl.depthFunc(.less_or_equal);
     zgl.enable(.multisample); // 4x MSAA сглаживает копланарные швы граней вокселей (как RecastDemo)
-    std.debug.print("[GL] samples={d} BUILD_MARKER=props-live-v11 renderer={s} vendor={s}\n", .{ zgl.getInteger(.samples), zgl.getString(.renderer) orelse "?", zgl.getString(.vendor) orelse "?" });
+    std.debug.print("[GL] samples={d} BUILD_MARKER=offmesh-follow-fix renderer={s} vendor={s}\n", .{ zgl.getInteger(.samples), zgl.getString(.renderer) orelse "?", zgl.getString(.vendor) orelse "?" });
     zgl.enable(.blend);
     zgl.blendFunc(.src_alpha, .one_minus_src_alpha);
 
