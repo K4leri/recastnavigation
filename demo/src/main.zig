@@ -30,8 +30,11 @@ const ConvexVolume = @import("input_geom.zig").ConvexVolume;
 const SampleSolo = @import("sample_solo.zig").SampleSolo;
 const scheme_state = @import("render/scheme_state.zig");
 const filter_state = @import("render/filter_state.zig");
+const isolation = @import("render/isolation.zig");
 const view_state = @import("render/view_state.zig");
 const legend = @import("render/legend.zig");
+const overlay = @import("render/overlay.zig");
+const minimap = @import("render/minimap.zig");
 const poly_visit = @import("render/poly_visit.zig");
 const SampleTile = @import("sample_tile.zig").SampleTile;
 const SampleTempObstacles = @import("sample_temp_obstacles.zig").SampleTempObstacles;
@@ -261,6 +264,12 @@ pub fn main(main_init: std.process.Init) !void {
     var variants_stem: []const u8 = ""; // stem, для которого построен кэш (owned)
     defer freeVariants(main_init.gpa, &variants, &variants_stem);
     var pick_hit: ?Vec3 = null; // последняя точка пикинга по земле
+    var overlay_cap_warned = false; // P1-2: logged once when labels:all hits the cap
+    // P1-4 minimap fly-to entry state.
+    var minimap_rect: dvui.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
+    var mm_tile_x: f32 = 0;
+    var mm_tile_y: f32 = 0;
+    var mm_ref_buf: [20]u8 = [_]u8{0} ** 20;
     var snap_cfg = snap_mod.SnapConfig{}; // snap state (mode=.off by default)
     // Select-tool rubber-band drag (F3). `sel_drag_start` = world hit at LMB-down;
     // `sel_drag_cur` = current cursor world hit while held (for drawing the box).
@@ -1109,6 +1118,10 @@ pub fn main(main_init: std.process.Init) !void {
             // +200 for the F4 preset section (Save row + dropdown + radios + Apply).
             const fh: f32 = 116 + 200 + @as(f32, @floatFromInt(poly_flags.count())) * 28;
             flags_rect = .{ .x = wr.w - colw - 3 * padw - 380, .y = padw, .w = 380, .h = fh };
+            // P1-4 minimap — bottom-left, above the Tools column's lower edge.
+            const mmw: f32 = 260;
+            const mmh: f32 = 320;
+            minimap_rect = .{ .x = colw + 3 * padw, .y = wr.h - mmh - padw, .w = mmw, .h = mmh };
         }
 
         // --- Tools (левая колонка) ---
@@ -1355,6 +1368,7 @@ pub fn main(main_init: std.process.Init) !void {
             _ = dvui.checkbox(@src(), &app.show_tools, "Tools Panel", .{});
             _ = dvui.checkbox(@src(), &app.show_test_cases, "Test Cases", .{});
             _ = dvui.checkbox(@src(), &show_flags, "Poly Flags", .{});
+            _ = dvui.checkbox(@src(), &minimap.show, "Minimap", .{}); // cluster E (P1-4)
 
             ui.section(@src(), "Sample");
             {
@@ -1519,6 +1533,14 @@ pub fn main(main_init: std.process.Init) !void {
             if (ui.radio(@src(), scheme_state.active == .cost, "Cost", 314)) scheme_state.active = .cost;
             // Cluster E (P1-3): legend overlay toggle.
             _ = dvui.checkbox(@src(), &show_legend, "Legend", .{ .id_extra = 315 });
+
+            // Cluster E (P1-2): poly overlay labels (poly-ref/centroid/area/cost).
+            // Gated additionally on the `labels` view group at render time. id_extra
+            // 362..364 (after the 356..361 Layers range — verified no collision).
+            ui.section(@src(), "Poly Labels");
+            if (ui.radio(@src(), overlay.mode == .none, "Labels: none", 362)) overlay.mode = .none;
+            if (ui.radio(@src(), overlay.mode == .hovered, "Labels: hovered", 363)) overlay.mode = .hovered;
+            if (ui.radio(@src(), overlay.mode == .all, "Labels: all", 364)) overlay.mode = .all;
             // NOTE: .region is intentionally absent from the UI — region IDs live in
             // PolyMesh.regs (Recast build stage) and are not baked into the Detour
             // navmesh. Wiring it up requires Solo-only PolyMesh.regs plumbing.
@@ -1725,6 +1747,146 @@ pub fn main(main_init: std.process.Init) !void {
             }
         }
 
+        // --- Minimap overview + fly-to (cluster E, P1-4) -----------------------
+        // Top-down 2D overview: scene XZ bbox, tile grid (Tile/Temp), camera
+        // position+heading, off-mesh midpoints + convex-volume centroids. Fly-to by
+        // map-click / tile (tx,ty) / poly-ref hex. Faithful core untouched.
+        if (minimap.show) {
+            var fw = dvui.floatingWindow(@src(), .{ .rect = &minimap_rect, .resize = .none, .window_avoid = .none, .open_flag = &minimap.show }, .{ .id_extra = 11 });
+            defer fw.deinit();
+            _ = dvui.windowHeader("Minimap", "", &minimap.show);
+
+            const mm_nm = switch (sample_kind) {
+                .solo => solo.navMesh(),
+                .tile => tile.navMesh(),
+                .temp => temp.navMesh(),
+            };
+
+            // bbox for the map projection (scene geom XZ). Pad slightly so markers on
+            // the edge aren't clipped by the outline.
+            const bminx = geom.bmin[0];
+            const bminz = geom.bmin[2];
+            const bmaxx = geom.bmax[0];
+            const bmaxz = geom.bmax[2];
+
+            // Square canvas box; grab its physical rect for drawing, and resolve the
+            // click-to-fly BEFORE deinit (clickedEx reads the live widget + events).
+            var canvas = dvui.box(@src(), .{ .dir = .vertical }, .{ .min_size_content = .{ .w = 236, .h = 236 }, .expand = .horizontal });
+            const cr = canvas.data().rectScale().r; // physical pixels
+            var click_world: ?[2]f32 = null;
+            if (dvui.clickedEx(canvas.data(), .{ .rect = cr })) |ev| {
+                if (ev == .mouse and cr.contains(ev.mouse.p)) {
+                    click_world = minimap.mapToWorld(ev.mouse.p.x, ev.mouse.p.y, bminx, bminz, bmaxx, bmaxz, cr.x, cr.y, cr.w, cr.h);
+                }
+            }
+            canvas.deinit();
+            if (click_world) |w| flyToXZ(&cam, &geom, w[0], w[1]);
+
+            // bbox outline (the map frame).
+            minimap.rectOutline(cr.x, cr.y, cr.w, cr.h, .{ .r = 120, .g = 120, .b = 130, .a = 255 }, 1.5);
+
+            // Tile grid lines (Tile/Temp only — Solo has no tile params: tw/th may be 0).
+            if (mm_nm) |nm| {
+                if (nm.tile_width > 0 and nm.tile_height > 0) {
+                    const grid_col = dvui.Color{ .r = 70, .g = 90, .b = 110, .a = 200 };
+                    // vertical lines at orig.x + k*tw within [bminx,bmaxx]
+                    var gx = nm.orig.x + @ceil((bminx - nm.orig.x) / nm.tile_width) * nm.tile_width;
+                    while (gx <= bmaxx) : (gx += nm.tile_width) {
+                        const a = minimap.worldToMap(gx, bminz, bminx, bminz, bmaxx, bmaxz, cr.x, cr.y, cr.w, cr.h);
+                        const b = minimap.worldToMap(gx, bmaxz, bminx, bminz, bmaxx, bmaxz, cr.x, cr.y, cr.w, cr.h);
+                        minimap.line(a[0], a[1], b[0], b[1], grid_col, 1.0);
+                    }
+                    var gz = nm.orig.z + @ceil((bminz - nm.orig.z) / nm.tile_height) * nm.tile_height;
+                    while (gz <= bmaxz) : (gz += nm.tile_height) {
+                        const a = minimap.worldToMap(bminx, gz, bminx, bminz, bmaxx, bmaxz, cr.x, cr.y, cr.w, cr.h);
+                        const b = minimap.worldToMap(bmaxx, gz, bminx, bminz, bmaxx, bmaxz, cr.x, cr.y, cr.w, cr.h);
+                        minimap.line(a[0], a[1], b[0], b[1], grid_col, 1.0);
+                    }
+                }
+            }
+
+            // Off-mesh connection midpoints (cyan) + convex-volume centroids (orange).
+            {
+                var oi: usize = 0;
+                while (oi * 6 + 5 < geom.off_verts.items.len) : (oi += 1) {
+                    const v = geom.off_verts.items[oi * 6 ..][0..6];
+                    const mx = (v[0] + v[3]) * 0.5;
+                    const mz = (v[2] + v[5]) * 0.5;
+                    const p = minimap.worldToMap(mx, mz, bminx, bminz, bmaxx, bmaxz, cr.x, cr.y, cr.w, cr.h);
+                    minimap.dot(p[0], p[1], 5, .{ .r = 0, .g = 230, .b = 230, .a = 255 });
+                }
+            }
+            for (geom.volumes.items) |*vol| {
+                const nv: usize = @intCast(vol.nverts);
+                if (nv == 0) continue;
+                var cx: f32 = 0;
+                var cz: f32 = 0;
+                for (0..nv) |k| {
+                    cx += vol.verts[k * 3 + 0];
+                    cz += vol.verts[k * 3 + 2];
+                }
+                const fn_: f32 = @floatFromInt(nv);
+                const p = minimap.worldToMap(cx / fn_, cz / fn_, bminx, bminz, bmaxx, bmaxz, cr.x, cr.y, cr.w, cr.h);
+                minimap.dot(p[0], p[1], 5, .{ .r = 255, .g = 150, .b = 0, .a = 255 });
+            }
+
+            // Camera position + heading arrow (yellow). Heading = view-forward XZ.
+            {
+                const cp = minimap.worldToMap(cam.pos.x, cam.pos.z, bminx, bminz, bmaxx, bmaxz, cr.x, cr.y, cr.w, cr.h);
+                const yellow = dvui.Color{ .r = 255, .g = 235, .b = 0, .a = 255 };
+                minimap.dot(cp[0], cp[1], 7, yellow);
+                // view-forward (camera looks along -Z in view space): rows of view().
+                const vmat = cam.view();
+                // forward world dir = -(third row of rotation) -> (-m2, -m6, -m10).
+                var fx = -vmat.m[2];
+                var fz = -vmat.m[10];
+                const fl = @sqrt(fx * fx + fz * fz);
+                if (fl > 1e-4) {
+                    fx /= fl;
+                    fz /= fl;
+                    // arrow length in px; XZ -> screen px (world +Z maps screen-down).
+                    const al: f32 = 16;
+                    minimap.line(cp[0], cp[1], cp[0] + fx * al, cp[1] + fz * al, yellow, 2.0);
+                }
+            }
+
+            _ = dvui.separator(@src(), .{ .expand = .horizontal });
+
+            // Fly-to by tile (tx,ty).
+            if (mm_nm) |nm| {
+                if (nm.tile_width > 0 and nm.tile_height > 0) {
+                    var row = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
+                    _ = dvui.sliderEntry(@src(), "tx {d:.0}", .{ .value = &mm_tile_x, .min = 0, .max = 256, .interval = 1 }, .{ .expand = .horizontal, .id_extra = 1100 });
+                    _ = dvui.sliderEntry(@src(), "ty {d:.0}", .{ .value = &mm_tile_y, .min = 0, .max = 256, .interval = 1 }, .{ .expand = .horizontal, .id_extra = 1101 });
+                    row.deinit();
+                    if (dvui.button(@src(), "Go to tile", .{}, .{ .id_extra = 1102 })) {
+                        const c = minimap.tileCenter(.{ nm.orig.x, nm.orig.y, nm.orig.z }, nm.tile_width, nm.tile_height, @intFromFloat(@round(mm_tile_x)), @intFromFloat(@round(mm_tile_y)));
+                        flyToXZ(&cam, &geom, c[0], c[1]);
+                    }
+                } else {
+                    dvui.labelNoFmt(@src(), "(Solo: no tile grid — use ref / click)", .{}, .{});
+                }
+            }
+
+            // Fly-to by poly-ref hex.
+            {
+                var row = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
+                {
+                    var te = dvui.textEntry(@src(), .{ .text = .{ .buffer = &mm_ref_buf } }, .{ .expand = .horizontal });
+                    te.deinit();
+                }
+                if (dvui.button(@src(), "Go to ref", .{}, .{ .id_extra = 1103 })) {
+                    if (minimap.parseHexRef(std.mem.sliceTo(&mm_ref_buf, 0))) |ref| {
+                        if (mm_nm) |nm| {
+                            if (polyCentroid(nm, ref)) |c| flyToXZ(&cam, &geom, c.x, c.z);
+                        }
+                    }
+                }
+                row.deinit();
+            }
+            dvui.labelNoFmt(@src(), "click map / Go to fly there", .{}, .{});
+        }
+
         // --- Test Cases (как окно "Test Cases" RecastDemo) ---
         if (app.show_test_cases) {
             var fw = dvui.floatingWindow(@src(), .{ .rect = &test_rect, .resize = .none, .window_avoid = .none }, .{ .id_extra = 4 });
@@ -1863,6 +2025,84 @@ pub fn main(main_init: std.process.Init) !void {
                             if (sp.z >= 0 and sp.z <= 1) {
                                 const txt = std.fmt.bufPrint(&tbuf, "T{d}", .{i}) catch continue;
                                 ui.screenTextEx(sp.x, vh - sp.y, txt, white, true);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Cluster E (P1-2): poly overlay labels — poly-ref / centroid / area /
+            // cost over polygons. Gated on the `labels` view group AND the overlay
+            // mode (none/hovered/all). `hovered` labels the poly under the cursor;
+            // `all` labels every visible poly, auto-downgrading to `hovered` when the
+            // would-be count exceeds overlay.MAX_ALL_LABELS (perf + readability).
+            if (view_state.groups.labels and overlay.mode != .none) {
+                const nm_opt = switch (sample_kind) {
+                    .solo => solo.navMesh(),
+                    .tile => tile.navMesh(),
+                    .temp => temp.navMesh(),
+                };
+                if (nm_opt) |nm| {
+                    var lbuf: [96]u8 = undefined;
+                    const lcol = dvui.Color{ .r = 245, .g = 240, .b = 200, .a = 255 };
+
+                    // Decide the effective mode this frame: `all` downgrades to
+                    // `hovered` past the cap (counts non-offmesh, non-hidden polys).
+                    var eff_mode = overlay.mode;
+                    if (eff_mode == .all) {
+                        var n_labels: usize = 0;
+                        outer: for (0..@intCast(nm.max_tiles)) |ti| {
+                            const t2 = &nm.tiles[ti];
+                            const hdr = t2.header orelse continue;
+                            for (0..@intCast(hdr.poly_count)) |pi| {
+                                const p = &t2.polys[pi];
+                                if (p.getType() == .offmesh_connection) continue;
+                                const cy = polyCentroidY(t2, p);
+                                if (isolation.verdictFor(filter_state.active, cy, hdr.x, hdr.y, p.getArea(), p.flags) == .hide) continue;
+                                n_labels += 1;
+                                if (n_labels > overlay.MAX_ALL_LABELS) {
+                                    eff_mode = .hovered;
+                                    if (!overlay_cap_warned) {
+                                        overlay_cap_warned = true;
+                                        std.debug.print("[overlay] {d}+ visible polys exceed cap {d} — labels:all downgraded to hovered this frame\n", .{ n_labels, overlay.MAX_ALL_LABELS });
+                                    }
+                                    break :outer;
+                                }
+                            }
+                        }
+                    }
+
+                    if (eff_mode == .hovered) {
+                        // Ray-pick the world point under the cursor, then nearest poly.
+                        const win_sz2 = g_window.getSize();
+                        const hx: f64 = if (win_sz2[0] > 0) @as(f64, @floatFromInt(fb[0])) / @as(f64, @floatFromInt(win_sz2[0])) else 1.0;
+                        const hy: f64 = if (win_sz2[1] > 0) @as(f64, @floatFromInt(fb[1])) / @as(f64, @floatFromInt(win_sz2[1])) else 1.0;
+                        if (gate.pointerInScene()) {
+                            if (cam.pickRay(@floatCast(cur[0] * hx), @floatCast(cur[1] * hy), viewport)) |r| {
+                                if (pickPoint(&geom, r.start, r.end)) |h| {
+                                    if (tester.query) |q| {
+                                        const hp = h.toArray();
+                                        const ext = [3]f32{ 2, 4, 2 };
+                                        var ref: u32 = 0;
+                                        var snap: [3]f32 = undefined;
+                                        _ = q.findNearestPoly(&hp, &ext, &tester.filter, &ref, &snap) catch {};
+                                        if (ref != 0) drawPolyLabel(nm, ref, &lbuf, lcol, cam, viewport, vh);
+                                    }
+                                }
+                            }
+                        }
+                    } else if (eff_mode == .all) {
+                        for (0..@intCast(nm.max_tiles)) |ti| {
+                            const t2 = &nm.tiles[ti];
+                            const hdr = t2.header orelse continue;
+                            const base = nm.getPolyRefBase(t2);
+                            for (0..@intCast(hdr.poly_count)) |pi| {
+                                const p = &t2.polys[pi];
+                                if (p.getType() == .offmesh_connection) continue;
+                                const cy = polyCentroidY(t2, p);
+                                if (isolation.verdictFor(filter_state.active, cy, hdr.x, hdr.y, p.getArea(), p.flags) == .hide) continue;
+                                const ref: u32 = base | @as(u32, @intCast(pi));
+                                drawPolyLabel(nm, ref, &lbuf, lcol, cam, viewport, vh);
                             }
                         }
                     }
@@ -2498,6 +2738,74 @@ fn pickPoint(geom: *const InputGeom, start: Vec3, end: Vec3) ?Vec3 {
         return Vec3.init(s[0] + (e[0] - s[0]) * t, s[1] + (e[1] - s[1]) * t, s[2] + (e[2] - s[2]) * t);
     }
     return rayGroundHit(start, end);
+}
+
+// --- P1-2 poly overlay-label helpers ----------------------------------------
+
+/// Mean Y of a polygon's outer-ring verts (its centroid height), used for the
+/// clip/iso verdict in the `all`-mode visibility test. Mirrors poly_visit's
+/// polyHeight (kept local so main doesn't import a private fn).
+fn polyCentroidY(tile: *const recast.detour.MeshTile, p: *const recast.detour.Poly) f32 {
+    if (p.vert_count == 0) return 0;
+    var sum: f32 = 0;
+    for (0..p.vert_count) |k| sum += tile.verts[@as(usize, p.verts[k]) * 3 + 1];
+    return sum / @as(f32, @floatFromInt(p.vert_count));
+}
+
+/// Full XYZ centroid (average of outer-ring verts) of the poly behind `ref`.
+fn polyCentroid(nm: *const recast.detour.NavMesh, ref: u32) ?Vec3 {
+    const res = nm.getTileAndPolyByRef(ref) catch return null;
+    const p = res.poly;
+    if (p.vert_count == 0) return null;
+    var sx: f32 = 0;
+    var sy: f32 = 0;
+    var sz: f32 = 0;
+    for (0..p.vert_count) |k| {
+        const o = @as(usize, p.verts[k]) * 3;
+        sx += res.tile.verts[o + 0];
+        sy += res.tile.verts[o + 1];
+        sz += res.tile.verts[o + 2];
+    }
+    const n: f32 = @floatFromInt(p.vert_count);
+    return Vec3.init(sx / n, sy / n, sz / n);
+}
+
+/// Format + draw one poly's overlay label at its on-screen centroid. Resolves the
+/// area name/cost from the demo registry; culls when the centroid is off-screen or
+/// behind the camera (worldToScreen null / depth outside [0,1]).
+fn drawPolyLabel(
+    nm: *const recast.detour.NavMesh,
+    ref: u32,
+    buf: []u8,
+    col: dvui.Color,
+    cam: Camera,
+    viewport: [4]i32,
+    vh: f32,
+) void {
+    const c = polyCentroid(nm, ref) orelse return;
+    const area: u8 = nm.getPolyArea(ref) catch 0;
+    const aname = if (area_types.get(area)) |at| at.name() else "?";
+    const cost = poly_visit.polyCost(area);
+    const txt = overlay.formatLabel(buf, ref, c.x, c.y, c.z, area, aname, cost);
+    if (txt.len == 0) return;
+    if (cam.worldToScreen(c, viewport)) |sp| {
+        if (sp.z >= 0 and sp.z <= 1) ui.screenTextEx(sp.x, vh - sp.y, txt, col, true);
+    }
+}
+
+/// P1-4 fly-to: frame the camera on a world XZ point. Y is the scene bbox mid; a
+/// small bbox around the point is passed to cam.reset (reuses the existing framing
+/// logic — eye placed back+up at a comfortable distance, default angles).
+fn flyToXZ(cam: *Camera, geom: *const InputGeom, wx: f32, wz: f32) void {
+    const ymid = (geom.bmin[1] + geom.bmax[1]) * 0.5;
+    // Frame size from the scene extent so the zoom matches the map (not a fixed
+    // distance that's huge for tiny meshes / tiny for big ones).
+    const ext = @max(@max(geom.bmax[0] - geom.bmin[0], geom.bmax[2] - geom.bmin[2]), 1.0);
+    const r = ext * 0.12;
+    cam.reset(
+        Vec3.init(wx - r, ymid - r, wz - r),
+        Vec3.init(wx + r, ymid + r, wz + r),
+    );
 }
 
 /// Group-delete every selected object (F3) as ONE composite undo edit.
