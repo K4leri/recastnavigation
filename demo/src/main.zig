@@ -22,6 +22,11 @@ const Camera = @import("camera.zig").Camera;
 const BuildContext = @import("build_context.zig").BuildContext;
 const AppState = @import("app_state.zig").AppState;
 const io_util = @import("io_util.zig");
+const nav_export = @import("io/nav_export.zig");
+const export_metrics = @import("io/export_metrics.zig");
+const export_obj = @import("io/export_obj.zig");
+const export_gltf = @import("io/export_gltf.zig");
+const export_svg = @import("io/export_svg.zig");
 const scene_container = @import("persist/scene_container.zig");
 const InputGate = @import("input_gate.zig").InputGate;
 const tool_registry = @import("tool_registry.zig");
@@ -1867,6 +1872,59 @@ pub fn main(main_init: std.process.Init) !void {
                 }
             }
 
+            // --- NavMesh export (cluster D, D2/D3/D7) ---------------------------
+            // Read-only: walk the active sample's navmesh and write export files to
+            // the meshes folder. Available for all sample kinds. Errors -> Log only.
+            {
+                ui.section(@src(), "Export");
+                const exp_nm: ?*recast.detour.NavMesh = switch (sample_kind) {
+                    .solo => solo.navMesh(),
+                    .tile => tile.navMesh(),
+                    .temp => temp.navMesh(),
+                };
+                const exp_settings: *const sample.CommonSettings = switch (sample_kind) {
+                    .solo => &solo.settings,
+                    .tile => &tile.settings,
+                    .temp => &temp.settings,
+                };
+                const exp_build_ms: f32 = switch (sample_kind) {
+                    .solo => solo.build_time_ms,
+                    .tile => tile.build_time_ms,
+                    .temp => temp.build_time_ms,
+                };
+                const exp_tile_size: ?f32 = switch (sample_kind) {
+                    .solo => null,
+                    .tile => tile.tile_size,
+                    .temp => temp.tile_size,
+                };
+                const exp_geom_name: []const u8 = if (mesh_files.len > 0 and mesh_choice < mesh_files.len)
+                    mesh_files[mesh_choice]
+                else
+                    "scene.obj";
+                const exp_sample_name: []const u8 = @tagName(sample_kind);
+
+                if (exp_nm == null) {
+                    dvui.labelNoFmt(@src(), "(build a navmesh to export)", .{}, .{});
+                } else {
+                    const nm = exp_nm.?;
+                    var erow = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
+                    defer erow.deinit();
+
+                    if (dvui.button(@src(), "Metrics (JSON)", .{}, .{ .id_extra = 6100 })) {
+                        exportMetricsNow(main_init.gpa, nm, exp_settings, exp_geom_name, exp_sample_name, &geom, exp_build_ms, exp_tile_size, app.meshes_folder, &bctx);
+                    }
+                    if (dvui.button(@src(), "NavMesh .obj", .{}, .{ .id_extra = 6101 })) {
+                        exportObjNow(main_init.gpa, nm, app.meshes_folder, &bctx);
+                    }
+                    if (dvui.button(@src(), "NavMesh .glb", .{}, .{ .id_extra = 6102 })) {
+                        exportGlbNow(main_init.gpa, nm, app.meshes_folder, &bctx);
+                    }
+                    if (dvui.button(@src(), "Topo SVG", .{}, .{ .id_extra = 6103 })) {
+                        exportSvgNow(main_init.gpa, nm, app.meshes_folder, &bctx);
+                    }
+                }
+            }
+
             ui.section(@src(), "Navmesh Colouring");
             if (ui.radio(@src(), scheme_state.active == .area, "Area", 310)) scheme_state.active = .area;
             if (ui.radio(@src(), scheme_state.active == .flags, "Flags", 311)) scheme_state.active = .flags;
@@ -3289,6 +3347,105 @@ fn applyPresetNow(
 /// finished persistence layer (scene_container.saveScene). READ-ONLY w.r.t. live state:
 /// it only reads `geom` + the built navmesh and writes files. Errors are caught and
 /// logged (never propagated to a crash). Solo sample only.
+// ===========================================================================
+// NavMesh export helpers (cluster D, D2/D3/D7).
+// All read-only over the navmesh; write a single file into `folder`. Any failure
+// is logged to the BuildContext (never panics).
+// ===========================================================================
+
+fn exportMetricsNow(
+    gpa: std.mem.Allocator,
+    nm: *recast.detour.NavMesh,
+    settings: *const sample.CommonSettings,
+    geom_name: []const u8,
+    sample_name: []const u8,
+    geom: *const InputGeom,
+    build_ms: f32,
+    tile_size: ?f32,
+    folder: []const u8,
+    bctx: *BuildContext,
+) void {
+    var owned = nav_export.gatherMetrics(gpa, nm, settings, geom_name, sample_name, geom.bmin, geom.bmax, build_ms, tile_size) catch |e| {
+        bctx.context().log(.err, "Export Metrics: gather failed: {s}", .{@errorName(e)});
+        return;
+    };
+    defer owned.deinit(gpa);
+    const json = export_metrics.toJson(gpa, owned.metrics) catch |e| {
+        bctx.context().log(.err, "Export Metrics: toJson failed: {s}", .{@errorName(e)});
+        return;
+    };
+    defer gpa.free(json);
+    const path = std.fmt.allocPrint(gpa, "{s}/export_metrics.json", .{folder}) catch return;
+    defer gpa.free(path);
+    io_util.writeWholeFile(path, json, gpa) catch |e| {
+        bctx.context().log(.err, "Export Metrics: write failed: {s}", .{@errorName(e)});
+        return;
+    };
+    bctx.context().log(.progress, "Exported metrics to {s}", .{path});
+}
+
+fn exportObjNow(gpa: std.mem.Allocator, nm: *recast.detour.NavMesh, folder: []const u8, bctx: *BuildContext) void {
+    var g = nav_export.navObjFaces(gpa, nm) catch |e| {
+        bctx.context().log(.err, "Export .obj: gather failed: {s}", .{@errorName(e)});
+        return;
+    };
+    defer g.deinit(gpa);
+    var aw = std.Io.Writer.Allocating.init(gpa);
+    defer aw.deinit();
+    export_obj.writeObj(&aw.writer, g.verts, g.faces_flat, g.face_sizes) catch |e| {
+        bctx.context().log(.err, "Export .obj: write failed: {s}", .{@errorName(e)});
+        return;
+    };
+    const path = std.fmt.allocPrint(gpa, "{s}/export_navmesh.obj", .{folder}) catch return;
+    defer gpa.free(path);
+    io_util.writeWholeFile(path, aw.written(), gpa) catch |e| {
+        bctx.context().log(.err, "Export .obj: file write failed: {s}", .{@errorName(e)});
+        return;
+    };
+    bctx.context().log(.progress, "Exported navmesh to {s}", .{path});
+}
+
+fn exportGlbNow(gpa: std.mem.Allocator, nm: *recast.detour.NavMesh, folder: []const u8, bctx: *BuildContext) void {
+    var g = nav_export.navTriangles(gpa, nm) catch |e| {
+        bctx.context().log(.err, "Export .glb: gather failed: {s}", .{@errorName(e)});
+        return;
+    };
+    defer g.deinit(gpa);
+    const glb = export_gltf.writeGlb(gpa, g.verts, g.indices) catch |e| {
+        bctx.context().log(.err, "Export .glb: encode failed: {s}", .{@errorName(e)});
+        return;
+    };
+    defer gpa.free(glb);
+    const path = std.fmt.allocPrint(gpa, "{s}/export_navmesh.glb", .{folder}) catch return;
+    defer gpa.free(path);
+    io_util.writeWholeFile(path, glb, gpa) catch |e| {
+        bctx.context().log(.err, "Export .glb: write failed: {s}", .{@errorName(e)});
+        return;
+    };
+    bctx.context().log(.progress, "Exported navmesh to {s}", .{path});
+}
+
+fn exportSvgNow(gpa: std.mem.Allocator, nm: *recast.detour.NavMesh, folder: []const u8, bctx: *BuildContext) void {
+    var p = nav_export.navPolys2D(gpa, nm) catch |e| {
+        bctx.context().log(.err, "Export SVG: gather failed: {s}", .{@errorName(e)});
+        return;
+    };
+    defer p.deinit(gpa);
+    var aw = std.Io.Writer.Allocating.init(gpa);
+    defer aw.deinit();
+    export_svg.writeSvg(&aw.writer, p.polys_flat, p.poly_sizes, p.colors, p.bmin2, p.bmax2) catch |e| {
+        bctx.context().log(.err, "Export SVG: write failed: {s}", .{@errorName(e)});
+        return;
+    };
+    const path = std.fmt.allocPrint(gpa, "{s}/export_topo.svg", .{folder}) catch return;
+    defer gpa.free(path);
+    io_util.writeWholeFile(path, aw.written(), gpa) catch |e| {
+        bctx.context().log(.err, "Export SVG: file write failed: {s}", .{@errorName(e)});
+        return;
+    };
+    bctx.context().log(.progress, "Exported topology to {s}", .{path});
+}
+
 fn saveSceneNow(
     gpa: std.mem.Allocator,
     geom: *const InputGeom,
