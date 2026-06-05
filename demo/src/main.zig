@@ -62,6 +62,7 @@ pub const opengl_error_handling = zgl.ErrorHandling.assert;
 var g_window: *zglfw.Window = undefined;
 var g_scroll: f64 = 0; // аккумулятор колеса (пишется из callback)
 var show_legend: bool = true; // Cluster E (P1-3): scheme legend corner overlay
+var show_build_inspector: bool = false; // Cluster B (B-1): per-stage build inspector table
 
 fn glGetProcAddress(p: zglfw.GlProc, proc: [:0]const u8) ?zgl.binding.FunctionPointer {
     _ = p;
@@ -1468,6 +1469,18 @@ pub fn main(main_init: std.process.Init) !void {
             // rebuild (cost/colour edits apply instantly and don't). When auto is off,
             // a red "rebuild needed" notice is drawn bottom-left (see below).
             _ = dvui.checkbox(@src(), &area_types.auto_rebuild, "Auto-rebuild on changes", .{});
+
+            // Build Inspector (B-1): per-stage counters + timings. Solo only — Tile/Temp
+            // lack the full single-pass intermediate set.
+            if (show_build_inspector) {
+                if (sample_kind == .solo) {
+                    solo.drawBuildInspector();
+                } else {
+                    ui.section(@src(), "Build Inspector");
+                    dvui.labelNoFmt(@src(), "Solo sample only.", .{}, .{ .id_extra = 7401 });
+                }
+            }
+            _ = dvui.checkbox(@src(), &show_build_inspector, "Build Inspector", .{ .id_extra = 7402 });
 
             // --- Scene persistence (.recastscene container) ---
             // Save only (Load is a follow-up). Solo sample only; reads geom + navmesh

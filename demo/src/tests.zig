@@ -34,4 +34,5 @@ test {
     _ = @import("diag/funnel.zig");
     _ = @import("diag/reachability.zig");
     _ = @import("diag/filter_compare.zig");
+    _ = @import("diag/build_stats.zig");
 }

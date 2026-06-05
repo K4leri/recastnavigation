@@ -18,6 +18,7 @@ const scheme_state = @import("render/scheme_state.zig");
 const filter_state = @import("render/filter_state.zig");
 const view_state = @import("render/view_state.zig");
 const convex_surface = @import("convex_surface.zig");
+const build_stats = @import("diag/build_stats.zig");
 
 const rc = recast.recast;
 const dt = recast.detour;
@@ -53,6 +54,10 @@ pub const SampleSolo = struct {
     draw_mode: DrawMode = .navmesh,
     build_time_ms: f32 = 0,
     build_gen: u32 = 0, // инкремент при каждой успешной сборке (для синхронизации тулов)
+
+    // Build Inspector (B-1): per-stage counters + wall-clock times of the last build.
+    // Additive instrumentation, заполняется в doBuild. Действителен при build_gen>0.
+    build_stats: build_stats.BuildStats = .{},
 
     // промежуточные результаты (для отрисовки)
     hf: ?recast.Heightfield = null,
@@ -152,6 +157,14 @@ pub const SampleSolo = struct {
         const ctx = self.bctx.context();
         const s = &self.settings;
 
+        // Build Inspector (B-1): сброс per-stage статистики перед сборкой.
+        self.build_stats.reset();
+        self.build_stats.partition = switch (s.partition_type) {
+            .watershed => .watershed,
+            .monotone => .monotone,
+            .layers => .layers,
+        };
+
         var timer = io_util.PerfTimer.start();
 
         // конфиг (конвертация параметров как RecastDemo)
@@ -201,8 +214,21 @@ pub const SampleSolo = struct {
         _ = &bmax;
 
         self.build_time_ms = timer.readMs();
+        // total_ms — авторитетный полный wall-clock (тот же, что "Build OK in N ms");
+        // не сумма стадий (есть несекундомеренные шаги: areas alloc, navmesh data).
+        self.build_stats.total_ms = self.build_time_ms;
         self.build_gen +%= 1;
         ctx.log(.progress, "Build OK in {d:.1} ms", .{self.build_time_ms});
+        // One-line stderr dump (observability). Counts from the just-built stats.
+        const bs = &self.build_stats;
+        ctx.log(.progress, "[BUILD] hf={d} chf={d} regions={d} polys={d} detail_tris={d} total={d:.1}ms", .{
+            bs.stage(.heightfield).spans,
+            bs.stage(.compact).compact_spans,
+            bs.stage(.regions).max_regions,
+            bs.stage(.polymesh).pm_polys,
+            bs.stage(.detail).dm_tris,
+            bs.total_ms,
+        });
         return true;
     }
 
@@ -232,8 +258,12 @@ pub const SampleSolo = struct {
         const verts = geom.verts.items;
         const tris = geom.tris.items;
         const ntris = geom.triCount();
+        // Build Inspector (B-1): per-stage timers + count reads. Additive & cheap;
+        // does not alter pipeline order or recast calls.
+        const bs = &self.build_stats;
 
-        // 1. heightfield
+        // 1. heightfield (rasterize + filters)
+        var t_hf = io_util.PerfTimer.start();
         var hf = try recast.Heightfield.init(a, cfg.width, cfg.height, cfg.bmin, cfg.bmax, cfg.cs, cfg.ch);
         errdefer hf.deinit();
 
@@ -256,14 +286,43 @@ pub const SampleSolo = struct {
         if (s.filter_walkable_low_height_spans)
             rc.filter.filterWalkableLowHeightSpans(ctx, cfg.walkable_height, &hf);
         self.hf = hf;
+        {
+            // hf stats: total spans + walkable (area != NULL_AREA) via column walk.
+            var total: u64 = 0;
+            var walk: u64 = 0;
+            for (hf.spans) |col| {
+                var sp = col;
+                while (sp) |span| : (sp = span.next) {
+                    total += 1;
+                    if (span.area != rc.config.AreaId.NULL_AREA) walk += 1;
+                }
+            }
+            const st = bs.stage(.heightfield);
+            st.ran = true;
+            st.ms = t_hf.readMs();
+            st.spans = total;
+            st.walkable_spans = walk;
+        }
 
         // 3. compact heightfield
+        var t_chf = io_util.PerfTimer.start();
         const span_count = rc.compact.getHeightFieldSpanCount(ctx, &hf);
         var chf = try recast.CompactHeightfield.init(a, cfg.width, cfg.height, @intCast(span_count), cfg.walkable_height, cfg.walkable_climb, cfg.bmin, cfg.bmax, cfg.cs, cfg.ch, cfg.border_size);
         errdefer chf.deinit();
         try rc.compact.buildCompactHeightfield(ctx, cfg.walkable_height, cfg.walkable_climb, &hf, &chf);
+        {
+            const st = bs.stage(.compact);
+            st.ran = true;
+            st.ms = t_chf.readMs();
+            st.compact_spans = @intCast(chf.span_count);
+            st.walkable_height = chf.walkable_height;
+            st.walkable_climb = chf.walkable_climb;
+        }
 
         // 4. erode + выпуклые объёмы + регионы (watershed)
+        // (erode + volumes timed together with the region growth into the
+        //  `regions` stage; distancefield is its own watershed-only stage.)
+        var t_reg = io_util.PerfTimer.start();
         try rc.area.erodeWalkableArea(ctx, cfg.walkable_radius, &chf, a);
         for (geom.volumes.items) |*vol| {
             const nv: usize = @intCast(vol.nverts);
@@ -276,33 +335,80 @@ pub const SampleSolo = struct {
         switch (s.partition_type) {
             .watershed => {
                 // Watershed: дистанционное поле + рост регионов.
+                var t_df = io_util.PerfTimer.start();
                 try rc.region.buildDistanceField(ctx, &chf, a);
+                const sdf = bs.stage(.distancefield);
+                sdf.ran = true;
+                sdf.ms = t_df.readMs();
+                sdf.max_distance = chf.max_distance;
                 try rc.region.buildRegions(ctx, &chf, cfg.border_size, cfg.min_region_area, cfg.merge_region_area, a);
             },
-            // Monotone: без distancefield.
+            // Monotone: без distancefield (distancefield stage остаётся N/A).
             .monotone => try rc.region.buildRegionsMonotone(ctx, &chf, cfg.border_size, cfg.min_region_area, cfg.merge_region_area, a),
             // Layers: без distancefield; merge_region_area не используется (как в оригинале).
             .layers => try rc.region.buildLayerRegions(ctx, &chf, cfg.border_size, cfg.min_region_area, a),
         }
+        {
+            // regions stage time = erode + volumes + (distancefield if watershed) +
+            // region growth (the full t_reg window). max_regions is the key metric.
+            const st = bs.stage(.regions);
+            st.ran = true;
+            st.ms = t_reg.readMs();
+            st.max_regions = chf.max_regions;
+        }
         self.chf = chf;
 
         // 5. контуры
+        var t_cset = io_util.PerfTimer.start();
         var cset = recast.ContourSet.init(a);
         errdefer cset.deinit();
         try rc.contour.buildContours(ctx, &chf, cfg.max_simpl_error, cfg.max_edge_len, &cset, rc.config.CONTOUR_TESS_WALL_EDGES, a);
         self.cset = cset;
+        {
+            var raw: u64 = 0;
+            var simpl: u64 = 0;
+            const nc: usize = @intCast(cset.nconts);
+            for (cset.conts[0..nc]) |c| {
+                raw += @intCast(c.nrverts);
+                simpl += @intCast(c.nverts);
+            }
+            const st = bs.stage(.contours);
+            st.ran = true;
+            st.ms = t_cset.readMs();
+            st.nconts = @intCast(cset.nconts);
+            st.raw_verts = raw;
+            st.simplified_verts = simpl;
+        }
 
         // 6. polymesh
+        var t_pm = io_util.PerfTimer.start();
         var pmesh = recast.PolyMesh.init(a);
         errdefer pmesh.deinit();
         try rc.mesh.buildPolyMesh(ctx, &cset, @intCast(cfg.nvp), &pmesh, a);
         self.pmesh = pmesh;
+        {
+            const st = bs.stage(.polymesh);
+            st.ran = true;
+            st.ms = t_pm.readMs();
+            st.pm_verts = pmesh.vertCount();
+            st.pm_polys = pmesh.polyCount();
+            st.nvp = pmesh.nvp;
+        }
 
         // 7. detail mesh
+        var t_dm = io_util.PerfTimer.start();
         var dmesh = recast.PolyMeshDetail.init(a);
         errdefer dmesh.deinit();
         try rc.detail.buildPolyMeshDetail(ctx, &pmesh, &chf, cfg.detail_sample_dist, cfg.detail_sample_max_error, &dmesh, a);
         self.dmesh = dmesh;
+        {
+            const st = bs.stage(.detail);
+            st.ran = true;
+            st.ms = t_dm.readMs();
+            st.dm_meshes = @intCast(dmesh.nmeshes);
+            st.dm_verts = dmesh.vertCount();
+            st.dm_tris = dmesh.triCount();
+        }
 
         // 8. флаги полигонов по областям
         const pm = &self.pmesh.?;
@@ -588,6 +694,29 @@ pub const SampleSolo = struct {
         if (dvui.button(@src(), "Save", .{}, .{})) self.saveNavMesh();
         if (dvui.button(@src(), "Load", .{}, .{})) self.loadNavMesh();
         dvui.label(@src(), "Build Time: {d:.1}ms", .{self.build_time_ms}, .{});
+    }
+
+    /// Build Inspector (B-1): таблица из 7 стадий (счётчики + время) + total.
+    /// Рисуется в Properties-панели (main.zig) при наличии Solo-сборки.
+    /// Build Inspector table: 7 stage rows (counts + ms) + total line. Pure
+    /// formatting lives in diag/build_stats.zig; here we just render the rows.
+    pub fn drawBuildInspector(self: *SampleSolo) void {
+        ui.section(@src(), "Build Inspector");
+        if (self.build_gen == 0) {
+            dvui.labelNoFmt(@src(), "Build the Solo mesh to inspect stages.", .{}, .{ .id_extra = 7400 });
+            return;
+        }
+        const bs = &self.build_stats;
+        var buf: [160]u8 = undefined;
+        inline for (0..build_stats.STAGE_COUNT) |i| {
+            const stage: build_stats.Stage = @enumFromInt(i);
+            const st = bs.stages[i];
+            const row = build_stats.formatStageRow(&buf, stage, st);
+            // N/A rows greyed; ran rows normal.
+            const col: ?dvui.Color = if (st.ran) null else .{ .r = 140, .g = 140, .b = 140 };
+            dvui.labelNoFmt(@src(), row, .{}, .{ .id_extra = 7410 + i, .color_text = col });
+        }
+        dvui.label(@src(), "total: {d:.1}ms  ({s})", .{ bs.total_ms, @tagName(bs.partition) }, .{ .id_extra = 7420 });
     }
 
     const SAVE_PATH = "solo_navmesh.bin";
