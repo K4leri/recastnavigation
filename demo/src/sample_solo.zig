@@ -856,7 +856,8 @@ pub const SampleSolo = struct {
         }
 
         self.drawArtifactScan();
-        self.drawMemory();
+        // Memory has its OWN window now (Diagnostics > Memory) — don't duplicate it
+        // at the bottom of Build Inspector.
     }
 
     /// Build Profiler + Run History (C1). Таблица стадий выбранной сборки

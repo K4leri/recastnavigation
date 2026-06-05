@@ -1156,6 +1156,55 @@ pub fn main(main_init: std.process.Init) !void {
                     .temp => temp.navMesh(),
                 };
                 if (active_nav) |nm| {
+                    // Bright BEACONS first (full alpha, hard to miss): the faithful
+                    // poly fill forces alpha 64 and was nearly invisible. Draw a tall
+                    // vertical line + a cross at each finding poly's centroid in the
+                    // severity colour at full opacity. depthMask(false) so they show
+                    // through the navmesh.
+                    dd.depthMask(false);
+                    dd.begin(.lines, 3.0);
+                    for (rep.findings.items) |*f| {
+                        const bcol = switch (f.severity) {
+                            .err => recast.debug.rgba(255, 40, 40, 255),
+                            .warn => recast.debug.rgba(255, 210, 30, 255),
+                            .info => recast.debug.rgba(90, 170, 255, 255),
+                        };
+                        for (0..f.ref_count) |i| {
+                            if (f.refs[i] == 0) continue;
+                            const tp = nm.getTileAndPolyByRef(f.refs[i]) catch continue;
+                            // centroid (bounds-safe avg of the poly's tile verts)
+                            var cx: f32 = 0;
+                            var cy: f32 = 0;
+                            var cz: f32 = 0;
+                            const vc: usize = tp.poly.vert_count;
+                            if (vc == 0) continue;
+                            var got: usize = 0;
+                            for (0..vc) |k| {
+                                const vi = @as(usize, tp.poly.verts[k]) * 3;
+                                if (vi + 2 >= tp.tile.verts.len) continue;
+                                cx += tp.tile.verts[vi];
+                                cy += tp.tile.verts[vi + 1];
+                                cz += tp.tile.verts[vi + 2];
+                                got += 1;
+                            }
+                            if (got == 0) continue;
+                            const fg: f32 = @floatFromInt(got);
+                            cx /= fg;
+                            cy /= fg;
+                            cz /= fg;
+                            // tall beacon
+                            dd.vertexXYZ(cx, cy, cz, bcol);
+                            dd.vertexXYZ(cx, cy + 6.0, cz, bcol);
+                            // small cross at the base
+                            dd.vertexXYZ(cx - 0.6, cy + 0.1, cz, bcol);
+                            dd.vertexXYZ(cx + 0.6, cy + 0.1, cz, bcol);
+                            dd.vertexXYZ(cx, cy + 0.1, cz - 0.6, bcol);
+                            dd.vertexXYZ(cx, cy + 0.1, cz + 0.6, bcol);
+                        }
+                    }
+                    dd.end();
+                    dd.depthMask(true);
+                    // Faint poly fill on top (the existing tint), guarded against stale refs.
                     for (rep.findings.items) |*f| {
                         const col = switch (f.severity) {
                             .err => recast.debug.rgba(235, 60, 60, 160),
@@ -1163,10 +1212,6 @@ pub fn main(main_init: std.process.Init) !void {
                             .info => recast.debug.rgba(120, 180, 235, 160),
                         };
                         for (0..f.ref_count) |i| {
-                            // A cached lint report can outlive a rebuild. Bound by the
-                            // ACTUAL tiles.len BEFORE isValidPolyRef (which itself indexes
-                            // tiles[decoded.tile] against max_tiles, which can exceed
-                            // tiles.len for a stale ref -> OOB). Faithful draw has no check.
                             if (f.refs[i] == 0) continue;
                             if (@as(usize, nm.decodePolyId(f.refs[i]).tile) >= nm.tiles.len) continue;
                             if (nm.isValidPolyRef(f.refs[i])) recast.debug.debugDrawNavMeshPoly(dd, nm, f.refs[i], col);
