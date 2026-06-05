@@ -544,17 +544,29 @@ pub const SampleSolo = struct {
                 const t_idx = (@as(usize, pd.tri_base) + j) * 4;
                 if (t_idx + 3 >= t.detail_tris.len) break;
                 const tri = t.detail_tris[t_idx .. t_idx + 4];
+                // Pre-validate all 3 verts, THEN emit — emitting partial vertices
+                // into a .tris batch (on a corrupt index mid-triangle) would desync
+                // the 3-vertex grouping for every following triangle.
+                var pts: [3]*const [3]f32 = undefined;
+                var tri_ok = true;
                 for (0..3) |k| {
                     if (tri[k] < p.vert_count) {
                         const v_idx = @as(usize, p.verts[tri[k]]) * 3;
-                        if (v_idx + 2 >= t.verts.len) break;
-                        dd.vertex(@ptrCast(&t.verts[v_idx]), ARTIFACT_HL_COL);
+                        if (v_idx + 2 >= t.verts.len) {
+                            tri_ok = false;
+                            break;
+                        }
+                        pts[k] = @ptrCast(&t.verts[v_idx]);
                     } else {
                         const d_idx = (@as(usize, pd.vert_base) + @as(usize, tri[k] - p.vert_count)) * 3;
-                        if (d_idx + 2 >= t.detail_verts.len) break;
-                        dd.vertex(@ptrCast(&t.detail_verts[d_idx]), ARTIFACT_HL_COL);
+                        if (d_idx + 2 >= t.detail_verts.len) {
+                            tri_ok = false;
+                            break;
+                        }
+                        pts[k] = @ptrCast(&t.detail_verts[d_idx]);
                     }
                 }
+                if (tri_ok) for (pts) |pt| dd.vertex(pt, ARTIFACT_HL_COL);
             }
         }
         dd.end();
