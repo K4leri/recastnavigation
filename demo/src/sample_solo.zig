@@ -15,6 +15,7 @@ const ui = @import("ui.zig");
 const nav_io = @import("navmesh_io.zig");
 const poly_visit = @import("render/poly_visit.zig");
 const scheme_state = @import("render/scheme_state.zig");
+const filter_state = @import("render/filter_state.zig");
 const convex_surface = @import("convex_surface.zig");
 
 const rc = recast.recast;
@@ -444,28 +445,45 @@ pub const SampleSolo = struct {
                 if (d.nmeshes > 0) dbg.debugDrawPolyMeshDetail(dd, d);
             },
             .navmesh, .navmesh_trans => if (self.navmesh) |*n| {
-                dbg.debugDrawNavMesh(dd, n, 0);
-                if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
+                // Cluster E (P0-2): when a clip/iso filter is active, the filtered
+                // draw REPLACES the faithful navmesh + plain overdraw (else unclipped
+                // floors show through). Otherwise: faithful + optional scheme overdraw.
+                if (filter_state.active.active()) {
+                    poly_visit.fillNavMeshFiltered(dd, n, scheme_state.active, filter_state.active, self.alloc);
+                } else {
+                    dbg.debugDrawNavMesh(dd, n, 0);
+                    if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
+                }
             },
             // BVTree/Nodes: оригинал рисует САМ навмеш + overlay поверх (Sample_SoloMesh::render).
             .navmesh_bvtree => if (self.navmesh) |*n| {
-                dbg.debugDrawNavMesh(dd, n, 0);
-                if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
+                if (filter_state.active.active()) {
+                    poly_visit.fillNavMeshFiltered(dd, n, scheme_state.active, filter_state.active, self.alloc);
+                } else {
+                    dbg.debugDrawNavMesh(dd, n, 0);
+                    if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
+                }
                 dbg.debugDrawNavMeshBVTree(dd, n);
             },
             .navmesh_nodes => if (self.navmesh) |*n| {
-                dbg.debugDrawNavMesh(dd, n, 0);
-                if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
+                if (filter_state.active.active()) {
+                    poly_visit.fillNavMeshFiltered(dd, n, scheme_state.active, filter_state.active, self.alloc);
+                } else {
+                    dbg.debugDrawNavMesh(dd, n, 0);
+                    if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
+                }
             },
         }
 
         // Тёмный оверлей на DISABLED-полигонах (Toggle Polys) — 1-в-1 Sample_SoloMesh::render
         // (duDebugDrawNavMeshPolysWithFlags(..., DISABLED, rgba(0,0,0,128))). Видно отключённые.
-        switch (self.draw_mode) {
+        // Gated under !filter.active(): the disabled overlay draws the FAITHFUL
+        // (unclipped) navmesh and would visually fight the filtered/clipped draw.
+        if (!filter_state.active.active()) switch (self.draw_mode) {
             .navmesh, .navmesh_trans, .navmesh_bvtree, .navmesh_nodes => if (self.navmesh) |*n|
                 dbg.debugDrawNavMeshPolysWithFlags(dd, n, sample.SamplePolyFlags.disabled, dbg.rgba(0, 0, 0, 128)),
             else => {},
-        }
+        };
 
         // Off-mesh connections and convex volumes are part of the scene and are
         // drawn regardless of the active tool (1:1 Sample::handleRender). The

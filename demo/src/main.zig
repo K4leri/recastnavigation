@@ -29,6 +29,7 @@ const InputGeom = @import("input_geom.zig").InputGeom;
 const ConvexVolume = @import("input_geom.zig").ConvexVolume;
 const SampleSolo = @import("sample_solo.zig").SampleSolo;
 const scheme_state = @import("render/scheme_state.zig");
+const filter_state = @import("render/filter_state.zig");
 const SampleTile = @import("sample_tile.zig").SampleTile;
 const SampleTempObstacles = @import("sample_temp_obstacles.zig").SampleTempObstacles;
 const NavMeshTesterTool = @import("tool_navmesh_tester.zig").NavMeshTesterTool;
@@ -1516,6 +1517,61 @@ pub fn main(main_init: std.process.Init) !void {
             // PolyMesh.regs (Recast build stage) and are not baked into the Detour
             // navmesh. Wiring it up requires Solo-only PolyMesh.regs plumbing.
             // (cluster E open question Q1: deferred)
+
+            // --- Clipping / Isolation (cluster E, P0-2) ---
+            // Read overlapping floors (parking decks, buildings) floor-by-floor.
+            // NAVMESH-ONLY: filters the navmesh draw; input geom mesh is not clipped.
+            ui.section(@src(), "Clipping / Isolation");
+            {
+                const fl = &filter_state.active;
+                // Clip mode radios (id_extra 340..343).
+                if (ui.radio(@src(), fl.clip_mode == .off, "Clip: off", 340)) fl.clip_mode = .off;
+                if (ui.radio(@src(), fl.clip_mode == .above, "Clip: above", 341)) fl.clip_mode = .above;
+                if (ui.radio(@src(), fl.clip_mode == .below, "Clip: below", 342)) fl.clip_mode = .below;
+                if (ui.radio(@src(), fl.clip_mode == .slab, "Clip: slab", 343)) fl.clip_mode = .slab;
+                if (fl.clip_mode != .off) {
+                    // Clip Y slider spans the scene's vertical bbox.
+                    const y_lo = geom.bmin[1];
+                    const y_hi = geom.bmax[1];
+                    _ = dvui.sliderEntry(@src(), "clip Y {d:.2}", .{ .value = &fl.clip_y, .min = y_lo, .max = y_hi, .interval = null }, .{ .expand = .horizontal, .id_extra = 344 });
+                    if (fl.clip_mode == .slab)
+                        _ = dvui.sliderEntry(@src(), "slab +-{d:.2}", .{ .value = &fl.slab_thickness, .min = 0.1, .max = 50, .interval = null }, .{ .expand = .horizontal, .id_extra = 345 });
+                }
+
+                // Isolation mode radios (id_extra 346..348).
+                if (ui.radio(@src(), fl.iso_mode == .none, "Iso: none", 346)) fl.iso_mode = .none;
+                if (ui.radio(@src(), fl.iso_mode == .show_only, "Iso: show-only", 347)) fl.iso_mode = .show_only;
+                if (ui.radio(@src(), fl.iso_mode == .dim_others, "Iso: dim-others", 348)) fl.iso_mode = .dim_others;
+                if (fl.iso_mode != .none) {
+                    // Iso key radios (id_extra 349..351).
+                    if (ui.radio(@src(), fl.iso_key == .tile, "by tile", 349)) fl.iso_key = .tile;
+                    if (ui.radio(@src(), fl.iso_key == .area, "by area", 350)) fl.iso_key = .area;
+                    if (ui.radio(@src(), fl.iso_key == .flags, "by flags", 351)) fl.iso_key = .flags;
+                    switch (fl.iso_key) {
+                        .tile => {
+                            // i32 tile coords via f32 proxies (id_extra 352..353).
+                            var tx: f32 = @floatFromInt(fl.iso_tile_x);
+                            var ty: f32 = @floatFromInt(fl.iso_tile_y);
+                            _ = dvui.sliderEntry(@src(), "tile x {d:.0}", .{ .value = &tx, .min = 0, .max = 64, .interval = 1 }, .{ .expand = .horizontal, .id_extra = 352 });
+                            _ = dvui.sliderEntry(@src(), "tile y {d:.0}", .{ .value = &ty, .min = 0, .max = 64, .interval = 1 }, .{ .expand = .horizontal, .id_extra = 353 });
+                            fl.iso_tile_x = @intFromFloat(@round(tx));
+                            fl.iso_tile_y = @intFromFloat(@round(ty));
+                        },
+                        .area => {
+                            // u8 area 0..63 via f32 proxy (id_extra 354).
+                            var av: f32 = @floatFromInt(fl.iso_area);
+                            _ = dvui.sliderEntry(@src(), "area {d:.0}", .{ .value = &av, .min = 0, .max = 63, .interval = 1 }, .{ .expand = .horizontal, .id_extra = 354 });
+                            fl.iso_area = @intFromFloat(std.math.clamp(@round(av), 0, 63));
+                        },
+                        .flags => {
+                            // u16 flags via f32 proxy (id_extra 355).
+                            var fv: f32 = @floatFromInt(fl.iso_flags);
+                            _ = dvui.sliderEntry(@src(), "flags {d:.0}", .{ .value = &fv, .min = 0, .max = 65535, .interval = 1 }, .{ .expand = .horizontal, .id_extra = 355 });
+                            fl.iso_flags = @intFromFloat(std.math.clamp(@round(fv), 0, 65535));
+                        },
+                    }
+                }
+            }
 
             ui.section(@src(), "Debug Settings");
             switch (sample_kind) {

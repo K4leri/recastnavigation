@@ -16,6 +16,7 @@ const nav_io = @import("navmesh_io.zig");
 const convex_surface = @import("convex_surface.zig");
 const poly_visit = @import("render/poly_visit.zig");
 const scheme_state = @import("render/scheme_state.zig");
+const filter_state = @import("render/filter_state.zig");
 
 const rc = recast.recast;
 const dt = recast.detour;
@@ -354,25 +355,43 @@ pub const SampleTile = struct {
         const dd = self.dd_gl.debugDraw();
         switch (self.draw_mode) {
             .mesh => self.renderInputMesh(dd),
+            // Cluster E (P0-2): filtered draw REPLACES faithful + plain overdraw
+            // when a clip/iso filter is active (else unclipped floors show through).
             .navmesh => if (self.navmesh) |*n| {
-                dbg.debugDrawNavMesh(dd, n, 0);
-                if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
-            },
-            .navmesh_trans => {
-                self.renderInputMesh(dd);
-                if (self.navmesh) |*n| {
+                if (filter_state.active.active()) {
+                    poly_visit.fillNavMeshFiltered(dd, n, scheme_state.active, filter_state.active, self.alloc);
+                } else {
                     dbg.debugDrawNavMesh(dd, n, 0);
                     if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
                 }
             },
+            .navmesh_trans => {
+                self.renderInputMesh(dd);
+                if (self.navmesh) |*n| {
+                    if (filter_state.active.active()) {
+                        poly_visit.fillNavMeshFiltered(dd, n, scheme_state.active, filter_state.active, self.alloc);
+                    } else {
+                        dbg.debugDrawNavMesh(dd, n, 0);
+                        if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
+                    }
+                }
+            },
             .navmesh_bvtree => if (self.navmesh) |*n| {
-                dbg.debugDrawNavMesh(dd, n, 0);
-                if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
+                if (filter_state.active.active()) {
+                    poly_visit.fillNavMeshFiltered(dd, n, scheme_state.active, filter_state.active, self.alloc);
+                } else {
+                    dbg.debugDrawNavMesh(dd, n, 0);
+                    if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
+                }
                 dbg.debugDrawNavMeshBVTree(dd, n);
             },
             .navmesh_portals => if (self.navmesh) |*n| {
-                dbg.debugDrawNavMesh(dd, n, 0);
-                if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
+                if (filter_state.active.active()) {
+                    poly_visit.fillNavMeshFiltered(dd, n, scheme_state.active, filter_state.active, self.alloc);
+                } else {
+                    dbg.debugDrawNavMesh(dd, n, 0);
+                    if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
+                }
                 dbg.debugDrawNavMeshPortals(dd, n);
             },
         }

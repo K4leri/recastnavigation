@@ -15,6 +15,7 @@ const nav_io = @import("navmesh_io.zig");
 const convex_surface = @import("convex_surface.zig");
 const poly_visit = @import("render/poly_visit.zig");
 const scheme_state = @import("render/scheme_state.zig");
+const filter_state = @import("render/filter_state.zig");
 
 const rc = recast.recast;
 const dt = recast.detour;
@@ -314,8 +315,14 @@ pub const SampleTempObstacles = struct {
         self.dd_gl.area_to_col = sample.sampleAreaToCol;
         const dd = self.dd_gl.debugDraw();
         if (self.navmesh) |*n| {
-            dbg.debugDrawNavMesh(dd, n, 0);
-            if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
+            // Cluster E (P0-2): filtered draw REPLACES faithful + plain overdraw
+            // when a clip/iso filter is active (else unclipped floors show through).
+            if (filter_state.active.active()) {
+                poly_visit.fillNavMeshFiltered(dd, n, scheme_state.active, filter_state.active, self.alloc);
+            } else {
+                dbg.debugDrawNavMesh(dd, n, 0);
+                if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
+            }
         }
 
         // препятствия (цилиндры)
