@@ -27,13 +27,15 @@ pub const PolyColorCtx = struct {
     cost_max: f32 = 0,
 };
 
-const ALPHA: i32 = 192; // ~75% opaque — standard navmesh overlay alpha
+pub const ALPHA: i32 = 192; // ~75% opaque — standard navmesh overlay alpha
 
 // Gradient endpoints (dbg.rgba is an inline fn, so these fold at comptime).
-const HEIGHT_LO: u32 = dbg.rgba(40, 90, 200, 192); // low  = blue
-const HEIGHT_HI: u32 = dbg.rgba(220, 70, 40, 192); // high = red
-const COST_LO: u32 = dbg.rgba(60, 180, 70, 192); // cheap = green
-const COST_HI: u32 = dbg.rgba(200, 50, 40, 192); // dear  = red
+// Public so the legend (render/legend.zig) can label the gradient bar with the
+// SAME endpoint colours the fill uses — single source of truth.
+pub const HEIGHT_LO: u32 = dbg.rgba(40, 90, 200, 192); // low  = blue
+pub const HEIGHT_HI: u32 = dbg.rgba(220, 70, 40, 192); // high = red
+pub const COST_LO: u32 = dbg.rgba(60, 180, 70, 192); // cheap = green
+pub const COST_HI: u32 = dbg.rgba(200, 50, 40, 192); // dear  = red
 
 /// Clamp (v - lo) / (hi - lo) to [0,1]; returns 0 when the range is empty.
 fn norm(v: f32, lo: f32, hi: f32) f32 {
