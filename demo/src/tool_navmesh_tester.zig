@@ -141,6 +141,13 @@ pub const NavMeshTesterTool = struct {
         self.nstraight = 0;
         self.spos_set = false;
         self.epos_set = false;
+        // Reset the sliced-search player so a stale slice can't tick against the new
+        // (freshly-initialised, never-sliced) query after a navmesh reload.
+        self.slice_active = false;
+        self.slice_auto = false;
+        self.slice_finished = false;
+        self.slice_done_total = 0;
+        self.slice_status = .{};
         if (nm) |m| {
             var q = dt.NavMeshQuery.init(self.alloc) catch return;
             q.initQuery(m, 2048) catch {
@@ -412,7 +419,12 @@ pub const NavMeshTesterTool = struct {
             var node: ?*const dt.Node = best;
             var guard: usize = 0;
             while (node) |n| : (guard += 1) {
-                if (guard > count + 1) break; // pidx-loop guard (defensive)
+                if (guard >= count) break; // pidx-loop guard (defensive: at most `count` hops)
+                // pidx is a 1-based index into the pool's [1..node_count]; a 0 pidx is
+                // the root (stop), and an out-of-range pidx (shouldn't happen) would
+                // read an uninitialised slot — bound it here since the core getter
+                // (faithful src/*) has no upper check and we must not edit it.
+                if (n.pidx == 0 or n.pidx > count) break;
                 const parent = pool.getNodeAtIdxConst(n.pidx) orelse break;
                 dd.vertexXYZ(n.pos[0], n.pos[1] + 0.2, n.pos[2], corr_col);
                 dd.vertexXYZ(parent.pos[0], parent.pos[1] + 0.2, parent.pos[2], corr_col);
