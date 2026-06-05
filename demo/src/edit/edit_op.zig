@@ -24,6 +24,18 @@
 const ig = @import("../input_geom.zig");
 const InputGeom = ig.InputGeom;
 const ConvexVolume = ig.ConvexVolume;
+const area_types = @import("../area_types.zig");
+const poly_flags = @import("../poly_flags.zig");
+const AreaType = area_types.AreaType;
+const Flag = poly_flags.Flag;
+
+/// After any area-type / poly-flag mutation (apply or revert) the registries that
+/// feed baked tile data + the live query filters have changed: signal both a
+/// navmesh rebuild and a cost re-apply, mirroring how the live editors do it.
+fn markAreaDirty() void {
+    area_types.rebuild_needed = true;
+    area_types.costs_dirty = true;
+}
 
 /// Reversible capture of one off-mesh connection (all 6 parallel-array fields).
 pub const OffMeshData = struct {
@@ -53,6 +65,22 @@ pub const EditOp = union(enum) {
     add_offmesh: OffMeshData,
     delete_offmesh: struct { index: usize, data: OffMeshData },
 
+    // --- Scene-markup registry edits (area types + poly flags) ----------------
+    // These operate on the MODULE-GLOBAL registries (area_types / poly_flags),
+    // not on `geom` — the `geom` param to apply/revert is ignored for them. Each
+    // captures the affected slot's value by COPY: AreaType / Flag hold fixed-size
+    // name_buf arrays, so the copy is self-contained and owns no heap.
+    /// A NEW area type was created at slot `id`. apply re-creates it, revert removes it.
+    area_add: struct { id: usize, type: AreaType },
+    /// An existing area type at slot `id` was edited. apply -> after, revert -> before.
+    area_edit: struct { id: usize, before: AreaType, after: AreaType },
+    /// An area type at slot `id` was removed. apply removes it, revert restores it.
+    area_remove: struct { id: usize, type: AreaType },
+    /// A NEW poly flag was created at bit `bit_index`. apply re-creates, revert removes.
+    flag_add: struct { bit_index: usize, flag: Flag },
+    /// A poly flag at bit `bit_index` was removed. apply removes, revert restores it.
+    flag_remove: struct { bit_index: usize, flag: Flag },
+
     /// Redo the action (re-perform the original mutation).
     pub fn apply(self: EditOp, geom: *InputGeom) void {
         switch (self) {
@@ -68,6 +96,26 @@ pub const EditOp = union(enum) {
             },
             .delete_offmesh => |d| {
                 geom.deleteOffMeshConnection(d.index);
+            },
+            .area_add => |a| {
+                area_types.restoreType(a.id, a.type);
+                markAreaDirty();
+            },
+            .area_edit => |a| {
+                area_types.restoreType(a.id, a.after);
+                markAreaDirty();
+            },
+            .area_remove => |a| {
+                area_types.removeType(a.id);
+                markAreaDirty();
+            },
+            .flag_add => |f| {
+                poly_flags.restoreFlag(f.bit_index, f.flag.name(), f.flag.builtin);
+                markAreaDirty();
+            },
+            .flag_remove => |f| {
+                poly_flags.removeFlag(f.bit_index);
+                markAreaDirty();
             },
         }
     }
@@ -90,6 +138,26 @@ pub const EditOp = union(enum) {
             .delete_offmesh => |d| {
                 geom.insertOffMeshConnection(d.index, d.data.verts, d.data.rad, d.data.dir, d.data.area, d.data.flags, d.data.id) catch {};
             },
+            .area_add => |a| {
+                area_types.removeType(a.id);
+                markAreaDirty();
+            },
+            .area_edit => |a| {
+                area_types.restoreType(a.id, a.before);
+                markAreaDirty();
+            },
+            .area_remove => |a| {
+                area_types.restoreType(a.id, a.type);
+                markAreaDirty();
+            },
+            .flag_add => |f| {
+                poly_flags.removeFlag(f.bit_index);
+                markAreaDirty();
+            },
+            .flag_remove => |f| {
+                poly_flags.restoreFlag(f.bit_index, f.flag.name(), f.flag.builtin);
+                markAreaDirty();
+            },
         }
     }
 
@@ -106,6 +174,11 @@ pub const EditOp = union(enum) {
             .delete_volume => "Delete Volume",
             .add_offmesh => "Add Off-Mesh Link",
             .delete_offmesh => "Delete Off-Mesh Link",
+            .area_add => "Add Area Type",
+            .area_edit => "Edit Area Type",
+            .area_remove => "Remove Area Type",
+            .flag_add => "Add Poly Flag",
+            .flag_remove => "Remove Poly Flag",
         };
     }
 };

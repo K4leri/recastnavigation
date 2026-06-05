@@ -219,6 +219,158 @@ test "off-mesh delete undo restores all 6 fields at index" {
     try std.testing.expectEqual(@as(u32, 1000), geom.off_id.items[0]);
 }
 
+const area_types = @import("../area_types.zig");
+const poly_flags = @import("../poly_flags.zig");
+
+test "area_add undo removes the new type, redo re-creates it" {
+    area_types.resetToBuiltins();
+    var geom = InputGeom.init(std.testing.allocator);
+    defer geom.deinit();
+    var st = UndoStack.init(std.testing.allocator);
+    defer st.deinit();
+
+    const id = area_types.addType().?; // first free slot after 6 builtins == 6
+    var t = area_types.get(id).?;
+    t.setName("Lava");
+    t.r = 9;
+    t.g = 8;
+    t.b = 7;
+    t.cost = 4.5;
+    t.flags = 0x0A;
+    st.record(.{ .area_add = .{ .id = id, .type = t.* } });
+    try std.testing.expect(area_types.get(id) != null);
+
+    // Undo -> the type is gone.
+    try std.testing.expect(st.undo(&geom));
+    try std.testing.expectEqual(@as(?*area_types.AreaType, null), area_types.get(id));
+
+    // Redo -> restored byte-for-byte.
+    try std.testing.expect(st.redo(&geom));
+    const r = area_types.get(id).?;
+    try std.testing.expectEqualStrings("Lava", r.name());
+    try std.testing.expectEqual(@as(u8, 9), r.r);
+    try std.testing.expectEqual(@as(f32, 4.5), r.cost);
+    try std.testing.expectEqual(@as(u16, 0x0A), r.flags);
+    try std.testing.expect(!r.builtin);
+    area_types.resetToBuiltins();
+}
+
+test "area_edit undo restores before, redo applies after (name/color/cost/flags)" {
+    area_types.resetToBuiltins();
+    var geom = InputGeom.init(std.testing.allocator);
+    defer geom.deinit();
+    var st = UndoStack.init(std.testing.allocator);
+    defer st.deinit();
+
+    // Edit the builtin Ground (slot 0): change name/color/cost/flags.
+    const before = area_types.get(0).?.*;
+    var after = before;
+    after.setName("Stone");
+    after.r = 1;
+    after.g = 2;
+    after.b = 3;
+    after.cost = 9.0;
+    after.flags = 0x0C;
+    area_types.restoreType(0, after);
+    st.record(.{ .area_edit = .{ .id = 0, .before = before, .after = after } });
+
+    // Undo -> exactly the old Ground.
+    try std.testing.expect(st.undo(&geom));
+    const u = area_types.get(0).?;
+    try std.testing.expectEqualStrings("Ground", u.name());
+    try std.testing.expectEqual(before.cost, u.cost);
+    try std.testing.expectEqual(before.flags, u.flags);
+    try std.testing.expectEqual(before.r, u.r);
+    try std.testing.expect(u.builtin);
+
+    // Redo -> the edited values.
+    try std.testing.expect(st.redo(&geom));
+    const r = area_types.get(0).?;
+    try std.testing.expectEqualStrings("Stone", r.name());
+    try std.testing.expectEqual(@as(f32, 9.0), r.cost);
+    try std.testing.expectEqual(@as(u16, 0x0C), r.flags);
+    area_types.resetToBuiltins();
+}
+
+test "area_remove undo restores the type, redo removes it again" {
+    area_types.resetToBuiltins();
+    var geom = InputGeom.init(std.testing.allocator);
+    defer geom.deinit();
+    var st = UndoStack.init(std.testing.allocator);
+    defer st.deinit();
+
+    const id = area_types.addType().?;
+    var t = area_types.get(id).?;
+    t.setName("Mud");
+    t.cost = 6.0;
+    const captured = t.*;
+    area_types.removeType(id);
+    st.record(.{ .area_remove = .{ .id = id, .type = captured } });
+    try std.testing.expectEqual(@as(?*area_types.AreaType, null), area_types.get(id));
+
+    // Undo -> restored.
+    try std.testing.expect(st.undo(&geom));
+    const r = area_types.get(id).?;
+    try std.testing.expectEqualStrings("Mud", r.name());
+    try std.testing.expectEqual(@as(f32, 6.0), r.cost);
+
+    // Redo -> gone again.
+    try std.testing.expect(st.redo(&geom));
+    try std.testing.expectEqual(@as(?*area_types.AreaType, null), area_types.get(id));
+    area_types.resetToBuiltins();
+}
+
+test "flag_add undo removes flag, redo re-creates it (name/builtin)" {
+    poly_flags.resetToBuiltins();
+    var geom = InputGeom.init(std.testing.allocator);
+    defer geom.deinit();
+    var st = UndoStack.init(std.testing.allocator);
+    defer st.deinit();
+
+    const bit = poly_flags.addFlag("ladder").?;
+    const bit_index: usize = @ctz(bit);
+    const captured = poly_flags.get(bit_index).?.*;
+    st.record(.{ .flag_add = .{ .bit_index = bit_index, .flag = captured } });
+    try std.testing.expect(poly_flags.get(bit_index) != null);
+
+    // Undo -> flag gone.
+    try std.testing.expect(st.undo(&geom));
+    try std.testing.expectEqual(@as(?*poly_flags.Flag, null), poly_flags.get(bit_index));
+
+    // Redo -> restored.
+    try std.testing.expect(st.redo(&geom));
+    const r = poly_flags.get(bit_index).?;
+    try std.testing.expectEqualStrings("ladder", r.name());
+    try std.testing.expect(!r.builtin);
+    poly_flags.resetToBuiltins();
+}
+
+test "flag_remove undo restores flag, redo removes it again" {
+    poly_flags.resetToBuiltins();
+    var geom = InputGeom.init(std.testing.allocator);
+    defer geom.deinit();
+    var st = UndoStack.init(std.testing.allocator);
+    defer st.deinit();
+
+    const bit = poly_flags.addFlag("crouch").?;
+    const bit_index: usize = @ctz(bit);
+    const captured = poly_flags.get(bit_index).?.*;
+    poly_flags.removeFlag(bit_index);
+    st.record(.{ .flag_remove = .{ .bit_index = bit_index, .flag = captured } });
+    try std.testing.expectEqual(@as(?*poly_flags.Flag, null), poly_flags.get(bit_index));
+
+    // Undo -> restored.
+    try std.testing.expect(st.undo(&geom));
+    const r = poly_flags.get(bit_index).?;
+    try std.testing.expectEqualStrings("crouch", r.name());
+    try std.testing.expect(!r.builtin);
+
+    // Redo -> gone again.
+    try std.testing.expect(st.redo(&geom));
+    try std.testing.expectEqual(@as(?*poly_flags.Flag, null), poly_flags.get(bit_index));
+    poly_flags.resetToBuiltins();
+}
+
 test "ring eviction frees oldest, no leak" {
     var geom = InputGeom.init(std.testing.allocator);
     defer geom.deinit();
