@@ -273,7 +273,7 @@ pub fn main(main_init: std.process.Init) !void {
     var pick_hit: ?Vec3 = null; // последняя точка пикинга по земле
     // B-4 Polygon Inspector: poly-ref picked by the Disabled-tool inspection click.
     // 0 = nothing inspected; non-zero = ref of the last clicked polygon.
-    var inspected_ref: u32 = 0;
+    var inspected_ref: recast.detour.PolyRef = 0; // PolyRef-typed (widens to u64 under -Dpolyref64)
     var overlay_cap_warned = false; // P1-2: logged once when labels:all hits the cap
     // P1-4 minimap fly-to entry state.
     var minimap_rect: dvui.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };

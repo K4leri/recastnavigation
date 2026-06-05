@@ -31,8 +31,10 @@ pub const MAX_NEIGHBOURS: usize = 16;
 /// Извлечённые данные полигона. Заполняются inspect(); чистый value-тип,
 /// никаких аллокаций.
 pub const PolyInfo = struct {
-    /// Raw poly-ref (same value passed to inspect).
-    ref: u32,
+    /// Raw poly-ref (same value passed to inspect). PolyRef widens to u64 under
+    /// -Dpolyref64, so use the configured type (not a hardcoded u32) — else a
+    /// 64-bit ref would panic on @intCast.
+    ref: common.PolyRef,
     /// Area id (low 6 bits of area_and_type).
     area: u8,
     /// User-defined flags (u16 bitmask).
@@ -47,7 +49,7 @@ pub const PolyInfo = struct {
     /// Total number of links walked (all, including boundary markers).
     link_count: u32,
     /// Neighbour poly-refs where link.ref != 0, up to MAX_NEIGHBOURS.
-    neighbours: [MAX_NEIGHBOURS]u32,
+    neighbours: [MAX_NEIGHBOURS]common.PolyRef,
     /// Number of valid entries in `neighbours` (capped at MAX_NEIGHBOURS).
     neighbour_count: u32,
 };
@@ -57,7 +59,7 @@ pub const PolyInfo = struct {
 ///
 /// Извлекает PolyInfo для `ref` из `nav`. Возвращает null при плохом/устаревшем
 /// ref или выходе индексов за границы (никогда не паникует на кривых данных).
-pub fn inspect(nav: *const NavMesh, ref: u32) ?PolyInfo {
+pub fn inspect(nav: *const NavMesh, ref: common.PolyRef) ?PolyInfo {
     if (ref == 0) return null;
 
     // getTileAndPolyByRef validates salt + bounds; returns error on bad ref.
@@ -98,7 +100,7 @@ pub fn inspect(nav: *const NavMesh, ref: u32) ?PolyInfo {
 
     // --- Walk links: count total + collect up to MAX_NEIGHBOURS non-zero refs ---
     var link_count: u32 = 0;
-    var neighbours: [MAX_NEIGHBOURS]u32 = [_]u32{0} ** MAX_NEIGHBOURS;
+    var neighbours: [MAX_NEIGHBOURS]common.PolyRef = [_]common.PolyRef{0} ** MAX_NEIGHBOURS;
     var neighbour_count: u32 = 0;
 
     var li: u32 = poly.first_link;
@@ -108,7 +110,7 @@ pub fn inspect(nav: *const NavMesh, ref: u32) ?PolyInfo {
         const link = &tile.links[li];
         link_count += 1;
         if (link.ref != 0 and neighbour_count < MAX_NEIGHBOURS) {
-            neighbours[neighbour_count] = @intCast(link.ref);
+            neighbours[neighbour_count] = link.ref; // PolyRef-typed; no cast
             neighbour_count += 1;
         }
         li = link.next;
@@ -137,7 +139,7 @@ pub fn inspect(nav: *const NavMesh, ref: u32) ?PolyInfo {
 /// Returns a slice into `buf`. buf must be >= 12 bytes.
 ///
 /// Форматирует ref как hex: "0x0000ABCD". Возвращает срез из buf (>= 12 байт).
-pub fn formatRefText(buf: []u8, ref: u32) []const u8 {
+pub fn formatRefText(buf: []u8, ref: common.PolyRef) []const u8 {
     return std.fmt.bufPrint(buf, "0x{X:0>8}", .{ref}) catch buf[0..0];
 }
 
