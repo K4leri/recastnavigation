@@ -93,6 +93,50 @@ pub fn scanDirectory(allocator: std.mem.Allocator, dir_path: []const u8, ext: []
     return list.toOwnedSlice();
 }
 
+/// Как scanDirectory, но матчит ЛЮБОЕ из расширений `exts` (регистронезависимо).
+/// Один проход по каталогу; результат отсортирован по имени. Используется для
+/// дропдауна входного меша (cluster D, D1: .obj/.stl/.ply/.gltf/.glb).
+pub fn scanDirectoryAny(allocator: std.mem.Allocator, dir_path: []const u8, exts: []const []const u8) ![][]u8 {
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var list = std.array_list.Managed([]u8).init(allocator);
+    errdefer {
+        for (list.items) |s| allocator.free(s);
+        list.deinit();
+    }
+
+    var dir = std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true }) catch {
+        return list.toOwnedSlice();
+    };
+    defer dir.close(io);
+
+    var it = dir.iterate();
+    while (try it.next(io)) |entry| {
+        if (entry.kind != .file) continue;
+        var ok = false;
+        for (exts) |ext| {
+            if (entry.name.len >= ext.len and
+                std.ascii.eqlIgnoreCase(entry.name[entry.name.len - ext.len ..], ext))
+            {
+                ok = true;
+                break;
+            }
+        }
+        if (!ok) continue;
+        try list.append(try allocator.dupe(u8, entry.name));
+    }
+
+    std.mem.sort([]u8, list.items, {}, struct {
+        fn lessThan(_: void, a: []u8, b: []u8) bool {
+            return std.mem.lessThan(u8, a, b);
+        }
+    }.lessThan);
+
+    return list.toOwnedSlice();
+}
+
 /// Высокоточный таймер (аналог PerfTimer). zig 0.16: std.time.Timer удалён,
 /// используем монотонные часы std.Io.Clock(.awake).
 pub const PerfTimer = struct {

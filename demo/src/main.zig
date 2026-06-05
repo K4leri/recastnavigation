@@ -53,6 +53,7 @@ const Clipboard = @import("edit/clipboard.zig").Clipboard;
 const inspector = @import("edit/inspector.zig");
 const presets = @import("edit/presets.zig");
 const poly_inspect = @import("diag/poly_inspect.zig");
+const import_geom = @import("io/import_geom.zig");
 const navmesh_lint = @import("diag/navmesh_lint.zig");
 const navmesh_verify = @import("diag/navmesh_verify.zig");
 const Vec3 = recast.math.Vec3;
@@ -212,7 +213,7 @@ pub fn main(main_init: std.process.Init) !void {
 
     // список мешей (персистентный для dropdown)
     var mesh_files: [][]u8 = &.{};
-    if (io_util.scanDirectory(main_init.gpa, app.meshes_folder, ".obj")) |fs| {
+    if (io_util.scanDirectoryAny(main_init.gpa, app.meshes_folder, &import_geom.supported_exts)) |fs| {
         mesh_files = fs;
     } else |_| {}
     defer if (mesh_files.len > 0) {
@@ -2996,7 +2997,7 @@ fn loadMeshIndex(
     if (idx >= files.len) return;
     const p = std.fmt.allocPrint(gpa, "{s}/{s}", .{ folder, files[idx] }) catch return;
     defer gpa.free(p);
-    geom.loadMesh(p) catch |e| {
+    import_geom.loadInto(geom, p) catch |e| {
         bctx.context().log(.err, "load mesh: {s}", .{@errorName(e)});
         return;
     };
@@ -3409,7 +3410,7 @@ fn loadSceneNow(
         return;
     };
     defer gpa.free(obj_path);
-    tmp_geom.loadMesh(obj_path) catch |e| {
+    import_geom.loadInto(&tmp_geom, obj_path) catch |e| {
         bctx.context().log(.err, "Load Scene: reload mesh {s}: {s}", .{ obj_path, @errorName(e) });
         return;
     };

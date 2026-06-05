@@ -155,6 +155,19 @@ pub const InputGeom = struct {
         try self.computeNormals();
     }
 
+    /// Replace geometry with the given verts (x,y,z triplets) and tris (3 vertex
+    /// indices per triangle), then recompute bounds + per-triangle normals. Used by
+    /// the import dispatcher (demo/src/io: STL/PLY/glTF) — the inline .obj path stays
+    /// in loadMesh. Mirrors loadMesh's tail so all formats land in the same state.
+    pub fn setMesh(self: *InputGeom, verts: []const f32, tris: []const i32) !void {
+        self.verts.clearRetainingCapacity();
+        self.tris.clearRetainingCapacity();
+        try self.verts.appendSlice(verts);
+        try self.tris.appendSlice(tris);
+        self.computeBounds();
+        try self.computeNormals();
+    }
+
     fn computeBounds(self: *InputGeom) void {
         if (self.verts.items.len == 0) return;
         self.bmin = .{ self.verts.items[0], self.verts.items[1], self.verts.items[2] };
