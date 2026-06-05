@@ -6,7 +6,7 @@
 const std = @import("std");
 
 /// Active scene-tool. Same variants/order as the former `ActiveTool` enum.
-pub const ToolId = enum { none, tester, prune, offmesh, convex, crowd };
+pub const ToolId = enum { none, tester, prune, offmesh, convex, crowd, select };
 
 pub const ToolEntry = struct {
     id: ToolId,
@@ -22,6 +22,7 @@ pub const entries = [_]ToolEntry{
     .{ .id = .offmesh, .label = "Create Off-Mesh Connections", .radio_id = 202, .hint = "LMB: 1st=start, 2nd=end" },
     .{ .id = .convex, .label = "Create Convex Volumes", .radio_id = 203, .hint = "LMB: add point, click red point to build   Shift+LMB: delete volume" },
     .{ .id = .crowd, .label = "Create Crowds", .radio_id = 204, .hint = "Create/Move/Select via Tools panel" },
+    .{ .id = .select, .label = "Select / Edit", .radio_id = 207, .hint = "LMB drag: box-select   Ctrl+LMB: toggle one   Del: delete selected" },
     .{ .id = .none, .label = "Disabled", .radio_id = 205, .hint = "RMB: rotate   WASD/QE: move   wheel: zoom   F: reset view" },
 };
 
