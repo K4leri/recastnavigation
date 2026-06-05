@@ -18,6 +18,8 @@ const wnp = @import("diag/why_no_path.zig");
 const astar_player = @import("diag/astar_player.zig");
 const funnel = @import("diag/funnel.zig");
 const filter_compare = @import("diag/filter_compare.zig");
+const query_bench = @import("diag/query_bench.zig");
+const profiler = @import("diag/profiler.zig");
 
 const dt = recast.detour;
 const dbg = recast.debug;
@@ -160,6 +162,18 @@ pub const NavMeshTesterTool = struct {
     // reused from reachability.edgeWeight).
     compare: filter_compare.Compare = undefined,
 
+    // --- Route-query benchmark (cluster C, C2) ------------------------------
+    // "Run query bench" generates K random (start,end) pairs on the built navmesh,
+    // times each findPath, and reports latency percentiles + success-rate + avg
+    // visited-node count + a latency histogram. Runs ONLY on the button (K findPaths
+    // is heavy) — never per frame. `bench_result` caches the last run for display;
+    // null until a run. `bench_k`/`bench_seed` are reproducibility UI params;
+    // `bench_use_filter` picks the tester's filter (else a neutral one).
+    bench_result: ?query_bench.BenchResult = null,
+    bench_k: f32 = 1000, // iterations (slider proxy, see drawBenchControls)
+    bench_seed: f32 = 1, // PRNG seed (slider proxy)
+    bench_use_filter: bool = true,
+
     pub fn init(alloc: std.mem.Allocator, dd_gl: *ddgl.DebugDrawGL) NavMeshTesterTool {
         var self = NavMeshTesterTool{ .alloc = alloc, .dd_gl = dd_gl, .filter = dt.QueryFilter.init() };
         self.applyFlags();
@@ -283,6 +297,7 @@ pub const NavMeshTesterTool = struct {
         self.spos_set = false;
         self.epos_set = false;
         for (&self.compare.results) |*r| r.* = .{}; // stale routes can't apply to a new mesh
+        self.bench_result = null; // stale bench can't apply to a new mesh
         self.freeHeatmap(); // stale heatmap can't apply to a new mesh
         // Reset the sliced-search player so a stale slice can't tick against the new
         // (freshly-initialised, never-sliced) query after a navmesh reload.
@@ -1155,6 +1170,119 @@ pub const NavMeshTesterTool = struct {
                 dvui.labelNoFmt(@src(), txt, .{}, .{});
             }
         }
+
+        // Route-query benchmark (C2): K random findPaths -> latency percentiles +
+        // histogram. Runs on the button only (heavy).
+        self.drawBenchControls();
+    }
+
+    /// UI for the route-query benchmark (C2): K + seed sliders, a "use tester
+    /// filter" checkbox, a "Run query bench" button, then (when a result is
+    /// cached) a stats table + a small latency histogram. The bench loop is heavy
+    /// (K findPaths) — it runs ONLY when the button is pressed, never per frame.
+    ///
+    /// Управление бенчмарком запросов (C2): слайдеры K + seed, чекбокс фильтра,
+    /// кнопка запуска, таблица статистики + гистограмма латентности. Запуск только
+    /// по кнопке (K findPath тяжело) — никогда не покадрово.
+    fn drawBenchControls(self: *NavMeshTesterTool) void {
+        ui.section(@src(), "Query Bench");
+
+        if (self.navmesh == null or self.query == null) {
+            dvui.labelNoFmt(@src(), "(build a navmesh first)", .{}, .{});
+            return;
+        }
+
+        ui.sliderInt(@src(), "K queries: {d:.0}", &self.bench_k, 100, 5000);
+        ui.sliderInt(@src(), "seed: {d:.0}", &self.bench_seed, 0, 9999);
+        _ = dvui.checkbox(@src(), &self.bench_use_filter, "use tester filter", .{ .id_extra = 0xB0 });
+
+        if (dvui.button(@src(), "Run query bench", .{}, .{ .id_extra = 0xB1 }))
+            self.runBench();
+
+        const res = self.bench_result orelse {
+            dvui.labelNoFmt(@src(), "(press Run to benchmark route queries)", .{}, .{});
+            return;
+        };
+
+        // Stats table. ns formatted human-readable (µs/ms) via fmtNs.
+        var b0: [32]u8 = undefined;
+        var b1: [32]u8 = undefined;
+        var b2: [32]u8 = undefined;
+        var b3: [32]u8 = undefined;
+        var b4: [32]u8 = undefined;
+        var b5: [32]u8 = undefined;
+        dvui.label(@src(), "N {d}   success {d:.1}%   avg nodes {d:.1}", .{ res.n, res.successPct(), res.avg_nodes }, .{});
+        dvui.label(@src(), "p50 {s}   p95 {s}   p99 {s}", .{ fmtNs(&b0, res.p50_ns), fmtNs(&b1, res.p95_ns), fmtNs(&b2, res.p99_ns) }, .{});
+        dvui.label(@src(), "min {s}   max {s}   avg {s}", .{ fmtNs(&b3, res.min_ns), fmtNs(&b4, res.max_ns), fmtNs(&b5, res.avg_ns) }, .{});
+
+        // Latency histogram (HIST_BINS coloured bars), lo..hi labelled.
+        self.drawBenchHistogram(res);
+
+        // Worst-path highlight is DEFERRED: the tester's path render is driven by
+        // spos/epos clicks + recalc(); re-driving it from worst_start/worst_end
+        // (which are PolyRefs, not click points) would need a separate render path.
+        // The worst refs ARE captured in the result for a future overlay.
+        var bw0: [32]u8 = undefined;
+        dvui.label(@src(), "worst: {s}  (refs {d}->{d})", .{ fmtNs(&bw0, res.max_ns), res.worst_start, res.worst_end }, .{});
+    }
+
+    /// Draw the latency histogram as HIST_BINS coloured bars (profiler.fillRect
+    /// pattern), scaled to the tallest bin, with lo..hi labels. Reads ONLY the
+    /// cached result — no queries here.
+    ///
+    /// Рисует гистограмму латентности столбцами (как profiler.fillRect), нормируя
+    /// по самому высокому бину, с подписями lo..hi.
+    fn drawBenchHistogram(self: *NavMeshTesterTool, res: query_bench.BenchResult) void {
+        _ = self;
+        const bins = res.hist;
+        var maxc: u32 = 0;
+        for (bins) |c| {
+            if (c > maxc) maxc = c;
+        }
+        if (maxc == 0) return;
+
+        // Reserve a fixed-height canvas inside the panel; bars fill it bottom-up.
+        var r: dvui.Rect.Physical = undefined;
+        {
+            var box = dvui.box(@src(), .{ .dir = .horizontal }, .{ .min_size_content = .{ .w = 200, .h = 60 }, .expand = .horizontal, .id_extra = 0xB2 });
+            r = box.data().rectScale().r; // physical pixels
+            box.deinit();
+        }
+        const n: f32 = @floatFromInt(query_bench.HIST_BINS);
+        const bar_w = r.w / n;
+        const bar_col = dvui.Color{ .r = 70, .g = 180, .b = 220, .a = 255 }; // cyan, profiler-style
+
+        const maxc_f: f32 = @floatFromInt(maxc);
+        for (0..query_bench.HIST_BINS) |i| {
+            const c: f32 = @floatFromInt(bins[i]);
+            const h = if (maxc_f > 0) c / maxc_f * r.h else 0;
+            if (h <= 0) continue;
+            const x = r.x + @as(f32, @floatFromInt(i)) * bar_w;
+            const y = r.y + (r.h - h);
+            profiler.fillRect(x, y, @max(bar_w - 1, 1), h, bar_col);
+        }
+
+        var lb: [32]u8 = undefined;
+        var hb: [32]u8 = undefined;
+        dvui.label(@src(), "latency {s} .. {s}  (x={d})", .{ fmtNs(&lb, res.hist_lo_ns), fmtNs(&hb, res.hist_hi_ns), maxc }, .{});
+    }
+
+    /// Run the route-query benchmark with the current K/seed/filter selection and
+    /// cache the result. Heavy (K findPaths) — called ONLY from the Run button.
+    /// On OOM / no navmesh the result is left unchanged (no crash).
+    ///
+    /// Запускает бенчмарк запросов и кэширует результат. Тяжело — только по кнопке.
+    fn runBench(self: *NavMeshTesterTool) void {
+        const q = self.query orelse return;
+        const nav = self.navmesh orelse return;
+        const k: usize = @intFromFloat(@max(self.bench_k, 0));
+        const seed: u64 = @intFromFloat(@max(self.bench_seed, 0));
+
+        // Neutral filter when "use tester filter" is off (raw mesh cost, all flags).
+        var neutral = dt.QueryFilter.init();
+        const filter: *const dt.QueryFilter = if (self.bench_use_filter) &self.filter else &neutral;
+
+        self.bench_result = query_bench.run(q, nav, filter, k, seed, self.alloc) catch null;
     }
 
     /// UI for the incremental sliced search: Play/Pause, Advance 1/N, Reset,
@@ -1326,6 +1454,19 @@ fn colToDvui(col: u32) dvui.Color {
 
 const SP_END: u8 = 0x02;
 const SP_OFFMESH: u8 = 0x04;
+
+/// Format a nanosecond latency into a human-readable µs/ms/ns string in `buf`.
+/// >=1ms -> "{d:.2}ms", >=1µs -> "{d:.1}µs", else "{d}ns". Used by the bench table.
+///
+/// Форматирует наносекунды в читаемую строку (ms/µs/ns) для таблицы бенча.
+fn fmtNs(buf: []u8, ns: u64) []const u8 {
+    if (ns >= 1_000_000) {
+        return std.fmt.bufPrint(buf, "{d:.2}ms", .{@as(f64, @floatFromInt(ns)) / 1_000_000.0}) catch "?";
+    } else if (ns >= 1_000) {
+        return std.fmt.bufPrint(buf, "{d:.1}us", .{@as(f64, @floatFromInt(ns)) / 1_000.0}) catch "?";
+    }
+    return std.fmt.bufPrint(buf, "{d}ns", .{ns}) catch "?";
+}
 
 fn inRange(v1: *const [3]f32, v2: *const [3]f32, r: f32, h: f32) bool {
     const dx = v2[0] - v1[0];
