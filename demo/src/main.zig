@@ -152,7 +152,7 @@ pub fn main(main_init: std.process.Init) !void {
     // С дефолтным LESS совпадающие фрагменты проигрывают z-тест -> навмеш невидим/мерцает.
     zgl.depthFunc(.less_or_equal);
     zgl.enable(.multisample); // 4x MSAA сглаживает копланарные швы граней вокселей (как RecastDemo)
-    std.debug.print("[GL] samples={d} BUILD_MARKER=props-live-v7 renderer={s} vendor={s}\n", .{ zgl.getInteger(.samples), zgl.getString(.renderer) orelse "?", zgl.getString(.vendor) orelse "?" });
+    std.debug.print("[GL] samples={d} BUILD_MARKER=props-live-v8 renderer={s} vendor={s}\n", .{ zgl.getInteger(.samples), zgl.getString(.renderer) orelse "?", zgl.getString(.vendor) orelse "?" });
     zgl.enable(.blend);
     zgl.blendFunc(.src_alpha, .one_minus_src_alpha);
 
@@ -1428,11 +1428,16 @@ pub fn main(main_init: std.process.Init) !void {
                                         inspect_vol.mode = .prism;
                                     if (ui.radio(@src(), inspect_vol.mode == .surface, "Surface (draped slab)", 941))
                                         inspect_vol.mode = .surface;
-                                    _ = dvui.sliderEntry(@src(), "hmin {d:.2}", .{ .value = &inspect_vol.hmin, .min = -100, .max = 100, .interval = null }, .{ .expand = .horizontal });
-                                    _ = dvui.sliderEntry(@src(), "hmax {d:.2}", .{ .value = &inspect_vol.hmax, .min = -100, .max = 100, .interval = null }, .{ .expand = .horizontal });
+                                    // NOTE: drag-only ui.slider, NOT dvui.sliderEntry —
+                                    // sliderEntry's click/entry mode snapped the value to
+                                    // the slider min (hmin -> -100, an infinite downward
+                                    // tube) and captured the keyboard. ui.slider is what the
+                                    // rest of the app uses and behaves correctly.
+                                    ui.slider(@src(), "hmin {d:.2}", &inspect_vol.hmin, -100, 100);
+                                    ui.slider(@src(), "hmax {d:.2}", &inspect_vol.hmax, -100, 100);
                                     if (inspect_vol.mode == .surface) {
-                                        _ = dvui.sliderEntry(@src(), "band below {d:.2}", .{ .value = &inspect_vol.band_below, .min = 0, .max = 50, .interval = null }, .{ .expand = .horizontal });
-                                        _ = dvui.sliderEntry(@src(), "band above {d:.2}", .{ .value = &inspect_vol.band_above, .min = 0, .max = 50, .interval = null }, .{ .expand = .horizontal });
+                                        ui.slider(@src(), "band below {d:.2}", &inspect_vol.band_below, 0, 50);
+                                        ui.slider(@src(), "band above {d:.2}", &inspect_vol.band_above, 0, 50);
                                     }
                                     // Area dropdown — only `used` area types are offered.
                                     inspectorAreaDropdown(&inspect_vol.area);
@@ -1469,14 +1474,14 @@ pub fn main(main_init: std.process.Init) !void {
                                     ui.section(@src(), "Properties — Off-Mesh");
                                     dvui.label(@src(), "id: {d}", .{sel_id}, .{});
                                     dvui.labelNoFmt(@src(), "Start (x,y,z)", .{}, .{});
-                                    _ = dvui.sliderEntry(@src(), "sx {d:.2}", .{ .value = &inspect_off.start[0], .min = -1000, .max = 1000, .interval = null }, .{ .expand = .horizontal });
-                                    _ = dvui.sliderEntry(@src(), "sy {d:.2}", .{ .value = &inspect_off.start[1], .min = -1000, .max = 1000, .interval = null }, .{ .expand = .horizontal });
-                                    _ = dvui.sliderEntry(@src(), "sz {d:.2}", .{ .value = &inspect_off.start[2], .min = -1000, .max = 1000, .interval = null }, .{ .expand = .horizontal });
+                                    ui.slider(@src(), "sx {d:.2}", &inspect_off.start[0], -1000, 1000);
+                                    ui.slider(@src(), "sy {d:.2}", &inspect_off.start[1], -1000, 1000);
+                                    ui.slider(@src(), "sz {d:.2}", &inspect_off.start[2], -1000, 1000);
                                     dvui.labelNoFmt(@src(), "End (x,y,z)", .{}, .{});
-                                    _ = dvui.sliderEntry(@src(), "ex {d:.2}", .{ .value = &inspect_off.end[0], .min = -1000, .max = 1000, .interval = null }, .{ .expand = .horizontal });
-                                    _ = dvui.sliderEntry(@src(), "ey {d:.2}", .{ .value = &inspect_off.end[1], .min = -1000, .max = 1000, .interval = null }, .{ .expand = .horizontal });
-                                    _ = dvui.sliderEntry(@src(), "ez {d:.2}", .{ .value = &inspect_off.end[2], .min = -1000, .max = 1000, .interval = null }, .{ .expand = .horizontal });
-                                    _ = dvui.sliderEntry(@src(), "radius {d:.2}", .{ .value = &inspect_off.rad, .min = 0, .max = 50, .interval = null }, .{ .expand = .horizontal });
+                                    ui.slider(@src(), "ex {d:.2}", &inspect_off.end[0], -1000, 1000);
+                                    ui.slider(@src(), "ey {d:.2}", &inspect_off.end[1], -1000, 1000);
+                                    ui.slider(@src(), "ez {d:.2}", &inspect_off.end[2], -1000, 1000);
+                                    ui.slider(@src(), "radius {d:.2}", &inspect_off.rad, 0, 50);
                                     // Direction toggle (0 = one-way, 1 = bidirectional).
                                     {
                                         var biz = inspect_off.dir != 0;
