@@ -2137,6 +2137,25 @@ pub fn main(main_init: std.process.Init) !void {
                         }
                     }
                 }.emit);
+
+                // Funnel/portal overlay labels (A3): "P{i}" at portal midpoints,
+                // "W{k}" at ALL_CROSSINGS waypoints. Same plumbing as the search
+                // labels; density-capped inside forEachFunnelLabel, culled by sp.z.
+                const fctx = LabelCtx{
+                    .cam = &cam,
+                    .viewport = viewport,
+                    .vh = vh,
+                    .col = dvui.Color{ .r = 0, .g = 230, .b = 230, .a = 255 },
+                };
+                tester.forEachFunnelLabel(fctx, struct {
+                    fn emit(c: LabelCtx, pos: [3]f32, text: []const u8) void {
+                        const wp = Vec3.init(pos[0], pos[1], pos[2]);
+                        if (c.cam.worldToScreen(wp, c.viewport)) |sp| {
+                            if (sp.z >= 0 and sp.z <= 1)
+                                ui.screenTextEx(sp.x, c.vh - sp.y, text, c.col, true);
+                        }
+                    }
+                }.emit);
             }
 
             // Cluster E (P1-2): poly overlay labels — poly-ref / centroid / area /

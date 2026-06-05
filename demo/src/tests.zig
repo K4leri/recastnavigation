@@ -31,5 +31,6 @@ test {
     _ = @import("edit/inspector.zig");
     _ = @import("diag/why_no_path.zig");
     _ = @import("diag/astar_player.zig");
+    _ = @import("diag/funnel.zig");
     _ = @import("diag/reachability.zig");
 }

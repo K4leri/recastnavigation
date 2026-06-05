@@ -16,6 +16,7 @@ const reachability = @import("diag/reachability.zig");
 const diagnose = @import("diag/diagnose.zig");
 const wnp = @import("diag/why_no_path.zig");
 const astar_player = @import("diag/astar_player.zig");
+const funnel = @import("diag/funnel.zig");
 
 const dt = recast.detour;
 const dbg = recast.debug;
@@ -125,6 +126,29 @@ pub const NavMeshTesterTool = struct {
     reach_on: bool = false,
     heatmap: ?reachability.Heatmap = null,
 
+    // --- Funnel / portal debug overlay (cluster A, A3) -----------------------
+    // When ON (straight/sliced/follow mode + corridor present) the render path
+    // visualizes how string-pulling turns the polygon corridor into waypoints:
+    //   - PORTALS: the shared edge (left/right) between each consecutive corridor
+    //     pair, via getPortalPoints — drawn as a segment with left/right markers.
+    //   - ALL-CROSSINGS waypoints (`funnel_pts`): findStraightPath re-run with
+    //     DT_STRAIGHTPATH_ALL_CROSSINGS into a SEPARATE scratch (does NOT clobber
+    //     self.straight) — a point at every portal crossing, joined by a polyline.
+    //   - TURN/APEX points (`turn_pts`): findStraightPath re-run WITHOUT crossings
+    //     into another scratch; its interior vertices are the genuine funnel apex
+    //     (corner) points — highlighted with larger yellow markers.
+    // All three scratches are recomputed ONLY in recalc (corridor change), never
+    // per frame. See recomputeFunnel.
+    funnel_on: bool = false,
+    funnel_pts: [MAX_POLYS * 3]f32 = undefined, // ALL_CROSSINGS waypoint positions
+    funnel_flags: [MAX_POLYS]u8 = undefined,
+    funnel_refs: [MAX_POLYS]dt.PolyRef = undefined,
+    nfunnel: usize = 0,
+    turn_pts: [MAX_POLYS * 3]f32 = undefined, // no-crossings (turns-only) positions
+    turn_flags: [MAX_POLYS]u8 = undefined,
+    turn_refs: [MAX_POLYS]dt.PolyRef = undefined,
+    nturn: usize = 0,
+
     pub fn init(alloc: std.mem.Allocator, dd_gl: *ddgl.DebugDrawGL) NavMeshTesterTool {
         var self = NavMeshTesterTool{ .alloc = alloc, .dd_gl = dd_gl, .filter = dt.QueryFilter.init() };
         self.applyFlags();
@@ -163,6 +187,50 @@ pub const NavMeshTesterTool = struct {
         self.heatmap = reachability.flood(nav, self.start_ref, &self.filter, self.alloc) catch null;
     }
 
+    /// (Re)compute the funnel-overlay scratch buffers from the current corridor
+    /// (self.polys[0..npolys]) + start/end. Called ONLY from recalc (corridor /
+    /// endpoints changed) and when the toggle flips on — never per frame.
+    /// Populates `funnel_pts` (ALL_CROSSINGS) and `turn_pts` (no-crossings turns).
+    /// On failure / overlay-off leaves the counts at 0 (render skips).
+    ///
+    /// Пересчёт буферов оверлея воронки из текущего коридора. Только в recalc.
+    fn recomputeFunnel(self: *NavMeshTesterTool) void {
+        self.nfunnel = 0;
+        self.nturn = 0;
+        if (!self.funnel_on) return;
+        const q = self.query orelse return;
+        if (self.npolys == 0) return;
+        const corr = self.polys[0..self.npolys];
+
+        // ALL_CROSSINGS: waypoint at every portal crossing (full funnel trace).
+        var nc: usize = 0;
+        _ = q.findStraightPath(
+            &self.spos,
+            &self.epos,
+            corr,
+            self.funnel_pts[0..],
+            self.funnel_flags[0..],
+            self.funnel_refs[0..],
+            &nc,
+            funnel.OPT_ALL_CROSSINGS,
+        ) catch {};
+        self.nfunnel = nc;
+
+        // No-crossings: only the funnel turns (apex corners) + start/end.
+        var nt: usize = 0;
+        _ = q.findStraightPath(
+            &self.spos,
+            &self.epos,
+            corr,
+            self.turn_pts[0..],
+            self.turn_flags[0..],
+            self.turn_refs[0..],
+            &nt,
+            0,
+        ) catch {};
+        self.nturn = nt;
+    }
+
     pub fn setNavMesh(self: *NavMeshTesterTool, nm: ?*dt.NavMesh) void {
         if (self.query) |q| {
             q.deinit();
@@ -171,6 +239,8 @@ pub const NavMeshTesterTool = struct {
         self.navmesh = nm;
         self.npolys = 0;
         self.nstraight = 0;
+        self.nfunnel = 0;
+        self.nturn = 0;
         self.spos_set = false;
         self.epos_set = false;
         self.freeHeatmap(); // stale heatmap can't apply to a new mesh
@@ -312,6 +382,12 @@ pub const NavMeshTesterTool = struct {
         // the inputs that change the flood (start point click / filter flag edit /
         // mode switch). Result is cached on the tool; render() only reads it.
         self.recomputeHeatmap();
+
+        // Funnel/portal overlay (A3): recompute scratch from the just-built
+        // corridor. recalc fires exactly on corridor change (click / flag / mode),
+        // so this is the only place the funnel buffers are (re)built — never per
+        // frame. render() only reads them.
+        self.recomputeFunnel();
     }
 
     /// Запускает живую диагностику why-no-path и сохраняет вердикт на инструменте.
@@ -510,6 +586,132 @@ pub const NavMeshTesterTool = struct {
         }
     }
 
+    // ===== Funnel / portal debug overlay (A3) ================================
+
+    pub const MAX_FUNNEL_LABELS: usize = 80; // density cap for portal/waypoint labels
+
+    /// Draw the funnel overlay: corridor portals (left/right segments via the
+    /// precomputed corridor), the ALL_CROSSINGS waypoint polyline + markers, and
+    /// the no-crossings turn/apex highlights. Reads ONLY precomputed scratch — no
+    /// queries here. Gated by the caller on funnel_on + straight/follow/sliced mode.
+    ///
+    /// Рисует портали коридора (left/right), полилинию ALL_CROSSINGS-вейпойнтов и
+    /// подсветку поворотов (apex). Только чтение готовых буферов, без запросов.
+    fn drawFunnel(self: *NavMeshTesterTool, dd: dbg.DebugDraw) void {
+        const q = self.query orelse return;
+        if (self.npolys == 0) return;
+
+        const left_col = dbg.rgba(255, 96, 96, 220); // portal LEFT endpoint — red
+        const right_col = dbg.rgba(96, 160, 255, 220); // portal RIGHT endpoint — blue
+        const portal_col = dbg.rgba(200, 200, 200, 160); // portal segment — grey
+        const cross_col = dbg.rgba(0, 200, 200, 230); // ALL_CROSSINGS polyline — cyan
+        const apex_col = dbg.rgba(255, 255, 0, 255); // turn/apex — yellow
+
+        dd.depthMask(false);
+
+        // 1) PORTALS: shared edge between each consecutive corridor pair.
+        dd.begin(.lines, 2.0);
+        for (0..self.npolys -| 1) |i| {
+            var left: [3]f32 = undefined;
+            var right: [3]f32 = undefined;
+            var ft: u8 = 0;
+            var tt: u8 = 0;
+            q.getPortalPoints(self.polys[i], self.polys[i + 1], &left, &right, &ft, &tt) catch continue;
+            // portal segment (grey) + colored left/right end nubs (short verticals).
+            dd.vertexXYZ(left[0], left[1] + 0.3, left[2], portal_col);
+            dd.vertexXYZ(right[0], right[1] + 0.3, right[2], portal_col);
+            dd.vertexXYZ(left[0], left[1] + 0.3, left[2], left_col);
+            dd.vertexXYZ(left[0], left[1] + 0.9, left[2], left_col);
+            dd.vertexXYZ(right[0], right[1] + 0.3, right[2], right_col);
+            dd.vertexXYZ(right[0], right[1] + 0.9, right[2], right_col);
+        }
+        dd.end();
+        // left/right endpoint markers (points).
+        dd.begin(.points, 6.0);
+        for (0..self.npolys -| 1) |i| {
+            var left: [3]f32 = undefined;
+            var right: [3]f32 = undefined;
+            var ft: u8 = 0;
+            var tt: u8 = 0;
+            q.getPortalPoints(self.polys[i], self.polys[i + 1], &left, &right, &ft, &tt) catch continue;
+            dd.vertexXYZ(left[0], left[1] + 0.3, left[2], left_col);
+            dd.vertexXYZ(right[0], right[1] + 0.3, right[2], right_col);
+        }
+        dd.end();
+
+        // 2) ALL_CROSSINGS waypoints: polyline + markers (distinct from the normal
+        //    straight-path render, drawn higher in cyan).
+        if (self.nfunnel > 1) {
+            dd.begin(.lines, 2.0);
+            var i: usize = 0;
+            while (i + 1 < self.nfunnel) : (i += 1) {
+                dd.vertexXYZ(self.funnel_pts[i * 3], self.funnel_pts[i * 3 + 1] + 0.6, self.funnel_pts[i * 3 + 2], cross_col);
+                dd.vertexXYZ(self.funnel_pts[(i + 1) * 3], self.funnel_pts[(i + 1) * 3 + 1] + 0.6, self.funnel_pts[(i + 1) * 3 + 2], cross_col);
+            }
+            dd.end();
+        }
+        if (self.nfunnel > 0) {
+            dd.begin(.points, 5.0);
+            for (0..self.nfunnel) |k| {
+                const f = self.funnel_flags[k];
+                const col = if (funnel.isStart(f)) startCol else if (funnel.isEnd(f)) endCol else cross_col;
+                dd.vertexXYZ(self.funnel_pts[k * 3], self.funnel_pts[k * 3 + 1] + 0.6, self.funnel_pts[k * 3 + 2], col);
+            }
+            dd.end();
+        }
+
+        // 3) TURN / APEX points: interior vertices of the no-crossings straight
+        //    path are genuine funnel corners — big yellow markers.
+        if (self.nturn > 0) {
+            dd.begin(.points, 9.0);
+            for (0..self.nturn) |k| {
+                if (!funnel.isTurn(self.turn_flags[k])) continue; // skip start/end/offmesh
+                dd.vertexXYZ(self.turn_pts[k * 3], self.turn_pts[k * 3 + 1] + 0.7, self.turn_pts[k * 3 + 2], apex_col);
+            }
+            dd.end();
+        }
+
+        dd.depthMask(true);
+    }
+
+    /// Iterate funnel labels for the worldspace-label pass (drawn in main.zig,
+    /// which owns cam/worldToScreen). Emits "P{i}" at each portal midpoint and
+    /// "W{k}" at each ALL_CROSSINGS waypoint. Density-capped: skips entirely when
+    /// the total would exceed MAX_FUNNEL_LABELS. Caller passes ctx + fn(ctx,pos,txt).
+    ///
+    /// Подписи воронки (P{i} на середине портала, W{k} на вейпойнте) — рисуются в
+    /// main.zig. С ограничением плотности (MAX_FUNNEL_LABELS).
+    pub fn forEachFunnelLabel(
+        self: *NavMeshTesterTool,
+        ctx: anytype,
+        comptime emit: fn (@TypeOf(ctx), pos: [3]f32, text: []const u8) void,
+    ) void {
+        if (!self.funnel_on) return;
+        if (self.mode != .pathfind_straight and self.mode != .pathfind_sliced and self.mode != .pathfind_follow) return;
+        if (self.npolys == 0) return;
+        const q = self.query orelse return;
+        const nportals = self.npolys -| 1;
+        if (nportals + self.nfunnel > MAX_FUNNEL_LABELS) return; // density cap
+
+        var buf: [24]u8 = undefined;
+        // P{i} at portal midpoints.
+        for (0..nportals) |i| {
+            var left: [3]f32 = undefined;
+            var right: [3]f32 = undefined;
+            var ft: u8 = 0;
+            var tt: u8 = 0;
+            q.getPortalPoints(self.polys[i], self.polys[i + 1], &left, &right, &ft, &tt) catch continue;
+            const mid = funnel.portalMid(left, right);
+            const txt = std.fmt.bufPrint(&buf, "P{d}", .{i}) catch continue;
+            emit(ctx, .{ mid[0], mid[1] + 0.5, mid[2] }, txt);
+        }
+        // W{k} at ALL_CROSSINGS waypoints.
+        for (0..self.nfunnel) |k| {
+            const txt = std.fmt.bufPrint(&buf, "W{d}", .{k}) catch continue;
+            emit(ctx, .{ self.funnel_pts[k * 3], self.funnel_pts[k * 3 + 1] + 0.8, self.funnel_pts[k * 3 + 2] }, txt);
+        }
+    }
+
     /// Box-полигон вокруг отрезка spos->epos (1-в-1 m_queryPoly в Tool_NavMeshTester).
     /// ВАЖНО: знак перпендикуляра (nx,nz) задаёт winding фигуры. intersectSegmentPoly2D
     /// рассчитан именно на upstream-winding — обратный знак ломает расширение (npolys=1).
@@ -576,6 +778,12 @@ pub const NavMeshTesterTool = struct {
         if (self.spos_set) self.drawAgent(dd, self.spos, startCol);
         if (self.epos_set) self.drawAgent(dd, self.epos, endCol);
         dd.depthMask(true);
+
+        // Funnel/portal overlay (A3): portals + ALL_CROSSINGS waypoints + apex.
+        // Reads precomputed scratch only (recomputed in recalc, not per frame).
+        if (self.funnel_on and self.npolys > 0 and
+            (self.mode == .pathfind_straight or self.mode == .pathfind_sliced or self.mode == .pathfind_follow))
+            self.drawFunnel(dd);
 
         switch (self.mode) {
             .pathfind_follow => {
@@ -815,6 +1023,18 @@ pub const NavMeshTesterTool = struct {
                 dvui.label(@src(), "reached: {d}  cost {d:.2}..{d:.2}", .{ hm.reached, hm.lo, hm.hi }, .{})
             else
                 dvui.labelNoFmt(@src(), "(set a start point — LMB)", .{}, .{});
+        }
+
+        // Funnel / portal debug overlay (A3). Meaningful in the pathfind modes
+        // with a corridor: draws portals (getPortalPoints), ALL_CROSSINGS
+        // waypoints, and turn/apex highlights. Recomputed only on toggle / recalc.
+        if (self.mode == .pathfind_straight or self.mode == .pathfind_sliced or self.mode == .pathfind_follow) {
+            ui.section(@src(), "Funnel debug");
+            if (dvui.checkbox(@src(), &self.funnel_on, "Portals + funnel overlay", .{ .id_extra = 0xF0 })) {
+                self.recomputeFunnel();
+            }
+            if (self.funnel_on)
+                dvui.label(@src(), "portals: {d}  crossings: {d}  turns: {d}", .{ self.npolys -| 1, self.nfunnel, self.nturn }, .{});
         }
 
         _ = dvui.separator(@src(), .{ .expand = .horizontal });
