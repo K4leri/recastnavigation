@@ -208,7 +208,10 @@ pub fn lint(nav: *const NavMesh, min_share: f32, alloc: std.mem.Allocator) !Lint
             }
 
             // --- LINT_DEGENERATE_POLY: dup vertex index OR ~zero XZ area. ---
-            const vc: usize = p.vert_count;
+            // Clamp to the fixed verts[] capacity: a corrupt header vert_count must
+            // not overrun p.verts / xz_buf (this is a validator — it runs on suspect
+            // data). Real polys have vert_count <= VERTS_PER_POLYGON.
+            const vc: usize = @min(@as(usize, p.vert_count), common.VERTS_PER_POLYGON);
             var dup_vert = false;
             var coords_ok = true;
             if (vc >= 1) {
@@ -314,8 +317,10 @@ fn lintIslands(
 fn countExtLinks(nav: *const NavMesh, tile: *const dt.MeshTile, poly: *const dt.Poly, tile_idx: usize) usize {
     var count: usize = 0;
     var li: u32 = poly.first_link;
-    while (li != common.NULL_LINK) {
+    var steps: usize = 0;
+    while (li != common.NULL_LINK) : (steps += 1) {
         if (li >= tile.links.len) break; // corrupt link index
+        if (steps > tile.links.len) break; // corrupt within-bounds cycle (validator runs on suspect data)
         const link = &tile.links[li];
         if (link.ref != 0) {
             const d = nav.decodePolyId(link.ref);
@@ -333,8 +338,10 @@ fn countExtLinks(nav: *const NavMesh, tile: *const dt.MeshTile, poly: *const dt.
 /// to a ground-type poly, the connection is dangling.
 fn offMeshLinkedToLand(nav: *const NavMesh, tile: *const dt.MeshTile, poly: *const dt.Poly) bool {
     var li: u32 = poly.first_link;
-    while (li != common.NULL_LINK) {
+    var steps: usize = 0;
+    while (li != common.NULL_LINK) : (steps += 1) {
         if (li >= tile.links.len) break;
+        if (steps > tile.links.len) break; // corrupt within-bounds cycle guard
         const link = &tile.links[li];
         if (link.ref != 0) {
             var t2: ?*const dt.MeshTile = null;
