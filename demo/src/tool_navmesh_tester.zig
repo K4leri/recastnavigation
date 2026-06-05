@@ -13,6 +13,7 @@ const ui = @import("ui.zig");
 const components = @import("render/components.zig");
 const diagnose = @import("diag/diagnose.zig");
 const wnp = @import("diag/why_no_path.zig");
+const astar_player = @import("diag/astar_player.zig");
 
 const dt = recast.detour;
 const dbg = recast.debug;
@@ -99,6 +100,19 @@ pub const NavMeshTesterTool = struct {
     // the four built-in flags, exclude none. Custom flags start unchecked.
     include_mask: u16 = PF.walk | PF.swim | PF.door | PF.jump,
     exclude_mask: u16 = 0,
+
+    // --- Sliced pathfinding playback (incremental A* visualizer) -------------
+    // Состояние пошагового проигрывания sliced findPath. Машина состояний:
+    //   init ОДИН раз (Reset / recalc) -> update МНОГО (per-frame / по кнопке)
+    //   -> finalize ОДИН раз (когда статус перестал быть in_progress).
+    // НИКОГДА не re-init в середине поиска — только на Reset/recalc.
+    slice_active: bool = false, // поиск инициализирован и ещё не «сброшен»
+    slice_auto: bool = false, // авто-продвижение каждый кадр (Play)
+    slice_iters: i32 = 1, // итераций за один «Advance 1»/кадр Play
+    slice_big: i32 = 20, // итераций за «Advance N»
+    slice_done_total: usize = 0, // суммарно выполнено A*-итераций
+    slice_finished: bool = false, // поиск завершён (success/failure) + finalize сделан
+    slice_status: dt.Status = .{}, // последний статус update/init (для status-строки)
 
     pub fn init(alloc: std.mem.Allocator, dd_gl: *ddgl.DebugDrawGL) NavMeshTesterTool {
         var self = NavMeshTesterTool{ .alloc = alloc, .dd_gl = dd_gl, .filter = dt.QueryFilter.init() };
@@ -198,22 +212,11 @@ pub const NavMeshTesterTool = struct {
                 }
             },
             .pathfind_sliced => {
-                if (have_both) {
-                    _ = q.initSlicedFindPath(self.start_ref, self.end_ref, &self.spos, &self.epos, &self.filter, 0);
-                    var guard: u32 = 0;
-                    while (guard < 1000) : (guard += 1) {
-                        const st = q.updateSlicedFindPath(20, null);
-                        if (!st.in_progress) break;
-                    }
-                    var n: usize = 0;
-                    _ = q.finalizeSlicedFindPath(self.polys[0..], &n);
-                    self.npolys = n;
-                    if (n > 0) {
-                        var ns: usize = 0;
-                        _ = q.findStraightPath(&self.spos, &self.epos, self.polys[0..n], self.straight[0..], self.straight_flags[0..], self.straight_refs[0..], &ns, 0) catch {};
-                        self.nstraight = ns;
-                    }
-                }
+                // Incremental visualizer: init ONCE here (recalc fires on click /
+                // flag change / mode switch). We do NOT loop the update — the
+                // search is advanced per-frame (Play) or by the Advance buttons.
+                // Reset re-enters this path via recalc(). See startSlice/tickSlice.
+                self.startSlice(q, have_both);
             },
             .raycast => {
                 if (self.spos_set and self.epos_set and self.start_ref != 0) {
@@ -296,6 +299,167 @@ pub const NavMeshTesterTool = struct {
         self.verdict_valid = true;
     }
 
+    // ===== Sliced pathfinding playback (incremental A* visualizer) ==========
+
+    /// (Re)initialise the sliced search from the current start/end/filter — the
+    /// "init ONCE" half of the state machine. Called from recalc (.pathfind_sliced)
+    /// and from the Reset button. Resets all playback counters; leaves the search
+    /// in_progress so per-frame/button updates can advance it.
+    ///
+    /// (Пере)инициализация sliced-поиска. «init ОДИН раз». Сбрасывает счётчики.
+    fn startSlice(self: *NavMeshTesterTool, q: *dt.NavMeshQuery, have_both: bool) void {
+        self.npolys = 0;
+        self.nstraight = 0;
+        self.slice_active = false;
+        self.slice_finished = false;
+        self.slice_done_total = 0;
+        self.slice_status = .{};
+        if (!have_both) return;
+        self.slice_status = q.initSlicedFindPath(self.start_ref, self.end_ref, &self.spos, &self.epos, &self.filter, 0);
+        self.slice_active = true;
+        // start==end (or immediate failure) — no in-progress search to play.
+        if (!self.slice_status.in_progress) self.finishSlice(q);
+    }
+
+    /// Advance the sliced search by `iters` A* iterations (one update call —
+    /// NEVER re-init mid-search). Accumulates done_total and finalizes once the
+    /// status leaves in_progress. The "update MANY / finalize ONCE" half.
+    ///
+    /// Продвинуть поиск на `iters` итераций (один update). finalize по завершении.
+    fn advanceSlice(self: *NavMeshTesterTool, q: *dt.NavMeshQuery, iters: i32) void {
+        if (!self.slice_active or self.slice_finished) return;
+        var done: u32 = 0;
+        const n: u32 = @intCast(@max(iters, 1));
+        self.slice_status = q.updateSlicedFindPath(n, &done);
+        self.slice_done_total += done;
+        if (!self.slice_status.in_progress) self.finishSlice(q);
+    }
+
+    /// Read out the final route (finalizeSlicedFindPath ONCE) into self.polys and
+    /// build the straight path for rendering. Clears auto-play. Idempotent-ish:
+    /// only meaningful once per search (guarded by slice_finished at call sites).
+    ///
+    /// Считать итоговый маршрут (finalize ОДИН раз) и построить straight-путь.
+    fn finishSlice(self: *NavMeshTesterTool, q: *dt.NavMeshQuery) void {
+        self.slice_finished = true;
+        self.slice_auto = false;
+        var n: usize = 0;
+        _ = q.finalizeSlicedFindPath(self.polys[0..], &n);
+        self.npolys = n;
+        self.nstraight = 0;
+        if (n > 0) {
+            var ns: usize = 0;
+            _ = q.findStraightPath(&self.spos, &self.epos, self.polys[0..n], self.straight[0..], self.straight_flags[0..], self.straight_refs[0..], &ns, 0) catch {};
+            self.nstraight = ns;
+        }
+    }
+
+    /// Per-frame tick: when Play is on and a search is live, advance exactly ONE
+    /// update of slice_iters. Called once per frame from render(). Never re-inits.
+    ///
+    /// Покадровый тик: при Play продвигает поиск ровно на один update за кадр.
+    fn tickSlice(self: *NavMeshTesterTool) void {
+        if (self.mode != .pathfind_sliced) return;
+        if (!self.slice_auto or !self.slice_active or self.slice_finished) return;
+        const q = self.query orelse return;
+        self.advanceSlice(q, self.slice_iters);
+    }
+
+    /// "Finish" button: loop updates to completion then finalize (the old
+    /// non-incremental behaviour — whole route at once). Preserves no-regression.
+    fn finishSliceNow(self: *NavMeshTesterTool) void {
+        const q = self.query orelse return;
+        if (!self.slice_active) return;
+        var guard: u32 = 0;
+        while (!self.slice_finished and guard < 100000) : (guard += 1) {
+            self.advanceSlice(q, self.slice_big);
+        }
+    }
+
+    /// Visualise the in-progress A* search read straight from the NodePool:
+    ///   - visited (closed) nodes  -> dim blue dots
+    ///   - frontier (open) nodes   -> bright green dots
+    ///   - current best node       -> yellow ring (m_query.last_best_node)
+    ///   - best partial corridor   -> line traced via pidx from best back to start
+    /// Only meaningful while slice_active. Numeric g/h/f labels are drawn separately
+    /// in main.zig (needs cam/worldToScreen) — see drawSearchLabels.
+    ///
+    /// Рисует состояние поиска прямо из NodePool: visited(closed)/frontier(open)/
+    /// текущий лучший узел + частичный коридор (по pidx). Числа g/h/f — в main.zig.
+    fn drawSearchState(self: *NavMeshTesterTool, dd: dbg.DebugDraw) void {
+        const q = self.query orelse return;
+        const pool = q.getNodePool() orelse return;
+        const count = pool.getNodeCount();
+        if (count == 0) return;
+
+        const visited_col = dbg.rgba(64, 96, 200, 220); // dim blue — closed list
+        const frontier_col = dbg.rgba(64, 255, 96, 255); // bright green — open list
+
+        dd.depthMask(false);
+        // visited/frontier markers (raise dots slightly so they sit above the mesh).
+        dd.begin(.points, 5.0);
+        for (0..count) |i| {
+            const node = &pool.nodes[i];
+            const col = if (node.flags.closed) visited_col else if (node.flags.open) frontier_col else continue;
+            dd.vertexXYZ(node.pos[0], node.pos[1] + 0.15, node.pos[2], col);
+        }
+        dd.end();
+
+        // Best partial corridor: follow pidx from the current best node to start.
+        if (q.query.last_best_node) |best| {
+            const corr_col = dbg.rgba(255, 200, 0, 220);
+            dd.begin(.lines, 2.0);
+            var node: ?*const dt.Node = best;
+            var guard: usize = 0;
+            while (node) |n| : (guard += 1) {
+                if (guard > count + 1) break; // pidx-loop guard (defensive)
+                const parent = pool.getNodeAtIdxConst(n.pidx) orelse break;
+                dd.vertexXYZ(n.pos[0], n.pos[1] + 0.2, n.pos[2], corr_col);
+                dd.vertexXYZ(parent.pos[0], parent.pos[1] + 0.2, parent.pos[2], corr_col);
+                node = parent;
+            }
+            dd.end();
+
+            // current best node — yellow ring.
+            drawCircle(dd, .{ best.pos[0], best.pos[1] + 0.2, best.pos[2] }, 0.6, dbg.rgba(255, 255, 0, 255));
+        }
+        dd.depthMask(true);
+    }
+
+    /// Draw g/h/f numeric labels over search nodes (called from main.zig, which
+    /// owns cam/viewport for worldToScreen). Density-capped: only when the node
+    /// count is small enough to stay readable (<= MAX_LABEL_NODES). `emit` is a
+    /// closure-like callback (world pos + text) so this stays GL/UI-free here.
+    ///
+    /// Numbers culled by the caller via sp.z∈[0,1]. h = total - cost (f - g).
+    pub const MAX_LABEL_NODES: usize = 150;
+
+    /// Iterate visited+frontier nodes for label drawing. Returns false (skip) when
+    /// over the density cap. Caller passes a context + fn(ctx, pos, text).
+    pub fn forEachSearchLabel(
+        self: *NavMeshTesterTool,
+        ctx: anytype,
+        comptime emit: fn (@TypeOf(ctx), pos: [3]f32, text: []const u8) void,
+    ) void {
+        if (self.mode != .pathfind_sliced or !self.slice_active) return;
+        const q = self.query orelse return;
+        const pool = q.getNodePool() orelse return;
+        const count = pool.getNodeCount();
+        if (count == 0 or count > MAX_LABEL_NODES) return; // density cap
+
+        var buf: [48]u8 = undefined;
+        for (0..count) |i| {
+            const node = &pool.nodes[i];
+            if (!node.flags.closed and !node.flags.open) continue;
+            const g = node.cost;
+            const f = node.total;
+            const h = f - g; // heuristic = f - g (caller convention)
+            const txt = astar_player.formatNodeLabel(&buf, g, h, f);
+            if (txt.len == 0) continue;
+            emit(ctx, .{ node.pos[0], node.pos[1] + 0.3, node.pos[2] }, txt);
+        }
+    }
+
     /// Box-полигон вокруг отрезка spos->epos (1-в-1 m_queryPoly в Tool_NavMeshTester).
     /// ВАЖНО: знак перпендикуляра (nx,nz) задаёт winding фигуры. intersectSegmentPoly2D
     /// рассчитан именно на upstream-winding — обратный знак ломает расширение (npolys=1).
@@ -320,6 +484,9 @@ pub const NavMeshTesterTool = struct {
     }
 
     pub fn render(self: *NavMeshTesterTool) void {
+        // Per-frame incremental tick (Play): advance the live sliced search ONCE.
+        self.tickSlice();
+
         const dd = self.dd_gl.debugDraw();
 
         // подсветка полигонов результата: start/end/path разными цветами (как оригинал)
@@ -368,6 +535,10 @@ pub const NavMeshTesterTool = struct {
                 }
             },
             .pathfind_straight, .pathfind_sliced => {
+                // In-progress A* search state (sliced only): visited/frontier dots,
+                // current best ring + partial corridor traced via pidx.
+                if (self.mode == .pathfind_sliced and self.slice_active)
+                    self.drawSearchState(dd);
                 if (self.nstraight > 1) {
                     const line_col = dbg.rgba(64, 16, 0, 220);
                     dd.depthMask(false);
@@ -579,6 +750,9 @@ pub const NavMeshTesterTool = struct {
         dvui.label(@src(), "polys: {d}  waypoints: {d}", .{ self.npolys, wpts }, .{});
         dvui.labelNoFmt(@src(), "Shift+LMB: start  LMB: end", .{}, .{});
 
+        // Sliced pathfinding playback controls — incremental A* visualizer.
+        if (self.mode == .pathfind_sliced) self.drawSliceControls();
+
         // WHY-NO-PATH verdict panel (A1): status line + Explain expander. Shown only
         // for pathfind modes once a recalc has produced a verdict.
         if (self.verdict_valid) {
@@ -592,6 +766,74 @@ pub const NavMeshTesterTool = struct {
                 dvui.labelNoFmt(@src(), txt, .{}, .{});
             }
         }
+    }
+
+    /// UI for the incremental sliced search: Play/Pause, Advance 1/N, Reset,
+    /// Finish, per-advance sliders, and a live status line. State machine stays
+    /// init-once / update-many / finalize-once; buttons only drive update/finalize.
+    ///
+    /// Управление пошаговым sliced-поиском (Play/Advance/Reset/Finish + слайдеры).
+    fn drawSliceControls(self: *NavMeshTesterTool) void {
+        ui.section(@src(), "Sliced Playback");
+        const q = self.query;
+
+        {
+            var hb = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
+            defer hb.deinit();
+            const play_lbl: []const u8 = if (self.slice_auto) "Pause" else "Play";
+            if (dvui.button(@src(), play_lbl, .{}, .{ .id_extra = 0 })) {
+                // Only meaningful while a live search exists; toggling resumes it.
+                if (self.slice_active and !self.slice_finished) self.slice_auto = !self.slice_auto;
+            }
+            if (dvui.button(@src(), "Advance 1", .{}, .{ .id_extra = 1 })) {
+                if (q) |qq| self.advanceSlice(qq, self.slice_iters);
+            }
+            if (dvui.button(@src(), "Advance N", .{}, .{ .id_extra = 2 })) {
+                if (q) |qq| self.advanceSlice(qq, self.slice_big);
+            }
+        }
+        {
+            var hb = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
+            defer hb.deinit();
+            if (dvui.button(@src(), "Reset", .{}, .{ .id_extra = 3 })) {
+                // Re-init from current start/end/filter — the only sanctioned re-init.
+                self.recalc();
+            }
+            if (dvui.button(@src(), "Finish", .{}, .{ .id_extra = 4 })) {
+                self.finishSliceNow();
+            }
+        }
+
+        // Per-advance amounts. i32 fields bridged through f32 proxies for the slider.
+        var it: f32 = @floatFromInt(self.slice_iters);
+        ui.sliderInt(@src(), "iters/advance: {d:.0}", &it, 1, 50);
+        self.slice_iters = @intFromFloat(it);
+        var big: f32 = @floatFromInt(self.slice_big);
+        ui.sliderInt(@src(), "advance N: {d:.0}", &big, 1, 200);
+        self.slice_big = @intFromFloat(big);
+
+        // Status line: iters / nodes used / current status word.
+        const status_txt: []const u8 = if (self.slice_finished)
+            (if (self.slice_status.success) "done" else if (self.slice_status.partial_result) "partial" else "failed")
+        else if (self.slice_active)
+            "in progress"
+        else
+            "idle";
+        var ncount: usize = 0;
+        var nmax: usize = 0;
+        if (q) |qq| {
+            if (qq.getNodePool()) |pool| {
+                ncount = pool.getNodeCount();
+                nmax = pool.getMaxNodes();
+            }
+        }
+        dvui.label(@src(), "iters {d}  nodes {d}/{d}  status {s}", .{ self.slice_done_total, ncount, nmax, status_txt }, .{});
+
+        // Dijkstra (zero-heuristic) mode: the faithful core's initSlicedFindPath
+        // `options` only exposes FINDPATH_ANY_ANGLE — there is no zero-heuristic
+        // flag, so Dijkstra-mode is DEFERRED (would require a core change). Only
+        // the default A* search is visualised.
+        dvui.labelNoFmt(@src(), "(Dijkstra mode: deferred — no core option)", .{}, .{});
     }
 
     fn modeRadio(self: *NavMeshTesterTool, label: []const u8, m: ToolMode, id: usize) void {

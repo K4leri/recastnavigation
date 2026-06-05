@@ -30,4 +30,5 @@ test {
     _ = @import("edit/presets.zig");
     _ = @import("edit/inspector.zig");
     _ = @import("diag/why_no_path.zig");
+    _ = @import("diag/astar_player.zig");
 }
