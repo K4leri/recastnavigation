@@ -377,11 +377,11 @@ pub const NavMeshTesterTool = struct {
                 }
             },
             .pathfind_sliced => {
-                // Incremental visualizer: init ONCE here (recalc fires on click /
-                // flag change / mode switch). We do NOT loop the update — the
-                // search is advanced per-frame (Play) or by the Advance buttons.
-                // Reset re-enters this path via recalc(). See startSlice/tickSlice.
-                self.startSlice(q, have_both);
+                // Incremental visualizer: the search is INITIALISED below, AFTER
+                // runDiagnosis(). runDiagnosis runs a full findPath on the same
+                // query for the why-no-path verdict, which reuses the node pool and
+                // would clobber a sliced search initialised here — so we defer
+                // startSlice to the end of recalc (see after the verdict switch).
             },
             .raycast => {
                 if (self.spos_set and self.epos_set and self.start_ref != 0) {
@@ -432,6 +432,11 @@ pub const NavMeshTesterTool = struct {
             .pathfind_follow, .pathfind_straight, .pathfind_sliced => self.runDiagnosis(q),
             else => {},
         }
+
+        // Sliced search init goes LAST: runDiagnosis above ran a full findPath on
+        // this query (clobbering the node pool), so initialise the incremental
+        // search now — it must own the pool when the user starts advancing it.
+        if (self.mode == .pathfind_sliced) self.startSlice(q, have_both);
 
         // Reachability heatmap (A6): recompute only here — recalc fires exactly on
         // the inputs that change the flood (start point click / filter flag edit /
