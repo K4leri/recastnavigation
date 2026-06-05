@@ -1687,6 +1687,7 @@ pub fn main(main_init: std.process.Init) !void {
                     dvui.label(@src(), "capturing {d}/{d}", .{ capture_state.done, capture_state.total }, .{ .id_extra = 368 });
                     if (dvui.button(@src(), "Stop", .{}, .{ .id_extra = 369 })) {
                         capture_state.active = false; // mid-capture stop: no leak (per-frame defers freed buffers)
+                        capture_manifest.clearRetainingCapacity(); // drop the aborted run's partial lines
                         if (capture_state.mode == .orbit) bench = false;
                     }
                 } else {
@@ -2348,6 +2349,11 @@ fn captureFrame(
         return;
     };
     defer gpa.free(rgb);
+    // GL_PACK_ALIGNMENT defaults to 4: with .rgb/.unsigned_byte, rows whose
+    // width*3 isn't a multiple of 4 get padded, so glReadPixels would write a
+    // row-padded layout past our exact w*h*3 buffer (heap overflow) AND shear the
+    // image. Force tight packing so each row is exactly width*3 bytes.
+    zgl.pixelStore(.pack_alignment, 1);
     zgl.readPixels(0, 0, w, h, .rgb, .unsigned_byte, rgb.ptr);
 
     // 2) Encode a top-down PPM (encodePpm flips vertically).
