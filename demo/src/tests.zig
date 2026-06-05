@@ -16,6 +16,7 @@ test {
     _ = @import("render/legend.zig");
     _ = @import("render/overlay.zig");
     _ = @import("render/minimap.zig");
+    _ = @import("render/capture.zig");
     _ = @import("persist/registry_io.zig");
     _ = @import("persist/scene_io.zig");
     _ = @import("persist/tile_store.zig");
