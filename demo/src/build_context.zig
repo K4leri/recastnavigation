@@ -41,6 +41,9 @@ pub const BuildContext = struct {
 
     fn sinkFn(ptr: *anyopaque, category: ctxmod.LogCategory, msg: []const u8) void {
         const self: *BuildContext = @ptrCast(@alignCast(ptr));
+        // Mirror to stderr so the running GUI's log (auto-save, delete, errors, …)
+        // is visible in the process output, not only in the in-app Log panel.
+        std.debug.print("[{s}] {s}\n", .{ @tagName(category), msg });
         const dup = self.alloc.dupe(u8, msg) catch return;
         self.messages.append(.{ .category = category, .text = dup }) catch {
             self.alloc.free(dup);
