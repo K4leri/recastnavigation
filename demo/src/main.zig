@@ -227,6 +227,15 @@ pub fn main(main_init: std.process.Init) !void {
     var pick_hit: ?Vec3 = null; // последняя точка пикинга по земле
     const dt: f32 = 1.0 / 60.0;
 
+    // --- Auto-save state (cluster F) ---
+    // When enabled and the scene is edited (convex/offmesh dirty or undo/redo),
+    // a debounce countdown is (re)started. Once it reaches 0 a single save is
+    // emitted to "<stem>__autosave.recastscene". ~45 frames ≈ 0.75 s at 60 fps.
+    var auto_save: bool = false;
+    var autosave_countdown: i32 = 0; // counts down from AUTOSAVE_DELAY to 0
+    var autosave_pending: bool = false; // true while a debounced save is in flight
+    const AUTOSAVE_DELAY: i32 = 45;
+
     // фикс-прямоугольники окон (как статичные окна RecastDemo по краям)
     var props_rect: dvui.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
     var tools_rect: dvui.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
@@ -537,7 +546,10 @@ pub fn main(main_init: std.process.Init) !void {
 
         // перестройка navmesh, если инструмент изменил геометрию (или undo/redo
         // изменил geom — F1: navmesh должен отразить откат/повтор правки).
-        if (offmesh_tool.dirty or convex_tool.dirty or geom_edited) {
+        // Auto-save: capture the edit condition BEFORE dirty flags are cleared so the
+        // autosave debouncer can observe it without disturbing the rebuild path.
+        const edited_this_frame = offmesh_tool.dirty or convex_tool.dirty or geom_edited;
+        if (edited_this_frame) {
             offmesh_tool.dirty = false;
             convex_tool.dirty = false;
             geom_edited = false;
@@ -547,6 +559,34 @@ pub fn main(main_init: std.process.Init) !void {
                 .tile => _ = tile.build(),
                 .temp => _ = temp.build(),
             }
+        }
+
+        // Auto-save debounce: (re)start the countdown on each edit; fire once settled.
+        // If auto_save is turned off, cancel any pending save so turning it back on
+        // doesn't fire for a stale countdown from a previous session.
+        if (!auto_save) {
+            autosave_pending = false;
+            autosave_countdown = 0;
+        }
+        if (auto_save and sample_kind == .solo and edited_this_frame) {
+            autosave_pending = true;
+            autosave_countdown = AUTOSAVE_DELAY;
+        }
+        if (autosave_pending and auto_save and autosave_countdown > 0) {
+            autosave_countdown -= 1;
+        }
+        if (autosave_pending and auto_save and autosave_countdown == 0) {
+            autosave_pending = false;
+            // Determine the current mesh stem (same logic as Scene Persistence UI).
+            const as_cur_name: []const u8 = if (mesh_files.len > 0 and mesh_choice < mesh_files.len)
+                mesh_files[mesh_choice]
+            else
+                "scene.obj";
+            const as_cur_stem = stemOf(as_cur_name);
+            saveSceneNow(main_init.gpa, &geom, &solo, app.meshes_folder, as_cur_name, "autosave", &bctx);
+            bctx.context().log(.progress, "Auto-saved scene ({s}__autosave)", .{as_cur_stem});
+            // Refresh the variant list so "autosave" appears in the Load panel.
+            rebuildVariants(main_init.gpa, app.meshes_folder, as_cur_stem, &variants, &variants_stem, &bctx);
         }
 
         // Area-type cost edits apply at runtime (re-push into the live filters).
@@ -867,6 +907,10 @@ pub fn main(main_init: std.process.Init) !void {
                     // Refresh the list so the just-saved variant appears (and newest-first).
                     rebuildVariants(main_init.gpa, app.meshes_folder, cur_stem, &variants, &variants_stem, &bctx);
                 }
+
+                // --- Auto-save: debounced background save to "<stem>__autosave" ---
+                _ = dvui.checkbox(@src(), &auto_save, "Auto-save edits", .{});
+                dvui.label(@src(), "  -> {s}__autosave", .{cur_stem}, .{});
 
                 // --- Load: scrollable selectable list of this mesh's variants ---
                 {
