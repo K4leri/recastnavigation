@@ -21,5 +21,6 @@ test {
     _ = @import("edit/selection.zig");
     _ = @import("edit/snap.zig");
     _ = @import("edit/clipboard.zig");
+    _ = @import("edit/presets.zig");
     _ = @import("edit/inspector.zig");
 }
