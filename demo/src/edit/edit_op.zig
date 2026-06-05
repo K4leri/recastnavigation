@@ -200,8 +200,11 @@ pub const EditOp = union(enum) {
             .registry_snapshot => |s| {
                 // Redo: deserialize the AFTER blobs (deserialize == REPLACE globals).
                 // Flags BEFORE areas (area.flags references flag bits — load invariant).
-                _ = registry_io.deserializeFlags(s.after_flags) catch {};
-                _ = registry_io.deserializeAreas(s.after_areas) catch {};
+                // The blobs were duped from a successful serializeCurrent, so a parse
+                // error here would mean format corruption — log it rather than silently
+                // leaving a half-deserialized registry.
+                _ = registry_io.deserializeFlags(s.after_flags) catch |e| std.log.warn("registry_snapshot redo: flags deserialize failed: {s}", .{@errorName(e)});
+                _ = registry_io.deserializeAreas(s.after_areas) catch |e| std.log.warn("registry_snapshot redo: areas deserialize failed: {s}", .{@errorName(e)});
                 markAreaDirty();
             },
             .composite => |c| {
@@ -260,8 +263,8 @@ pub const EditOp = union(enum) {
             .registry_snapshot => |s| {
                 // Undo: deserialize the BEFORE blobs back into the globals.
                 // Flags BEFORE areas (area.flags references flag bits — load invariant).
-                _ = registry_io.deserializeFlags(s.before_flags) catch {};
-                _ = registry_io.deserializeAreas(s.before_areas) catch {};
+                _ = registry_io.deserializeFlags(s.before_flags) catch |e| std.log.warn("registry_snapshot undo: flags deserialize failed: {s}", .{@errorName(e)});
+                _ = registry_io.deserializeAreas(s.before_areas) catch |e| std.log.warn("registry_snapshot undo: areas deserialize failed: {s}", .{@errorName(e)});
                 markAreaDirty();
             },
             .composite => |c| {

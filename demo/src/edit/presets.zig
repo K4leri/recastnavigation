@@ -79,14 +79,19 @@ const NAME_STEM_CAP: usize = 48;
 pub fn sanitizeName(buf: []u8, name: []const u8) []const u8 {
     const trimmed = std.mem.trim(u8, name, " \t\r\n");
     var n: usize = 0;
+    var all_dots = true;
     for (trimmed) |c| {
         if (n >= NAME_STEM_CAP or n >= buf.len) break;
         if (c == '/' or c == '\\' or c == ':' or c == '*' or c == '?' or
             c == '"' or c == '<' or c == '>' or c == '|' or c < 0x20) continue;
+        if (c != '.') all_dots = false;
         buf[n] = c;
         n += 1;
     }
-    if (n == 0) {
+    // Empty or all-dots (".."/".") -> default. Traversal is already prevented by
+    // stripping separators above (a dot-only stem stays inside presets/), but an
+    // all-dots file name is confusing, so collapse it.
+    if (n == 0 or all_dots) {
         const def = "preset";
         @memcpy(buf[0..def.len], def);
         return buf[0..def.len];
@@ -130,7 +135,8 @@ pub fn listPresets(alloc: std.mem.Allocator, io: Io, dir: Dir) ![][]u8 {
         if (!std.mem.endsWith(u8, entry.name, ".reg")) continue;
         const stem = entry.name[0 .. entry.name.len - ".reg".len];
         if (stem.len == 0) continue;
-        try names.append(try alloc.dupe(u8, stem));
+        try names.ensureUnusedCapacity(1); // reserve before dupe so append can't leak
+        names.appendAssumeCapacity(try alloc.dupe(u8, stem));
     }
     return names.toOwnedSlice();
 }
@@ -141,11 +147,10 @@ pub fn listPresets(alloc: std.mem.Allocator, io: Io, dir: Dir) ![][]u8 {
 
 /// Build the registry_snapshot EditOp from two combined blobs (before/after),
 /// splitting each into its areas/flags halves and DUPING the halves so the op
-/// owns clean independent slices. Frees `before` and `after` (combined buffers).
-fn snapshotFromCombined(alloc: std.mem.Allocator, before: []u8, after: []u8) !EditOp {
-    defer alloc.free(before);
-    defer alloc.free(after);
-
+/// owns clean independent slices. Does NOT free `before`/`after` — the caller
+/// (applyBlob) owns those combined buffers for its whole scope (a single free
+/// site avoids the double-free that two owners would cause on an OOM dupe error).
+fn snapshotFromCombined(alloc: std.mem.Allocator, before: []const u8, after: []const u8) !EditOp {
     const bs = try splitBlob(before);
     const as = try splitBlob(after);
 
@@ -167,9 +172,21 @@ fn snapshotFromCombined(alloc: std.mem.Allocator, before: []u8, after: []u8) !Ed
 pub fn applyBlob(alloc: std.mem.Allocator, blob: []const u8, mode: ApplyMode) !EditOp {
     const halves = try splitBlob(blob);
 
-    // before = current serialized (combined). Owns its buffer (freed in snapshotFromCombined).
+    // before = current serialized (combined). applyBlob owns it for its whole
+    // scope (plain defer — single free site, see snapshotFromCombined).
     const before = try serializeCurrent(alloc);
-    errdefer alloc.free(before);
+    defer alloc.free(before);
+
+    // Rollback guard: once we start mutating the global registry below, ANY error
+    // (truncated/malformed preset, OOM during merge, serialize failure) must leave
+    // the LIVE registry exactly as it was — not half-merged or stuck as the preset.
+    // `before` is freshly serialized from the current registry, so it always splits.
+    errdefer {
+        if (splitBlob(before)) |bh| {
+            _ = registry_io.deserializeFlags(bh.flags) catch {};
+            _ = registry_io.deserializeAreas(bh.areas) catch {};
+        } else |_| {}
+    }
 
     switch (mode) {
         .replace => {
@@ -189,11 +206,19 @@ pub fn applyBlob(alloc: std.mem.Allocator, blob: []const u8, mode: ApplyMode) !E
                 for (cur_flag_names.items) |nm| alloc.free(nm);
                 cur_flag_names.deinit();
             }
+            // NOTE: reserve THEN dupe THEN appendAssumeCapacity — `append(try dupe())`
+            // leaks the duped buffer if the append's grow fails (OOM after dupe).
             for (0..area_types.MAX_AREA_TYPES) |i| {
-                if (area_types.get(i)) |t| try cur_area_names.append(try alloc.dupe(u8, t.name()));
+                if (area_types.get(i)) |t| {
+                    try cur_area_names.ensureUnusedCapacity(1);
+                    cur_area_names.appendAssumeCapacity(try alloc.dupe(u8, t.name()));
+                }
             }
             for (0..poly_flags.MAX_FLAGS) |i| {
-                if (poly_flags.get(i)) |f| try cur_flag_names.append(try alloc.dupe(u8, f.name()));
+                if (poly_flags.get(i)) |f| {
+                    try cur_flag_names.ensureUnusedCapacity(1);
+                    cur_flag_names.appendAssumeCapacity(try alloc.dupe(u8, f.name()));
+                }
             }
 
             // 2) Round-trip into the PRESET so we can read its used entries from the
@@ -212,7 +237,10 @@ pub fn applyBlob(alloc: std.mem.Allocator, blob: []const u8, mode: ApplyMode) !E
                 preset_flag_names.deinit();
             }
             for (0..poly_flags.MAX_FLAGS) |i| {
-                if (poly_flags.get(i)) |f| try preset_flag_names.append(try alloc.dupe(u8, f.name()));
+                if (poly_flags.get(i)) |f| {
+                    try preset_flag_names.ensureUnusedCapacity(1);
+                    preset_flag_names.appendAssumeCapacity(try alloc.dupe(u8, f.name()));
+                }
             }
 
             // 3) Restore the globals back to the ORIGINAL current registry.
@@ -236,9 +264,10 @@ pub fn applyBlob(alloc: std.mem.Allocator, blob: []const u8, mode: ApplyMode) !E
         },
     }
 
-    // after = post-apply serialized (combined).
+    // after = post-apply serialized (combined). Owned here (single free site).
     const after = try serializeCurrent(alloc);
-    // snapshotFromCombined frees both `before` and `after`.
+    defer alloc.free(after);
+    // snapshotFromCombined dupes the halves; it does NOT free before/after.
     return snapshotFromCombined(alloc, before, after);
 }
 
@@ -377,4 +406,59 @@ test "sanitizeName strips separators and defaults empty to 'preset'" {
     try std.testing.expectEqualStrings("abc", sanitizeName(&buf, "  a/b\\c  "));
     try std.testing.expectEqualStrings("preset", sanitizeName(&buf, "   "));
     try std.testing.expectEqualStrings("myPreset", sanitizeName(&buf, "my:Pre?set"));
+    // Path-traversal stems are de-fanged: separators are stripped, and an all-dots
+    // stem collapses to the default. "../../etc" -> "....etc" (slashes gone, a safe
+    // in-dir file); ".." -> all-dots -> "preset".
+    try std.testing.expectEqualStrings("preset", sanitizeName(&buf, ".."));
+    try std.testing.expectEqualStrings("....etc", sanitizeName(&buf, "../../etc"));
+}
+
+// Regression for the OOM error paths (review C1 double-free + I1 merge corruption):
+// inject an allocation failure at every step of applyBlob(.merge). Each attempt
+// must EITHER succeed or return error.OutOfMemory with (a) NO leak / double-free
+// (the backing testing allocator asserts this at test end) and (b) the LIVE global
+// registry rolled back to the pre-apply state (builtins + Mud, never half-merged).
+test "applyBlob MERGE is leak-safe and rolls back the registry on injected OOM" {
+    const backing = std.testing.allocator;
+    var geom = InputGeom.init(backing);
+    defer geom.deinit();
+
+    // Build a valid preset blob (builtins + Lava + ladder) with the infallible alloc.
+    area_types.resetToBuiltins();
+    poly_flags.resetToBuiltins();
+    _ = area_types.addType().?;
+    area_types.get(area_types.count() - 1).?.setName("Lava");
+    _ = poly_flags.addFlag("ladder");
+    const preset = try serializeCurrent(backing);
+    defer backing.free(preset);
+
+    var fail_index: usize = 0;
+    while (fail_index < 64) : (fail_index += 1) {
+        // CURRENT registry before each attempt: builtins + Mud.
+        area_types.resetToBuiltins();
+        poly_flags.resetToBuiltins();
+        const mud_id = area_types.addType().?;
+        area_types.get(mud_id).?.setName("Mud");
+
+        var fa = std.testing.FailingAllocator.init(backing, .{ .fail_index = fail_index });
+        const a = fa.allocator();
+
+        if (applyBlob(a, preset, .merge)) |op| {
+            // Succeeded: the op owns heap from `a`; free it so no leak is reported.
+            var o = op;
+            o.deinit();
+            break; // reached the allocation count where it fully succeeds — done.
+        } else |err| {
+            try std.testing.expectEqual(error.OutOfMemory, err);
+            // Rollback invariant: live registry is back to builtins + Mud, NOT merged.
+            try std.testing.expect(hasAreaNamed("Mud"));
+            try std.testing.expect(hasAreaNamed("Ground")); // a builtin survived
+            try std.testing.expect(!hasAreaNamed("Lava")); // preset extra not left behind
+            try std.testing.expect(!hasFlagNamed("ladder"));
+        }
+    }
+    try std.testing.expect(fail_index < 64); // it DID eventually succeed within the budget
+
+    area_types.resetToBuiltins();
+    poly_flags.resetToBuiltins();
 }
