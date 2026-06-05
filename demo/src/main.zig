@@ -2112,6 +2112,33 @@ pub fn main(main_init: std.process.Init) !void {
                 }
             }
 
+            // Sliced-search g/h/f labels (incremental A* visualizer). Density-capped
+            // inside forEachSearchLabel (skips when node count > MAX_LABEL_NODES);
+            // each label is culled here by sp.z∈[0,1] (behind-camera / out of depth).
+            if (view_state.groups.labels and active_tool == .tester) {
+                const LabelCtx = struct {
+                    cam: *const Camera,
+                    viewport: [4]i32,
+                    vh: f32,
+                    col: dvui.Color,
+                };
+                const lctx = LabelCtx{
+                    .cam = &cam,
+                    .viewport = viewport,
+                    .vh = vh,
+                    .col = dvui.Color{ .r = 255, .g = 255, .b = 200, .a = 255 },
+                };
+                tester.forEachSearchLabel(lctx, struct {
+                    fn emit(c: LabelCtx, pos: [3]f32, text: []const u8) void {
+                        const wp = Vec3.init(pos[0], pos[1], pos[2]);
+                        if (c.cam.worldToScreen(wp, c.viewport)) |sp| {
+                            if (sp.z >= 0 and sp.z <= 1)
+                                ui.screenTextEx(sp.x, c.vh - sp.y, text, c.col, true);
+                        }
+                    }
+                }.emit);
+            }
+
             // Cluster E (P1-2): poly overlay labels — poly-ref / centroid / area /
             // cost over polygons. Gated on the `labels` view group AND the overlay
             // mode (none/hovered/all). `hovered` labels the poly under the cursor;
