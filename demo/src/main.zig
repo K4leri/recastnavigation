@@ -2623,6 +2623,7 @@ pub fn main(main_init: std.process.Init) !void {
 
             // Crowd perf graph (Show Perf Graph) — 2D overlay over the dvui frame.
             if (active_tool == .crowd) crowd_tool.renderPerfGraph(vh);
+            if (active_tool == .crowd) crowd_tool.renderAnalyticsGraph(vh);
 
             // подписи агентов толпы (индекс над агентом) — по чекбоксу Show Labels.
             // Cluster E (P1-1): also gated on the `labels` view group.

@@ -63,6 +63,19 @@ pub const CrowdTool = struct {
     // Perf-graph histories (1:1 Tool_Crowd crowdTotalTime / crowdSampleCount).
     crowd_total_time: ValueHistory = .{}, // ms per crowd update
     crowd_sample_count: ValueHistory = .{}, // velocity samples per update
+    // Crowd Analytics (P1) — агрегатные истории по кадрам, обновляются раз в update().
+    show_analytics: bool = false,
+    an_stuck_count: ValueHistory = .{}, // число «застрявших» агентов (classify ∉ {moving,arrived})
+    an_avg_speed: ValueHistory = .{}, // средняя |vel| по активным агентам (m/s)
+    an_max_speed: ValueHistory = .{}, // макс |vel| по активным агентам (m/s)
+    an_max_density: ValueHistory = .{}, // макс. занятость ячейки прокси-сетки (агентов в ячейке)
+    // Текущие (последние) значения аналитики — для подписей рядом с графиками.
+    an_cur_stuck: usize = 0,
+    an_cur_avg: f32 = 0,
+    an_cur_max: f32 = 0,
+    an_cur_density: usize = 0,
+    // Off-mesh toggle (P2) — глобально помечает все off-mesh-полигоны disabled.
+    offmesh_disabled: bool = false,
     show_detail_all: bool = false, // 1-в-1 Tool_Crowd.h:38 (showDetailAll=false). При true detail+float
     // рисуются для ВСЕХ агентов -> разные значения дистанции накладываются в общих точках -> каша.
     // След агентов (история позиций) + текущая цель (для креста).
@@ -311,16 +324,54 @@ pub const CrowdTool = struct {
             c.updateDebug(delta, &self.debug) catch {};
             self.crowd_total_time.addSample(timer.readMs());
             self.crowd_sample_count.addSample(@floatFromInt(c.getVelocitySampleCount()));
+            // Crowd Analytics: stuck count / avg+max speed по активным агентам (один проход).
+            var stuck: usize = 0;
+            var sum_speed: f32 = 0;
+            var max_speed: f32 = 0;
+            var n_active: usize = 0;
             // Запись следа (как CrowdToolState::handleUpdate): кольцевой буфер позиций.
             for (0..self.agent_count) |i| {
                 const ag = c.getAgent(@intCast(i)) orelse continue;
                 if (!ag.active) continue;
+                // аналитика скорости
+                const vx = ag.vel[0];
+                const vy = ag.vel[1];
+                const vz = ag.vel[2];
+                const sp = @sqrt(vx * vx + vy * vy + vz * vz);
+                sum_speed += sp;
+                if (sp > max_speed) max_speed = sp;
+                n_active += 1;
+                // аналитика «застрял»: тот же classify, что и why-stuck (gatherSignals).
+                const v = why_stuck.classify(gatherSignals(ag));
+                if (v != .moving and v != .arrived) stuck += 1;
                 var t = &self.trails[i];
                 t.htrail = (t.htrail + 1) % AGENT_MAX_TRAIL;
                 t.trail[t.htrail * 3 + 0] = ag.npos[0];
                 t.trail[t.htrail * 3 + 1] = ag.npos[1];
                 t.trail[t.htrail * 3 + 2] = ag.npos[2];
             }
+            const avg_speed: f32 = if (n_active > 0) sum_speed / @as(f32, @floatFromInt(n_active)) else 0;
+            // max density: перебор ВСЕХ занятых ячеек прокси-сетки (тот же приём, что
+            // Show Prox Grid render ~456 — getBounds()+getItemCountAt; доказанно дёшево).
+            var max_density: usize = 0;
+            const grid = c.getGrid();
+            const b = grid.getBounds();
+            var gy: i32 = b[1];
+            while (gy <= b[3]) : (gy += 1) {
+                var gx: i32 = b[0];
+                while (gx <= b[2]) : (gx += 1) {
+                    const cnt = grid.getItemCountAt(gx, gy);
+                    if (cnt > max_density) max_density = cnt;
+                }
+            }
+            self.an_cur_stuck = stuck;
+            self.an_cur_avg = avg_speed;
+            self.an_cur_max = max_speed;
+            self.an_cur_density = max_density;
+            self.an_stuck_count.addSample(@floatFromInt(stuck));
+            self.an_avg_speed.addSample(avg_speed);
+            self.an_max_speed.addSample(max_speed);
+            self.an_max_density.addSample(@floatFromInt(max_density));
         }
     }
 
@@ -335,6 +386,59 @@ pub const CrowdTool = struct {
         const bottom = fb_h - 10;
         vh_mod.drawGraph(self.alloc, x, bottom - 200, w, 200, pad, 0.0, 2.0, "ms", &self.crowd_total_time, dbg.rgba(255, 128, 0, 255), "Total", 1, true);
         vh_mod.drawGraph(self.alloc, x, bottom - 50, w, 50, pad, 0.0, 2000.0, "", &self.crowd_sample_count, dbg.rgba(96, 96, 96, 128), "Sample Count", 0, false);
+    }
+
+    /// Crowd Analytics graphs (P1) — 3 агрегатных мини-графика по кадрам, через тот же
+    /// drawGraph, что и perf-граф. Привязаны к верхнему-левому углу вьюпорта, чтобы не
+    /// перекрывать perf-граф (он у нижней кромки). dvui-frame only.
+    pub fn renderAnalyticsGraph(self: *CrowdTool, fb_h: f32) void {
+        if (!self.show_analytics) return;
+        _ = fb_h;
+        const x: f32 = 300;
+        const w: f32 = 360;
+        const pad: f32 = 8;
+        const h: f32 = 70;
+        const gap: f32 = 30; // место под легенду между графиками
+        var y: f32 = 80;
+
+        // 1) Stuck count (0..agent_count). range_max — текущее число агентов (мин. 1).
+        const stuck_max: f32 = @max(1.0, @as(f32, @floatFromInt(self.agent_count)));
+        vh_mod.drawGraph(self.alloc, x, y, w, h, pad, 0.0, stuck_max, "stuck", &self.an_stuck_count, dbg.rgba(255, 64, 32, 255), "Stuck", 0, true);
+        y += h + gap;
+
+        // 2) Speed: avg (зелёный) + max (синий) на одном графике (0..max_speed агента ~3.5).
+        vh_mod.drawGraph(self.alloc, x, y, w, h, pad, 0.0, 4.0, "m/s", &self.an_max_speed, dbg.rgba(64, 128, 255, 255), "Max speed", 1, true);
+        vh_mod.drawGraph(self.alloc, x, y, w, h, pad, 0.0, 4.0, "m/s", &self.an_avg_speed, dbg.rgba(64, 255, 64, 255), "Avg speed", 0, false);
+        y += h + gap;
+
+        // 3) Max density (агентов в самой плотной ячейке прокси-сетки).
+        vh_mod.drawGraph(self.alloc, x, y, w, h, pad, 0.0, 8.0, "ag/cell", &self.an_max_density, dbg.rgba(255, 192, 0, 255), "Max density", 0, true);
+    }
+
+    /// Off-mesh toggle (P2): помечает ВСЕ off-mesh-полигоны навмеша disabled (или снимает
+    /// флаг) — тем же механизмом, что Toggle Polys (setPolyFlags ^ SamplePolyFlags.disabled,
+    /// фильтр толпы исключает disabled, см. setNavMesh). Глобально (per-link не выделяем):
+    /// перебирает все тайлы, для каждого off-mesh-коннекта берёт его poly-ref
+    /// (getPolyRefBase(tile) | con.poly) и ВЫСТАВЛЯЕТ бит disabled = `disabled` (идемпотентно,
+    /// не XOR — чтобы повторный вызов с тем же значением не «мигал» состоянием).
+    /// Ядро не трогаем: всё через публичные getPolyRefBase / setPolyFlags / getPolyFlags.
+    fn applyOffMeshDisabled(self: *CrowdTool, disabled: bool) void {
+        const nm = self.navmesh orelse return;
+        for (nm.tiles) |*tile| {
+            const hdr = tile.header orelse continue;
+            const base = nm.getPolyRefBase(tile);
+            const cnt: usize = @intCast(hdr.off_mesh_con_count);
+            for (0..cnt) |i| {
+                const con = &tile.off_mesh_cons[i];
+                const ref = base | @as(dt.PolyRef, con.poly);
+                const flags = nm.getPolyFlags(ref) catch continue;
+                const new_flags = if (disabled)
+                    flags | sample.SamplePolyFlags.disabled
+                else
+                    flags & ~sample.SamplePolyFlags.disabled;
+                nm.setPolyFlags(ref, new_flags) catch {};
+            }
+        }
     }
 
     /// Цвет агента по target_state (база светло-серая, тонируется) — 1-в-1 с CrowdTool.
@@ -700,6 +804,26 @@ pub const CrowdTool = struct {
             _ = dvui.checkbox(@src(), &self.show_nodes, "Show Nodes", .{});
             _ = dvui.checkbox(@src(), &self.show_perf_graph, "Show Perf Graph", .{});
             _ = dvui.checkbox(@src(), &self.show_detail_all, "Show Detail All", .{});
+        }
+
+        // Crowd Analytics (P1) — агрегатные графики + текущие значения.
+        if (ui.treeNode(@src(), "Crowd Analytics")) {
+            _ = dvui.checkbox(@src(), &self.show_analytics, "Show Analytics Graphs", .{});
+            dvui.label(@src(), "stuck: {d} / {d}", .{ self.an_cur_stuck, self.agent_count }, .{});
+            dvui.label(@src(), "avg speed: {d:.2} m/s", .{self.an_cur_avg}, .{});
+            dvui.label(@src(), "max speed: {d:.2} m/s", .{self.an_cur_max}, .{});
+            dvui.label(@src(), "max density: {d} ag/cell", .{self.an_cur_density}, .{});
+        }
+
+        // Dynamic off-mesh toggle (P2) — глобально disabled/enabled все off-mesh-связи.
+        if (ui.treeNode(@src(), "Off-Mesh Links")) {
+            if (dvui.checkbox(@src(), &self.offmesh_disabled, "Disable off-mesh links", .{})) {
+                self.applyOffMeshDisabled(self.offmesh_disabled);
+            }
+            dvui.labelNoFmt(@src(), if (self.offmesh_disabled)
+                "Off-mesh links DISABLED - agents reroute around them."
+            else
+                "Off-mesh links enabled.", .{}, .{ .expand = .horizontal });
         }
 
         _ = dvui.separator(@src(), .{ .expand = .horizontal });
