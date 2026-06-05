@@ -459,10 +459,19 @@ pub fn main(main_init: std.process.Init) !void {
             const undo_now = ctrl and z and !shift_k;
             const redo_now = ctrl and (y or (z and shift_k));
             if (undo_now and !prev_undo) {
-                if (undo_stack.undo(&geom)) geom_edited = true;
+                // Context-aware: when the convex tool is active, try removing the
+                // last in-progress point first; fall through to the committed-edit
+                // stack only if there are no in-progress points to pop.
+                if (!(active_tool == .convex and convex_tool.undoPoint())) {
+                    if (undo_stack.undo(&geom)) geom_edited = true;
+                }
             }
             if (redo_now and !prev_redo) {
-                if (undo_stack.redo(&geom)) geom_edited = true;
+                // Context-aware: restore the last popped point first; fall through
+                // to the committed-edit redo stack if the point buffer is empty.
+                if (!(active_tool == .convex and convex_tool.redoPoint())) {
+                    if (undo_stack.redo(&geom)) geom_edited = true;
+                }
             }
             prev_undo = undo_now;
             prev_redo = redo_now;
@@ -733,11 +742,19 @@ pub fn main(main_init: std.process.Init) !void {
                 defer row.deinit();
                 const can_u = undo_stack.canUndo();
                 const can_r = undo_stack.canRedo();
-                if (dvui.button(@src(), "Undo", .{ .grayed = !can_u }, .{ .id_extra = 970 })) {
-                    if (can_u and undo_stack.undo(&geom)) geom_edited = true;
+                // When convex tool is active with in-progress points, the buttons
+                // operate on point-level undo/redo first (same priority as Ctrl+Z/Y).
+                const convex_has_pts = active_tool == .convex and convex_tool.numPoints() > 0;
+                const convex_has_popped = active_tool == .convex and convex_tool.popped_pts.items.len >= 3;
+                if (dvui.button(@src(), "Undo", .{ .grayed = !can_u and !convex_has_pts }, .{ .id_extra = 970 })) {
+                    if (!(active_tool == .convex and convex_tool.undoPoint())) {
+                        if (can_u and undo_stack.undo(&geom)) geom_edited = true;
+                    }
                 }
-                if (dvui.button(@src(), "Redo", .{ .grayed = !can_r }, .{ .id_extra = 971 })) {
-                    if (can_r and undo_stack.redo(&geom)) geom_edited = true;
+                if (dvui.button(@src(), "Redo", .{ .grayed = !can_r and !convex_has_popped }, .{ .id_extra = 971 })) {
+                    if (!(active_tool == .convex and convex_tool.redoPoint())) {
+                        if (can_r and undo_stack.redo(&geom)) geom_edited = true;
+                    }
                 }
             }
             if (undo_stack.nextUndoName()) |nm| {

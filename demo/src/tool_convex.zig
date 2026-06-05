@@ -25,6 +25,7 @@ pub const ConvexVolumeTool = struct {
     geom: *InputGeom,
     dd_gl: *ddgl.DebugDrawGL,
     pts: std.array_list.Managed(f32),
+    popped_pts: std.array_list.Managed(f32), // redo buffer for undone in-progress points
     hull: [MAX_PTS]usize = undefined,
     nhull: usize = 0,
     area: u8 = 4, // grass (default) — index into the area_types registry
@@ -39,20 +40,52 @@ pub const ConvexVolumeTool = struct {
     editor: ?Edit = null, // open add/edit dialog for an area type
 
     pub fn init(alloc: std.mem.Allocator, geom: *InputGeom, dd_gl: *ddgl.DebugDrawGL, undo: *UndoStack) ConvexVolumeTool {
-        return .{ .geom = geom, .dd_gl = dd_gl, .undo = undo, .pts = std.array_list.Managed(f32).init(alloc) };
+        return .{ .geom = geom, .dd_gl = dd_gl, .undo = undo, .pts = std.array_list.Managed(f32).init(alloc), .popped_pts = std.array_list.Managed(f32).init(alloc) };
     }
 
     pub fn deinit(self: *ConvexVolumeTool) void {
         self.pts.deinit();
+        self.popped_pts.deinit();
     }
 
-    fn numPoints(self: *const ConvexVolumeTool) usize {
+    pub fn numPoints(self: *const ConvexVolumeTool) usize {
         return self.pts.items.len / 3;
     }
 
     fn reset(self: *ConvexVolumeTool) void {
         self.pts.clearRetainingCapacity();
+        self.popped_pts.clearRetainingCapacity();
         self.nhull = 0;
+    }
+
+    /// Remove the last in-progress point, pushing it onto the redo buffer.
+    /// Recomputes the hull. Returns true if a point was removed.
+    pub fn undoPoint(self: *ConvexVolumeTool) bool {
+        if (self.numPoints() == 0) return false;
+        const base = self.pts.items.len - 3;
+        self.popped_pts.appendSlice(self.pts.items[base..][0..3]) catch return false;
+        self.pts.shrinkRetainingCapacity(base);
+        if (self.numPoints() > 1) {
+            self.nhull = convexHull(self.pts.items, self.numPoints(), &self.hull);
+        } else {
+            self.nhull = 0;
+        }
+        return true;
+    }
+
+    /// Re-add the last undone in-progress point from the redo buffer.
+    /// Recomputes the hull. Returns true if a point was restored.
+    pub fn redoPoint(self: *ConvexVolumeTool) bool {
+        if (self.popped_pts.items.len < 3) return false;
+        const base = self.popped_pts.items.len - 3;
+        self.pts.appendSlice(self.popped_pts.items[base..][0..3]) catch return false;
+        self.popped_pts.shrinkRetainingCapacity(base);
+        if (self.numPoints() > 1) {
+            self.nhull = convexHull(self.pts.items, self.numPoints(), &self.hull);
+        } else {
+            self.nhull = 0;
+        }
+        return true;
     }
 
     pub fn onClick(self: *ConvexVolumeTool, _: *const [3]f32, p: *const [3]f32, shift: bool) void {
@@ -167,6 +200,8 @@ pub const ConvexVolumeTool = struct {
             // Добавляем новую точку и пересчитываем оболочку.
             if (np >= MAX_PTS) return;
             self.pts.appendSlice(p) catch return;
+            // A fresh manual point invalidates the point-redo history.
+            self.popped_pts.clearRetainingCapacity();
             if (self.numPoints() > 1) {
                 self.nhull = convexHull(self.pts.items, self.numPoints(), &self.hull);
             } else {
