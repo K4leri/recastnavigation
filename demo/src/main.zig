@@ -152,7 +152,7 @@ pub fn main(main_init: std.process.Init) !void {
     // С дефолтным LESS совпадающие фрагменты проигрывают z-тест -> навмеш невидим/мерцает.
     zgl.depthFunc(.less_or_equal);
     zgl.enable(.multisample); // 4x MSAA сглаживает копланарные швы граней вокселей (как RecastDemo)
-    std.debug.print("[GL] samples={d} BUILD_MARKER=props-live-v10 renderer={s} vendor={s}\n", .{ zgl.getInteger(.samples), zgl.getString(.renderer) orelse "?", zgl.getString(.vendor) orelse "?" });
+    std.debug.print("[GL] samples={d} BUILD_MARKER=props-live-v11 renderer={s} vendor={s}\n", .{ zgl.getInteger(.samples), zgl.getString(.renderer) orelse "?", zgl.getString(.vendor) orelse "?" });
     zgl.enable(.blend);
     zgl.blendFunc(.src_alpha, .one_minus_src_alpha);
 
@@ -1438,23 +1438,11 @@ pub fn main(main_init: std.process.Init) !void {
                                     const ylo = geom.bmin[1] - ypad;
                                     const yhi = geom.bmax[1] + ypad;
                                     const bandmax = @max(@as(f32, 5.0), dy);
-                                    ui.slider(@src(), "hmin {d:.2}", &inspect_vol.hmin, ylo, yhi);
-                                    ui.slider(@src(), "hmax {d:.2}", &inspect_vol.hmax, ylo, yhi);
+                                    inspSlider(@src(), "hmin {d:.2}", &inspect_vol.hmin, ylo, yhi);
+                                    inspSlider(@src(), "hmax {d:.2}", &inspect_vol.hmax, ylo, yhi);
                                     if (inspect_vol.mode == .surface) {
-                                        ui.slider(@src(), "band below {d:.2}", &inspect_vol.band_below, 0, bandmax);
-                                        ui.slider(@src(), "band above {d:.2}", &inspect_vol.band_above, 0, bandmax);
-                                    }
-                                    // DIAG (FIX): dump ranges + staged values whenever any
-                                    // changes, to pin down the "values fly into space" jump.
-                                    {
-                                        const L = struct {
-                                            var last: [4]f32 = .{ -1e30, -1e30, -1e30, -1e30 };
-                                        };
-                                        const sv = [4]f32{ inspect_vol.hmin, inspect_vol.hmax, inspect_vol.band_below, inspect_vol.band_above };
-                                        if (sv[0] != L.last[0] or sv[1] != L.last[1] or sv[2] != L.last[2] or sv[3] != L.last[3]) {
-                                            L.last = sv;
-                                            std.debug.print("[INSP] bbox.y=[{d:.3}..{d:.3}] dy={d:.3} ypad={d:.3} range.y=[{d:.3}..{d:.3}] bandmax={d:.3} | hmin={d:.3} hmax={d:.3} bb={d:.3} ba={d:.3} live(hmin={d:.3} hmax={d:.3})\n", .{ geom.bmin[1], geom.bmax[1], dy, ypad, ylo, yhi, bandmax, inspect_vol.hmin, inspect_vol.hmax, inspect_vol.band_below, inspect_vol.band_above, live.hmin, live.hmax });
-                                        }
+                                        inspSlider(@src(), "band below {d:.2}", &inspect_vol.band_below, 0, bandmax);
+                                        inspSlider(@src(), "band above {d:.2}", &inspect_vol.band_above, 0, bandmax);
                                     }
                                     // Area dropdown — only `used` area types are offered.
                                     inspectorAreaDropdown(&inspect_vol.area);
@@ -1500,14 +1488,14 @@ pub fn main(main_init: std.process.Init) !void {
                                     const zlo = geom.bmin[2] - pad;
                                     const zhi = geom.bmax[2] + pad;
                                     dvui.labelNoFmt(@src(), "Start (x,y,z)", .{}, .{});
-                                    ui.slider(@src(), "sx {d:.2}", &inspect_off.start[0], xlo, xhi);
-                                    ui.slider(@src(), "sy {d:.2}", &inspect_off.start[1], oylo, oyhi);
-                                    ui.slider(@src(), "sz {d:.2}", &inspect_off.start[2], zlo, zhi);
+                                    inspSlider(@src(), "sx {d:.2}", &inspect_off.start[0], xlo, xhi);
+                                    inspSlider(@src(), "sy {d:.2}", &inspect_off.start[1], oylo, oyhi);
+                                    inspSlider(@src(), "sz {d:.2}", &inspect_off.start[2], zlo, zhi);
                                     dvui.labelNoFmt(@src(), "End (x,y,z)", .{}, .{});
-                                    ui.slider(@src(), "ex {d:.2}", &inspect_off.end[0], xlo, xhi);
-                                    ui.slider(@src(), "ey {d:.2}", &inspect_off.end[1], oylo, oyhi);
-                                    ui.slider(@src(), "ez {d:.2}", &inspect_off.end[2], zlo, zhi);
-                                    ui.slider(@src(), "radius {d:.2}", &inspect_off.rad, 0, 10);
+                                    inspSlider(@src(), "ex {d:.2}", &inspect_off.end[0], xlo, xhi);
+                                    inspSlider(@src(), "ey {d:.2}", &inspect_off.end[1], oylo, oyhi);
+                                    inspSlider(@src(), "ez {d:.2}", &inspect_off.end[2], zlo, zhi);
+                                    inspSlider(@src(), "radius {d:.2}", &inspect_off.rad, 0, 10);
                                     // Direction toggle (0 = one-way, 1 = bidirectional).
                                     {
                                         var biz = inspect_off.dir != 0;
@@ -3599,6 +3587,24 @@ fn flyToXZ(cam: *Camera, geom: *const InputGeom, wx_in: f32, wz_in: f32) void {
 /// original list exactly (the invariant proved by the composite undo_stack test).
 /// On any allocation failure the captured ops are freed and nothing is recorded
 /// (the geom mutations already happened are left as-is — a no-undo edge case).
+/// F5 inspector slider: label on its OWN line + a full-width drag slider BELOW.
+/// Unlike ui.slider (label and slider share a horizontal box) the slider's rect
+/// here does NOT depend on the label's pixel width, so it stays put as the shown
+/// value changes width (e.g. 9.73 -> 10.20 gaining a digit). The shared-row
+/// variant shifted the slider on every digit-count change, which fed the mouse
+/// position back into a DIFFERENT value next frame -> erratic jumps. Drag-only
+/// (no keyboard capture), value clamped into [min,max].
+fn inspSlider(src: std.builtin.SourceLocation, comptime fmt: []const u8, value: *f32, min: f32, max: f32) void {
+    var lbuf: [80]u8 = undefined;
+    const txt = std.fmt.bufPrint(&lbuf, fmt, .{value.*}) catch fmt;
+    dvui.labelNoFmt(src, txt, .{}, .{}); // own line (id_extra 0)
+    var frac: f32 = if (max > min) (value.* - min) / (max - min) else 0;
+    frac = std.math.clamp(frac, 0, 1);
+    if (dvui.slider(src, .{ .fraction = &frac }, .{ .expand = .horizontal, .id_extra = 1 })) {
+        value.* = std.math.clamp(min + frac * (max - min), min, max);
+    }
+}
+
 /// F5 inspector area dropdown: lists every `used` area type by name and writes
 /// the chosen area id back into `area_proxy` (an f32 holding the u8 area). The
 /// dropdown index <-> area-id mapping is rebuilt each frame from the registry so
