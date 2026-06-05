@@ -951,10 +951,6 @@ pub fn main(main_init: std.process.Init) !void {
                     var vsc = dvui.scrollArea(@src(), .{}, .{ .expand = .horizontal, .min_size_content = .{ .h = list_rows * 30 } });
                     defer vsc.deinit();
                     for (variants, 0..) |v, vi| {
-                        // Row: load button fills the width, trash icon button sits
-                        // snug at the right (abutting — looks like a right segment).
-                        // They are SEPARATE non-overlapping widgets so both click
-                        // reliably (an overlaid trash would be eaten by the base button).
                         var vrow = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal, .id_extra = vi });
                         defer vrow.deinit();
                         // index 0 = newest -> highlighted as the default selection.
@@ -963,10 +959,10 @@ pub fn main(main_init: std.process.Init) !void {
                         else
                             v.variant;
                         defer if (vi == 0 and lbl.ptr != v.variant.ptr) main_init.gpa.free(lbl);
-                        if (dvui.button(@src(), lbl, .{}, .{ .id_extra = 5000 + vi, .expand = .horizontal, .margin = .{ .x = 0, .y = 0, .w = 0, .h = 0 } })) {
+                        if (dvui.button(@src(), lbl, .{}, .{ .id_extra = 5000 + vi, .expand = .horizontal })) {
                             loadSceneNow(main_init.gpa, app.meshes_folder, v.path, cur_name, &geom, &solo, &tile, &temp, &tester, &crowd_tool, &prune_tool, &cam, &bctx);
                         }
-                        if (dvui.buttonIcon(@src(), "del", dvui.entypo.trash, .{}, .{}, .{ .id_extra = 5800 + vi, .gravity_y = 0.5, .margin = .{ .x = 0, .y = 0, .w = 0, .h = 0 } })) {
+                        if (dvui.buttonIcon(@src(), "del", dvui.entypo.trash, .{}, .{}, .{ .id_extra = 5800 + vi, .gravity_y = 0.5 })) {
                             pending_delete = vi;
                         }
                     }
