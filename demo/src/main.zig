@@ -1178,10 +1178,22 @@ pub fn main(main_init: std.process.Init) !void {
         }
 
         // Snap hover marker: every frame when an edit tool is active and snap is on,
-        // show a small cross at the snap target for the last pick_hit (hover source).
-        // Color by snap kind: vertex=yellow, edge=cyan, grid=white, object=magenta.
+        // show a small cross at the snap target UNDER THE CURSOR (live), so the snap
+        // target follows the mouse instead of only updating on click — without this
+        // there's no feedback and snap "looks broken". Falls back to the last
+        // pick_hit when the cursor is over a panel. Color by kind:
+        // vertex=yellow, edge=cyan, grid=white, object=magenta.
         if ((active_tool == .convex or active_tool == .offmesh) and snap_cfg.mode != .off) {
-            if (pick_hit) |ph| {
+            var hover_src: ?Vec3 = null;
+            if (gate.pointerInScene()) {
+                const hsz = g_window.getSize();
+                const hsx: f64 = if (hsz[0] > 0) @as(f64, @floatFromInt(fb[0])) / @as(f64, @floatFromInt(hsz[0])) else 1.0;
+                const hsy: f64 = if (hsz[1] > 0) @as(f64, @floatFromInt(fb[1])) / @as(f64, @floatFromInt(hsz[1])) else 1.0;
+                if (cam.pickRay(@floatCast(cur[0] * hsx), @floatCast(cur[1] * hsy), viewport)) |hr| {
+                    hover_src = pickPoint(&geom, hr.start, hr.end);
+                }
+            }
+            if (hover_src orelse pick_hit) |ph| {
                 const snap_hover = snap_mod.snapPoint(&geom, ph.toArray(), snap_cfg);
                 if (snap_hover.kind != .off) {
                     const sm_col: u32 = switch (snap_hover.kind) {
