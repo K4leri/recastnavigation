@@ -21,6 +21,7 @@
 //! UndoStack can call it uniformly and so a future variant that DOES own heap
 //! data has a hook to free it.
 
+const std = @import("std");
 const ig = @import("../input_geom.zig");
 const InputGeom = ig.InputGeom;
 const ConvexVolume = ig.ConvexVolume;
@@ -81,6 +82,16 @@ pub const EditOp = union(enum) {
     /// A poly flag at bit `bit_index` was removed. apply removes, revert restores it.
     flag_remove: struct { bit_index: usize, flag: Flag },
 
+    // --- Composite (group) edit -----------------------------------------------
+    /// A group of sub-edits recorded / undone / redone as ONE unit (feature F3).
+    /// Owns its `ops` slice on the heap; `apply` runs them FORWARD, `revert` runs
+    /// them in REVERSE (so paired inserts/deletes unwind correctly — e.g. a
+    /// group-delete of several indices must re-insert in reverse). `deinit`
+    /// deinits every sub-op then frees the slice. Single ownership: the op lives
+    /// in exactly one UndoStack ring slot at a time (moves are by value copy),
+    /// so the slice is freed exactly once — no double-free across ring moves.
+    composite: struct { ops: []EditOp, alloc: std.mem.Allocator },
+
     /// Redo the action (re-perform the original mutation).
     pub fn apply(self: EditOp, geom: *InputGeom) void {
         switch (self) {
@@ -116,6 +127,10 @@ pub const EditOp = union(enum) {
             .flag_remove => |f| {
                 poly_flags.removeFlag(f.bit_index);
                 // Flag DEFINITIONS do not touch baked tile data — no rebuild needed.
+            },
+            .composite => |c| {
+                // Redo the group: replay sub-ops in FORWARD order.
+                for (c.ops) |op| op.apply(geom);
             },
         }
     }
@@ -158,13 +173,32 @@ pub const EditOp = union(enum) {
                 poly_flags.restoreFlag(f.bit_index, f.flag.name(), f.flag.builtin);
                 // Flag DEFINITIONS do not touch baked tile data — no rebuild needed.
             },
+            .composite => |c| {
+                // Undo the group: revert sub-ops in REVERSE order so paired
+                // inserts/deletes unwind in the inverse sequence they applied.
+                var i: usize = c.ops.len;
+                while (i > 0) {
+                    i -= 1;
+                    c.ops[i].revert(geom);
+                }
+            },
         }
     }
 
-    /// Free any heap-owned data. Currently a no-op (all variants are POD value
-    /// copies), kept so the UndoStack frees evicted ops uniformly.
+    /// Free any heap-owned data. All POD variants are a no-op (value copies);
+    /// only `composite` owns heap (its `ops` slice), so it deinits each sub-op
+    /// then frees the slice. Switch on `self.*` since `self` is a pointer.
+    /// Called exactly once per op by the UndoStack (on evict/clear/drop) and the
+    /// op exists in exactly one ring slot, so the slice is freed once — no leak,
+    /// no double-free.
     pub fn deinit(self: *EditOp) void {
-        _ = self;
+        switch (self.*) {
+            .composite => |*c| {
+                for (c.ops) |*op| op.deinit();
+                c.alloc.free(c.ops);
+            },
+            else => {},
+        }
     }
 
     /// Short human label for the panel tooltip ("Undo: Add Volume").
@@ -179,6 +213,14 @@ pub const EditOp = union(enum) {
             .area_remove => "Remove Area Type",
             .flag_add => "Add Poly Flag",
             .flag_remove => "Remove Poly Flag",
+            .composite => "Group Edit",
         };
     }
 };
+
+/// Wrap an already-owned heap slice of sub-ops into a composite EditOp. The
+/// caller transfers ownership of `ops` (allocated from `alloc`); the resulting
+/// op frees it in `deinit`.
+pub fn makeComposite(alloc: std.mem.Allocator, ops: []EditOp) EditOp {
+    return .{ .composite = .{ .ops = ops, .alloc = alloc } };
+}

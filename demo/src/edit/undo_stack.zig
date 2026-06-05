@@ -386,6 +386,42 @@ test "flag_remove undo restores flag, redo removes it again" {
     poly_flags.resetToBuiltins();
 }
 
+test "composite group: undo reverts BOTH, redo re-adds BOTH, slice freed once" {
+    const edit_op = @import("edit_op.zig");
+    var geom = InputGeom.init(std.testing.allocator);
+    defer geom.deinit();
+    var st = UndoStack.init(std.testing.allocator);
+    defer st.deinit();
+
+    const tri = [_]f32{ 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+    // Perform two volume adds, then record them as ONE composite group.
+    try geom.addConvexVolume(&tri, 3, 0.0, 1.0, 0);
+    const op0 = EditOp{ .add_volume = geom.volumes.items[geom.volumes.items.len - 1] };
+    try geom.addConvexVolume(&tri, 3, 0.0, 1.0, 0);
+    const op1 = EditOp{ .add_volume = geom.volumes.items[geom.volumes.items.len - 1] };
+    try std.testing.expectEqual(@as(usize, 2), geom.volumes.items.len);
+
+    // Caller owns the heap slice; record() transfers ownership to the stack,
+    // which frees it exactly once (via deinit) on eviction / clear / st.deinit.
+    const ops = try std.testing.allocator.alloc(EditOp, 2);
+    ops[0] = op0;
+    ops[1] = op1;
+    st.record(edit_op.makeComposite(std.testing.allocator, ops));
+
+    try std.testing.expect(st.canUndo());
+    try std.testing.expectEqualStrings("Group Edit", st.nextUndoName().?);
+
+    // Undo -> BOTH volumes removed (reverse-order revert).
+    try std.testing.expect(st.undo(&geom));
+    try std.testing.expectEqual(@as(usize, 0), geom.volumes.items.len);
+
+    // Redo -> BOTH re-added (forward-order apply).
+    try std.testing.expect(st.canRedo());
+    try std.testing.expect(st.redo(&geom));
+    try std.testing.expectEqual(@as(usize, 2), geom.volumes.items.len);
+    // testing.allocator asserts no leak / no double-free on st.deinit() above.
+}
+
 test "ring eviction frees oldest, no leak" {
     var geom = InputGeom.init(std.testing.allocator);
     defer geom.deinit();
