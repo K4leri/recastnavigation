@@ -215,11 +215,20 @@ pub fn verify(nav: *const NavMesh, alloc: std.mem.Allocator) !VerifyReport {
                         }
 
                         // VERIFY_PORTAL_SYMMETRY: B (= link.ref) must have a
-                        // reciprocal link back to A (= self_ref). Only checked
-                        // for valid refs; off-mesh chains are reciprocal too.
-                        const self_ref: common.PolyRef = nav.getPolyRefBase(tile) | @as(common.PolyRef, pu);
-                        if (!hasReciprocalLink(nav, link.ref, self_ref)) {
-                            push(&report, alloc, .{ .invariant = .portal_symmetry, .tile = tu, .poly = pu, .link = lu }, "Portal A->B no reciprocal (B=0x{X})", .{link.ref});
+                        // reciprocal link back to A (= self_ref). ONLY for genuine
+                        // tile-portal (poly<->poly) links. Off-mesh connections are
+                        // INTENTIONALLY directional: a unidirectional off-mesh link
+                        // has no reciprocal, so flagging it would cry wolf. Exclude
+                        // off-mesh links — the forward link's SOURCE is the off-mesh
+                        // poly (getType), and Detour marks off-mesh back-links with
+                        // edge==0xff. (Detour: navmesh.zig baseOffMeshLinks /
+                        // connectExtOffMeshLinks.)
+                        const is_offmesh_link = p.getType() == .offmesh_connection or link.edge == 0xff;
+                        if (!is_offmesh_link) {
+                            const self_ref: common.PolyRef = nav.getPolyRefBase(tile) | @as(common.PolyRef, pu);
+                            if (!hasReciprocalLink(nav, link.ref, self_ref)) {
+                                push(&report, alloc, .{ .invariant = .portal_symmetry, .tile = tu, .poly = pu, .link = lu }, "Portal A->B no reciprocal (B=0x{X})", .{link.ref});
+                            }
                         }
                     }
                 }
