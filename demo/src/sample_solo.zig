@@ -19,6 +19,7 @@ const filter_state = @import("render/filter_state.zig");
 const view_state = @import("render/view_state.zig");
 const convex_surface = @import("convex_surface.zig");
 const build_stats = @import("diag/build_stats.zig");
+const artifacts = @import("diag/artifacts.zig");
 
 const rc = recast.recast;
 const dt = recast.detour;
@@ -68,6 +69,13 @@ pub const SampleSolo = struct {
     // Whether to show the diff panel in Build Inspector. Persists across frames.
     show_build_diff: bool = false,
 
+    // Build Artifact Detectors (B-3): cached report from the last "Scan artifacts"
+    // press (degenerate detail tris / tiny polys / dead-end polys + capped culprit
+    // list). Owns a heap ArrayList -> freed on re-scan + on deinit. highlight reads
+    // the cached report (analyze runs on the button, NOT per frame).
+    artifact_report: ?artifacts.ArtifactReport = null,
+    highlight_culprits: bool = false,
+
     // промежуточные результаты (для отрисовки)
     hf: ?recast.Heightfield = null,
     chf: ?recast.CompactHeightfield = null,
@@ -93,6 +101,8 @@ pub const SampleSolo = struct {
         if (self.dmesh) |*d| d.deinit();
         if (self.navmesh) |*n| n.deinit();
         if (self.navmesh_data) |d| self.alloc.free(d);
+        if (self.artifact_report) |*r| r.deinit(self.alloc);
+        self.artifact_report = null;
         self.hf = null;
         self.chf = null;
         self.cset = null;
@@ -503,6 +513,52 @@ pub const SampleSolo = struct {
             dbg.debugDrawNavMesh(dd, n, 0);
             if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
         }
+        // B-3: overdraw flagged culprit polys in a warning colour (reads the cached
+        // report — analyze runs on the button, not here).
+        if (self.highlight_culprits) self.drawArtifactHighlight(dd, n);
+    }
+
+    /// Warning colour for highlighted artifact culprits (translucent orange).
+    const ARTIFACT_HL_COL: u32 = dbg.rgba(255, 140, 0, 160);
+
+    /// B-3 highlight: overdraw each cached culprit poly's detail triangles in a
+    /// warning colour. Mirrors poly_visit.fillNavMesh's detail-tri walk; reads the
+    /// cached report (no analyze() here). Bounds-safe (bad ref -> skip).
+    fn drawArtifactHighlight(self: *SampleSolo, dd: dbg.DebugDraw, n: *dt.NavMesh) void {
+        const rep = if (self.artifact_report) |*r| r else return;
+        if (rep.culprits.items.len == 0) return;
+
+        dd.depthMask(false);
+        dd.begin(.tris, 1.0);
+        for (rep.culprits.items) |c| {
+            var tile: ?*const dt.MeshTile = null;
+            var poly: ?*const dt.Poly = null;
+            n.getTileAndPolyByRefUnsafe(c.ref, &tile, &poly);
+            const t = tile orelse continue;
+            const p = poly orelse continue;
+            const d = n.decodePolyId(c.ref);
+            if (d.poly >= t.detail_meshes.len) continue;
+            const pd = &t.detail_meshes[d.poly];
+
+            for (0..@as(usize, pd.tri_count)) |j| {
+                const t_idx = (@as(usize, pd.tri_base) + j) * 4;
+                if (t_idx + 3 >= t.detail_tris.len) break;
+                const tri = t.detail_tris[t_idx .. t_idx + 4];
+                for (0..3) |k| {
+                    if (tri[k] < p.vert_count) {
+                        const v_idx = @as(usize, p.verts[tri[k]]) * 3;
+                        if (v_idx + 2 >= t.verts.len) break;
+                        dd.vertex(@ptrCast(&t.verts[v_idx]), ARTIFACT_HL_COL);
+                    } else {
+                        const d_idx = (@as(usize, pd.vert_base) + @as(usize, tri[k] - p.vert_count)) * 3;
+                        if (d_idx + 2 >= t.detail_verts.len) break;
+                        dd.vertex(@ptrCast(&t.detail_verts[d_idx]), ARTIFACT_HL_COL);
+                    }
+                }
+            }
+        }
+        dd.end();
+        dd.depthMask(true);
     }
 
     // ========================================================================
@@ -759,6 +815,50 @@ pub const SampleSolo = struct {
             } else {
                 dvui.labelNoFmt(@src(), "no previous build to diff", .{}, .{ .id_extra = 7423 });
             }
+        }
+
+        self.drawArtifactScan();
+    }
+
+    /// Tiny-poly area threshold (XZ world units²): a fraction of a cell's area, so
+    /// it scales with the build's cell size. Polys smaller than a sliver of one
+    /// voxel are flagged as dust/slivers.
+    fn tinyPolyThreshold(self: *SampleSolo) f32 {
+        const cs = self.settings.cell_size;
+        return 0.25 * cs * cs;
+    }
+
+    /// Build Artifact Detectors (B-3): "Scan artifacts" button runs analyze() on the
+    /// current navmesh (NOT per frame), caches the report, then shows the counts +
+    /// a "Highlight culprits" checkbox. Frees the previous report before re-scanning.
+    fn drawArtifactScan(self: *SampleSolo) void {
+        ui.section(@src(), "Artifacts (B-3)");
+        const nm = if (self.navmesh) |*n| n else {
+            dvui.labelNoFmt(@src(), "Build the navmesh to scan.", .{}, .{ .id_extra = 7470 });
+            return;
+        };
+
+        if (dvui.button(@src(), "Scan artifacts", .{}, .{ .id_extra = 7471 })) {
+            // Free the previous report before re-scanning (no leak / double-free).
+            if (self.artifact_report) |*r| {
+                r.deinit(self.alloc);
+                self.artifact_report = null;
+            }
+            if (artifacts.analyze(nm, self.tinyPolyThreshold(), self.alloc)) |r| {
+                self.artifact_report = r;
+            } else |e| {
+                self.bctx.context().log(.err, "Artifact scan failed: {s}", .{@errorName(e)});
+            }
+        }
+
+        if (self.artifact_report) |*r| {
+            dvui.label(@src(), "degenerate detail tris: {d}", .{r.degenerate_tris}, .{ .id_extra = 7472 });
+            dvui.label(@src(), "tiny polys (<{d:.3}): {d}", .{ self.tinyPolyThreshold(), r.tiny_polys }, .{ .id_extra = 7473 });
+            dvui.label(@src(), "dead-end polys: {d}", .{r.dead_end_polys}, .{ .id_extra = 7474 });
+            dvui.label(@src(), "highlight list: {d}/{d}", .{ r.culprits.items.len, artifacts.MAX_CULPRITS }, .{ .id_extra = 7475 });
+            _ = dvui.checkbox(@src(), &self.highlight_culprits, "Highlight culprits", .{ .id_extra = 7476 });
+        } else {
+            dvui.labelNoFmt(@src(), "press Scan to run detectors", .{}, .{ .id_extra = 7477 });
         }
     }
 

@@ -36,4 +36,5 @@ test {
     _ = @import("diag/filter_compare.zig");
     _ = @import("diag/build_stats.zig");
     _ = @import("diag/poly_inspect.zig");
+    _ = @import("diag/artifacts.zig");
 }
