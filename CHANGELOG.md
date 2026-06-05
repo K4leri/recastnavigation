@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-05
+
 ### Added — Navmesh Debug & Analysis Platform (demo GUI)
 
 A large, self-contained set of developer tooling layered on top of the faithful
@@ -51,7 +53,15 @@ demo`, `zig build demo-test` (250/250), `zig build test` (91/91).
   stable id, surviving undo/redo churn.
 - **Property inspector** (`inspector.zig`) — numeric edit of a single selected
   volume (hmin/hmax/area/mode/band) or off-mesh (start/end/radius/dir/area/flags),
-  staged + Apply = one undo op.
+  staged + Apply = one undo op; the volume's prism/surface/height/band edits show
+  a **live 3D preview** before Apply commits + rebuilds.
+- **Surface-band convex volumes** (`convex_surface.zig`) — a convex volume can now
+  **drape the navmesh surface** (Surface mode) instead of being a flat min/max
+  prism: a plane is fit to the hull and each column is marked within a band ± the
+  fitted surface, so the painted area hugs sloped / terraced ground. Prism mode
+  (flat box) stays as the toggle alternative. Mode + band are set at creation and
+  editable in the inspector; both modes round-trip through the scene format.
+  (`tool_convex.zig`, `convex_surface.zig`, `input_geom.ConvexVolume.mode/band`)
 - **Presets** (`presets.zig`) — save/apply named area+flag presets over the
   `registry_io` format (`presets/*.reg`), Replace or Merge, undo-able; OOM-safe.
 - **Incremental tile rebuild** (Tile sample) — rebuilds only dirty tiles (±1
