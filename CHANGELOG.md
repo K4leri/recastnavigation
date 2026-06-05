@@ -7,7 +7,136 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — Navmesh Debug & Analysis Platform (demo GUI)
+
+A large, self-contained set of developer tooling layered on top of the faithful
+recast/detour core (faithful `src/*` untouched — only additive read-only getters;
+all new logic lives under `demo/src/`). Delivered as six feature clusters plus a
+foundation, on the `feat/debug-platform` branch. Each feature was implemented
+behind a two-stage review (spec compliance + code quality) with unit tests for
+the load-bearing pure logic. Three test suites stay green: `zig build demo`,
+`zig build demo-test`, `zig build test-integration`.
+
+#### Foundation (Scene / Persist / Render / UI-shell)
+- **Durable scene persistence** — a `.recastscene/` container (one shareable
+  directory) holding the `.gset` (verbatim RecastDemo format), per-edit chunks,
+  saved tiles, and a manifest. Every chunk carries a header (magic / version /
+  payload length / **XXH3** checksum) and is written via an **atomic write**
+  (create-temp → flush → fsync → replace → dir-fsync) so a crash mid-save can't
+  corrupt the live file. Graceful degradation: a bad chunk is skipped with a
+  warning and per-record recovery, not a hard failure. Save / Load + named save
+  variants (scrollable list past 5). (`demo/src/persist/{write_atomic, checksum,
+  registry_io, scene_io, scene_container, tile_store, manifest}.zig`)
+- **Area-type / poly-flag registries** with names, colours, per-area movement
+  cost, and poly-flag bits — replacing the hard-coded `SamplePolyAreas`.
+- **Render layer** (`demo/src/render/`) — a per-polygon visit/colour pass that
+  parameterises the faithful tile walk with a visibility predicate + colour
+  callback, so the navmesh can be recoloured/filtered without touching the core
+  `debugDrawNavMesh`. (`color_scheme`, `poly_visit`, `components`, `scheme_state`,
+  `filter_state`, `view_state`, `isolation`, `legend`, `overlay`, `minimap`,
+  `capture`)
+- **UI shell** — input gate (keyboard hotkeys suppressed while a text field has
+  focus), a tool registry (single source of truth for the tool radios + the
+  control hint), and movable/resizable floating windows for the diagnostic panels.
+
+#### Cluster F — Editing / authoring UX (`demo/src/edit/`)
+- **Undo / redo** with a fixed-depth ring buffer and a command-pattern `EditOp`
+  (add/delete/edit volume & off-mesh, area/flag registry edits, **composite**
+  group edits as one undo unit, whole-registry snapshot) + **autosave**.
+- **Snap** (`snap.zig`) — vertex / edge / grid / object snapping with a **live
+  marker under the cursor**; Ctrl bypasses; per-mode radius/step.
+- **Multi-select** (`selection.zig`) — rubber-band box-select, Ctrl+click toggle,
+  group **move** (drift-free), **copy/paste** (Ctrl+C/V, fresh ids, offset), and
+  **group delete** — all undo-able as single composite commands. Selection is by
+  stable id, surviving undo/redo churn.
+- **Property inspector** (`inspector.zig`) — numeric edit of a single selected
+  volume (hmin/hmax/area/mode/band) or off-mesh (start/end/radius/dir/area/flags),
+  staged + Apply = one undo op.
+- **Presets** (`presets.zig`) — save/apply named area+flag presets over the
+  `registry_io` format (`presets/*.reg`), Replace or Merge, undo-able; OOM-safe.
+- **Incremental tile rebuild** (Tile sample) — rebuilds only dirty tiles (±1
+  expansion) on edit; proven byte-for-byte identical to a full rebuild by a
+  regression test (`test/integration/incremental_rebuild_test.zig`).
+
+#### Cluster E — Visualization / render
+- **Colour schemes** — recolour the navmesh by **area / flags / height / tile /
+  component / cost** (green→red). Live, with a **legend** overlay (swatches for
+  discrete schemes, a gradient bar with min/max for continuous).
+- **Clipping plane + layer isolation** — read overlapping floors one at a time:
+  clip above / below / slab by a Y slider (spanning the **navmesh** height range)
+  + isolation show-only / dim-others by tile / area / flags.
+- **Wireframe** toggle + per-group visibility (input mesh / navmesh / off-mesh /
+  convex / labels).
+- **Polygon overlay labels** — poly-ref / centroid / area / cost over polys
+  (none / hovered / all, auto-capped).
+- **Minimap** — top-down overview (bbox, tile grid, off-mesh + convex markers,
+  camera look-at marker) with click / tile (tx,ty) / poly-ref **fly-to**.
+- **Frame-sequence capture** — `glReadPixels` → durable PPM frames + manifest,
+  orbit or live, with a `--capture=<dir>,<frames>` headless CLI flag (assemble
+  with `ffmpeg -i frame_%05d.ppm out.mp4`).
+
+#### Cluster A — Query diagnostics (`demo/src/diag/`)
+- **Why-no-path verdict** (`why_no_path.zig`, `diagnose.zig`) — a decision machine
+  that explains a failed route in plain language: invalid endpoint / same poly /
+  **different components** (a real topological gap) / **filtered-by-flags** /
+  **blocked-by-cost** / node-limit, using a user-filter-aware reachability BFS to
+  separate "flags blocked it" from "cost steered around it".
+- **Stepped A* / Dijkstra player** (`astar_player.zig`) — play / pause / advance-1
+  / advance-N / finish over the sliced API, with a **Play-speed throttle**;
+  per-frame visited / frontier / current-best / partial-corridor highlight and
+  g/h/f labels.
+- **Funnel / portal debug** (`funnel.zig`) — portal left/right edges, all-crossings
+  waypoints, and turn/apex highlights of the string-pulling.
+- **Side-by-side filter comparison** (`filter_compare.zig`) — run the same query
+  under up to three include/exclude filters at once, each route in its own colour
+  with a poly-count / cost / reaches legend.
+- **Connected components** (`components.zig`) — flood-fill island colouring; feeds
+  the component colour scheme and the why-no-path component test.
+- **Reachability heatmap** (`reachability.zig`) — a Dijkstra flood from a source
+  poly (honouring the filter), painting each reachable poly green→red by travel
+  cost; unreachable = grey.
+
+#### Cluster B — Build-pipeline introspection
+- **Per-stage build inspector** (`build_stats.zig`) — counts + wall-clock time for
+  each of the 7 Recast stages, in a panel.
+- **Param diff** — delta of every stage's counts/ms vs the previous build.
+- **Artifact detectors** (`artifacts.zig`) — degenerate detail triangles, tiny
+  (sliver) polys, dead-end (single-link) polys, with a bright 3D culprit
+  highlight (beacon + cross).
+- **Polygon table inspector** (`poly_inspect.zig`) — area / flags / neighbours /
+  links / height range of the clicked poly, replacing the old stderr dump.
+
+#### Cluster C — Profiling / performance
+- **Build profiler + run history** (`profiler.zig`) — a 16-build ring with a
+  stage stacked-bar + a total-time sparkline.
+- **Route-query benchmark** (`query_bench.zig`) — K random `findPath` runs →
+  latency **p50 / p95 / p99 / min / max / avg**, success rate, avg visited nodes,
+  and a latency histogram.
+- **Memory budget** (`mem_budget.zig`) — navmesh / polymesh / detail bytes,
+  per-tile data size, tile-cache raw vs compressed.
+
+#### Cluster G — Validation / regression
+- **Navmesh linter** (`navmesh_lint.zig`) — static findings: isolated islands,
+  null-area polys, degenerate polys, dangling off-mesh, orphan tiles; a Validation
+  panel + a `--lint` CLI whose exit code = the error-finding count (CI gate).
+- **Integrity verifier** (`navmesh_verify.zig`) — structural invariants: freelist
+  consistency, valid link refs, portal symmetry (off-mesh links correctly
+  excluded), off-mesh endpoints, salt freshness; a Verify panel + a `--verify`
+  CLI whose exit code = the violation count. Proven free of false positives on a
+  real two-tile stitched fixture.
+
 ### Fixed
+- **Debug-draw of a stale / invalid poly-ref no longer crashes the GUI.** The
+  faithful `debugDrawNavMeshPoly` indexes `mesh.tiles[decoded.tile]` guarded only
+  by `max_tiles`; a path ref that survived a navmesh swap could index past the
+  actual `tiles` slice and panic. The Test-Navmesh path highlight now draws each
+  polygon itself with a bounds check on every tile-vertex access (validating via
+  `getTileAndPolyByRef`), never calling the unguarded faithful path; the lint and
+  crowd overlays gained the same `tiles.len` guard. (`demo/src/`)
+- **Hotkey conflicts resolved.** Camera reset moved off `F` to `R` (`F` / `Home`
+  no longer reset the view); the cull-winding / voxel-variant dev toggles moved
+  off `C` / `V` to `K` / `J`, so `Ctrl+C` / `Ctrl+V` copy-paste no longer also
+  fire them and corrupt the view.
 - **The tile-cache → navmesh bake path now works** (`dtTileCache::buildNavMeshTile`).
   It was unexercised by the existing tests (they add obstacles but never add layer
   tiles), which hid five faithful-port bugs. Found and fixed while adding a real
