@@ -505,10 +505,15 @@ pub const NavMeshTesterTool = struct {
         self.slice_active = false;
         self.slice_finished = false;
         self.slice_done_total = 0;
+        self.slice_play_accum = 0;
         self.slice_status = .{};
+        const qnav = q.getAttachedNavMesh();
+        const snav = if (self.navmesh) |n| @intFromPtr(n) else 0;
+        std.debug.print("[SLICE init] have_both={} start=0x{X} end=0x{X} q_nav=0x{X} self_nav=0x{X}\n", .{ have_both, self.start_ref, self.end_ref, if (qnav) |qn| @intFromPtr(qn) else 0, snav });
         if (!have_both) return;
         self.slice_status = q.initSlicedFindPath(self.start_ref, self.end_ref, &self.spos, &self.epos, &self.filter, 0);
         self.slice_active = true;
+        std.debug.print("[SLICE init] status: inprog={} success={} fail={} partial={} oon={} invalid={}\n", .{ self.slice_status.in_progress, self.slice_status.success, self.slice_status.failure, self.slice_status.partial_result, self.slice_status.out_of_nodes, self.slice_status.invalid_param });
         // start==end (or immediate failure) — no in-progress search to play.
         if (!self.slice_status.in_progress) self.finishSlice(q);
     }
@@ -524,6 +529,8 @@ pub const NavMeshTesterTool = struct {
         const n: u32 = @intCast(@max(iters, 1));
         self.slice_status = q.updateSlicedFindPath(n, &done);
         self.slice_done_total += done;
+        const nodes = if (q.getNodePool()) |p| p.getNodeCount() else 0;
+        std.debug.print("[SLICE adv] +{d} iters (total={d}) nodes={d} inprog={} succ={} partial={} oon={}\n", .{ done, self.slice_done_total, nodes, self.slice_status.in_progress, self.slice_status.success, self.slice_status.partial_result, self.slice_status.out_of_nodes });
         if (!self.slice_status.in_progress) self.finishSlice(q);
     }
 
@@ -536,9 +543,35 @@ pub const NavMeshTesterTool = struct {
         self.slice_finished = true;
         self.slice_auto = false;
         var n: usize = 0;
-        _ = q.finalizeSlicedFindPath(self.polys[0..], &n);
+        const fin_status = q.finalizeSlicedFindPath(self.polys[0..], &n);
         self.npolys = n;
         self.nstraight = 0;
+        // DIAG: dump the finalized route + each ref's decode against BOTH the query's
+        // attached navmesh (where the search ran) and self.navmesh (where it's drawn).
+        // A ref invalid for self.navmesh (poly >= its tile's poly_count) pinpoints a
+        // stale/cross-navmesh ref produced by the sliced finalize.
+        {
+            const qnav = q.getAttachedNavMesh();
+            std.debug.print("[SLICE finish] done_total={d} npolys={d} status(succ={} fail={} partial={} oon={}) q_nav=0x{X} self_nav=0x{X}\n", .{
+                self.slice_done_total, n, fin_status.success, fin_status.failure, fin_status.partial_result, fin_status.out_of_nodes,
+                if (qnav) |qn| @intFromPtr(qn) else 0, if (self.navmesh) |sn| @intFromPtr(sn) else 0,
+            });
+            const draw_nav = self.navmesh;
+            var i: usize = 0;
+            while (i < n and i < 32) : (i += 1) {
+                const r = self.polys[i];
+                var note: []const u8 = "ok";
+                if (draw_nav) |dn| {
+                    const dd_ = dn.decodePolyId(r);
+                    if (@as(usize, dd_.tile) >= dn.tiles.len) {
+                        note = "TILE-OOB-for-self.navmesh";
+                    } else if (dn.getTileAndPolyByRef(r)) |_| {} else |_| {
+                        note = "INVALID-for-self.navmesh";
+                    }
+                    std.debug.print("  [{d}] ref=0x{X} (self_nav: tile={d} poly={d}) {s}\n", .{ i, r, dd_.tile, dd_.poly, note });
+                }
+            }
+        }
         if (n > 0) {
             var ns: usize = 0;
             _ = q.findStraightPath(&self.spos, &self.epos, self.polys[0..n], self.straight[0..], self.straight_flags[0..], self.straight_refs[0..], &ns, 0) catch {};
@@ -861,19 +894,60 @@ pub const NavMeshTesterTool = struct {
     fn drawPolySafe(self: *NavMeshTesterTool, dd: dbg.DebugDraw, nm: *const dt.NavMesh, ref: dt.PolyRef, col: u32) void {
         _ = self;
         if (ref == 0) return;
+        // BULLETPROOF: do NOT call the faithful debugDrawNavMeshPoly for path polys.
+        // It re-decodes the ref and indexes mesh.tiles[decoded.tile] guarded only by
+        // max_tiles — and we observed (logs) the SAME ref decode to an out-of-range
+        // tile inside it while drawPolySafe's own decode/validation passed (a stale
+        // ref / inconsistent navmesh read). Instead: validate via getTileAndPolyByRef
+        // (salt+tile+poly), then draw the poly's detail tris OURSELVES with a bounds
+        // check on EVERY array access, so a bad ref can never OOB. Mirrors the fill in
+        // render/poly_visit.fillNavMesh.
         const d = nm.decodePolyId(ref);
-        // Bound by BOTH the actual slice length AND max_tiles (faithful indexes
-        // tiles[tile] guarded only by max_tiles; the slice may be shorter). Use the
-        // smaller. DIAG: log the values so the impossible-looking crash is pinned.
-        const mt: usize = if (nm.max_tiles > 0) @intCast(nm.max_tiles) else 0;
-        const bound = @min(nm.tiles.len, mt);
-        if (@as(usize, d.tile) >= bound) {
-            std.debug.print("[DRAWSAFE skip] ref=0x{X} tile={d} polyfld={d} tiles.len={d} max_tiles={d}\n", .{ ref, d.tile, d.poly, nm.tiles.len, nm.max_tiles });
-            return;
+        // tile bound BEFORE getTileAndPolyByRef (it indexes tiles[decoded.tile]
+        // guarded only by max_tiles, which can exceed tiles.len -> OOB).
+        if (@as(usize, d.tile) >= nm.tiles.len) return;
+        const tp = nm.getTileAndPolyByRef(ref) catch return;
+        const tile = tp.tile;
+        const poly = tp.poly;
+        if (@as(usize, d.poly) >= tile.detail_meshes.len) return;
+        const pd = &tile.detail_meshes[d.poly];
+        const vc: usize = poly.vert_count;
+
+        dd.depthMask(false);
+        dd.begin(.tris, 1.0);
+        var ti: usize = 0;
+        while (ti < @as(usize, pd.tri_count)) : (ti += 1) {
+            const t_idx = (@as(usize, pd.tri_base) + ti) * 4;
+            if (t_idx + 3 >= tile.detail_tris.len) break;
+            const t = tile.detail_tris[t_idx .. t_idx + 4];
+            // Pre-validate all 3 vertex pointers, emit only complete triangles.
+            var pts: [3]*const [3]f32 = undefined;
+            var ok = true;
+            for (0..3) |k| {
+                if (t[k] < vc) {
+                    if (@as(usize, t[k]) >= poly.verts.len) {
+                        ok = false;
+                        break;
+                    }
+                    const v_idx = @as(usize, poly.verts[t[k]]) * 3;
+                    if (v_idx + 2 >= tile.verts.len) {
+                        ok = false;
+                        break;
+                    }
+                    pts[k] = @ptrCast(&tile.verts[v_idx]);
+                } else {
+                    const d_idx = (@as(usize, pd.vert_base) + (@as(usize, t[k]) - vc)) * 3;
+                    if (d_idx + 2 >= tile.detail_verts.len) {
+                        ok = false;
+                        break;
+                    }
+                    pts[k] = @ptrCast(&tile.detail_verts[d_idx]);
+                }
+            }
+            if (ok) for (pts) |p| dd.vertex(p, col);
         }
-        if (!nm.isValidPolyRef(ref)) return;
-        std.debug.print("[DRAWSAFE draw] ref=0x{X} tile={d} tiles.len={d} max_tiles={d}\n", .{ ref, d.tile, nm.tiles.len, nm.max_tiles });
-        dbg.debugDrawNavMeshPoly(dd, nm, ref, col);
+        dd.end();
+        dd.depthMask(true);
     }
 
     pub fn render(self: *NavMeshTesterTool) void {
@@ -893,19 +967,9 @@ pub const NavMeshTesterTool = struct {
 
         // подсветка полигонов результата: start/end/path разными цветами (как оригинал)
         if (self.navmesh) |nm| {
-            // DIAG: compare the RENDER navmesh (self.navmesh) against the navmesh the
-            // path was computed on (query's attached nav). If they differ (or differ
-            // in bit-widths / tile counts), path refs decode inconsistently -> OOB.
-            if (self.npolys > 0) {
-                const qnav = if (self.query) |q| q.getAttachedNavMesh() else null;
-                std.debug.print("[NAVID] render_nm=0x{X} tiles.len={d} max_tiles={d} bits(t={d},p={d},s={d})  query_nm=0x{X} npolys={d} start=0x{X} end=0x{X}\n", .{
-                    @intFromPtr(nm),                nm.tiles.len, nm.max_tiles, nm.tile_bits, nm.poly_bits, nm.salt_bits,
-                    if (qnav) |qn| @intFromPtr(qn) else 0, self.npolys, self.start_ref, self.end_ref,
-                });
-            }
-            // start/end + path polys, all via drawPolySafe (tiles.len-bounded — guards
-            // stale refs that survive a navmesh swap; see drawPolySafe). Path skips
-            // start/end like upstream.
+            // start/end + path polys via drawPolySafe — fully bounds-checked self-draw
+            // (never calls the unguarded faithful poly-draw), so a stale/invalid path
+            // ref can't OOB-crash. Path skips start/end like upstream.
             self.drawPolySafe(dd, nm, self.start_ref, startCol);
             self.drawPolySafe(dd, nm, self.end_ref, endCol);
             for (0..self.npolys) |i| {
