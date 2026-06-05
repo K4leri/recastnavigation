@@ -146,13 +146,13 @@ pub fn sparklineNorm(history: *const History, out: []f32) usize {
     var lo: f32 = std.math.floatMax(f32);
     var hi: f32 = -std.math.floatMax(f32);
     for (0..n) |i| {
-        const t = (history.at(i) orelse continue).total_ms;
+        const t = history.at(i).?.total_ms; // i < n <= len, so at(i) is always present
         if (t < lo) lo = t;
         if (t > hi) hi = t;
     }
     const range = hi - lo;
     for (0..n) |i| {
-        const t = (history.at(i) orelse continue).total_ms;
+        const t = history.at(i).?.total_ms; // i < n <= len, so at(i) is always present
         out[i] = if (range > 0) (t - lo) / range else 0.5;
     }
     return n;

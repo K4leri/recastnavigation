@@ -273,7 +273,9 @@ pub const SampleSolo = struct {
         self.profile_history.push(profiler.BuildProfile.fromBuildStats(
             bs,
             self.build_gen,
-            @intCast(bs.stage(.polymesh).pm_polys),
+            // pm_polys is u64; clamp before the u32 cast so a (practically impossible)
+            // >4G poly count can't panic the @intCast in ReleaseSafe.
+            @intCast(@min(bs.stage(.polymesh).pm_polys, std.math.maxInt(u32))),
             bs.stage(.regions).max_regions,
         ));
         // Default the history selector to the newest entry.
