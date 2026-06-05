@@ -53,6 +53,7 @@ const Clipboard = @import("edit/clipboard.zig").Clipboard;
 const inspector = @import("edit/inspector.zig");
 const presets = @import("edit/presets.zig");
 const poly_inspect = @import("diag/poly_inspect.zig");
+const navmesh_lint = @import("diag/navmesh_lint.zig");
 const Vec3 = recast.math.Vec3;
 
 const ActiveTool = tool_registry.ToolId; // { none, tester, prune, offmesh, convex, crowd }
@@ -248,6 +249,7 @@ pub fn main(main_init: std.process.Init) !void {
 
     if (mesh_files.len > 0)
         loadMeshIndex(main_init.gpa, app.meshes_folder, 0, mesh_files, &geom, &solo, &tile, &temp, &tester, &crowd_tool, &cam, &bctx);
+
     var last_mouse = g_window.getCursorPos();
     var rotating = false;
     var gate = InputGate{}; // курсор над панелью / фокус в textfield (с прошлого кадра)
@@ -274,6 +276,12 @@ pub fn main(main_init: std.process.Init) !void {
     // B-4 Polygon Inspector: poly-ref picked by the Disabled-tool inspection click.
     // 0 = nothing inspected; non-zero = ref of the last clicked polygon.
     var inspected_ref: recast.detour.PolyRef = 0; // PolyRef-typed (widens to u64 under -Dpolyref64)
+    // G1 Validation panel: cached LintReport from the last "Lint NavMesh" click.
+    // Owns a heap ArrayList -> freed before re-lint and on the deferred teardown;
+    // null-after-free so the deferred deinit never double-frees a moved report.
+    var lint_report: ?navmesh_lint.LintReport = null;
+    defer if (lint_report) |*r| r.deinit(main_init.gpa);
+    var lint_highlight: bool = false; // overdraw culprit refs in a warning colour
     var overlay_cap_warned = false; // P1-2: logged once when labels:all hits the cap
     // P1-4 minimap fly-to entry state.
     var minimap_rect: dvui.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
@@ -332,10 +340,15 @@ pub fn main(main_init: std.process.Init) !void {
     // a GL window still must exist — true offscreen FBO is out of scope).
     var capture_state: capture.State = .{};
     var capture_headless = false; // set by --capture: auto-close the window after the run
+    // --lint: after the startup build, run the navmesh linter over the active
+    // sample's navMesh(), print findings to stdout, set the process exit code to
+    // the error-count, and exit WITHOUT opening the GUI (clean headless CI path).
+    var lint_headless = false;
     {
         var it = try std.process.Args.Iterator.initAllocator(main_init.minimal.args, main_init.gpa);
         defer it.deinit();
         while (it.next()) |a| {
+            if (std.mem.eql(u8, a, "--lint")) lint_headless = true;
             if (std.mem.eql(u8, a, "--bench")) bench = true;
             if (std.mem.startsWith(u8, a, "--capture=")) {
                 // "<dir>,<frames>" — split on the last comma so dir names may contain none.
@@ -370,6 +383,15 @@ pub fn main(main_init: std.process.Init) !void {
             }
         }
     }
+
+    // --- --lint headless path: run the linter over the navmesh built at startup
+    // (loadMeshIndex above already called solo.build(), so navMesh() is valid),
+    // print findings, and exit with code = error-count. No GUI / frame loop.
+    // Clean CI gate. Parsed AFTER the arg block so lint_headless is set.
+    if (lint_headless) {
+        runLintHeadless(main_init.gpa, solo.navMesh());
+    }
+
     if (shot_draw) |dm| {
         inline for (@typeInfo(@TypeOf(solo.draw_mode)).@"enum".fields) |f| {
             if (std.mem.eql(u8, f.name, dm)) solo.draw_mode = @field(@TypeOf(solo.draw_mode), f.name);
@@ -1087,6 +1109,33 @@ pub fn main(main_init: std.process.Init) !void {
             }
         }
 
+        // --- Lint highlight overlay (G1) --------------------------------------
+        // When "Highlight findings" is on, overdraw each cached finding's culprit
+        // polys in a warning colour (reuses the tester's debugDrawNavMeshPoly
+        // pattern). Off-mesh/orphan refs that aren't ground polys are skipped by
+        // the draw helper (bad ref -> no-op).
+        if (lint_highlight) {
+            if (lint_report) |*rep| {
+                const active_nav: ?*recast.detour.NavMesh = switch (sample_kind) {
+                    .solo => solo.navMesh(),
+                    .tile => tile.navMesh(),
+                    .temp => temp.navMesh(),
+                };
+                if (active_nav) |nm| {
+                    for (rep.findings.items) |*f| {
+                        const col = switch (f.severity) {
+                            .err => recast.debug.rgba(235, 60, 60, 160),
+                            .warn => recast.debug.rgba(235, 200, 50, 160),
+                            .info => recast.debug.rgba(120, 180, 235, 160),
+                        };
+                        for (0..f.ref_count) |i| {
+                            if (f.refs[i] != 0) recast.debug.debugDrawNavMeshPoly(dd, nm, f.refs[i], col);
+                        }
+                    }
+                }
+            }
+        }
+
         // тест-кейсы: посчитать пути один раз (когда query привязан к нужному сэмплу), затем рисовать кеш
         if (active_test) |*t| {
             if (!t.computed) {
@@ -1578,6 +1627,58 @@ pub fn main(main_init: std.process.Init) !void {
                 } else {
                     // No navmesh loaded yet.
                     dvui.labelNoFmt(@src(), "No navmesh loaded.", .{}, .{ .id_extra = 7440 });
+                }
+            }
+
+            // --- Validation (G1): run the navmesh linter over the active sample's
+            // navMesh() and show counts + a scrollable findings list. The cached
+            // LintReport is freed before each re-lint and on teardown (null-after-
+            // free; no double-free). id_extra range 7550-7575.
+            {
+                ui.section(@src(), "Validation");
+                const active_nav: ?*recast.detour.NavMesh = switch (sample_kind) {
+                    .solo => solo.navMesh(),
+                    .tile => tile.navMesh(),
+                    .temp => temp.navMesh(),
+                };
+                var lrow = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal, .id_extra = 7550 });
+                if (dvui.button(@src(), "Lint NavMesh", .{ .grayed = active_nav == null }, .{ .id_extra = 7551 })) {
+                    if (active_nav) |nm| {
+                        if (lint_report) |*old| {
+                            old.deinit(main_init.gpa);
+                            lint_report = null; // null-after-free
+                        }
+                        lint_report = navmesh_lint.lint(nm, 0.02, main_init.gpa) catch null;
+                    }
+                }
+                _ = dvui.checkbox(@src(), &lint_highlight, "Highlight findings", .{ .id_extra = 7552, .gravity_y = 0.5 });
+                lrow.deinit();
+
+                if (lint_report) |*rep| {
+                    dvui.label(@src(), "errors: {d}   warnings: {d}   info: {d}", .{ rep.error_count, rep.warn_count, rep.info_count }, .{ .id_extra = 7553 });
+                    if (rep.findings.items.len == 0) {
+                        dvui.labelNoFmt(@src(), "No findings — navmesh is clean.", .{}, .{ .id_extra = 7554, .color_text = .{ .r = 140, .g = 220, .b = 140 } });
+                    } else {
+                        var fsc = dvui.scrollArea(@src(), .{}, .{ .expand = .horizontal, .min_size_content = .{ .h = 160 }, .id_extra = 7555 });
+                        for (rep.findings.items, 0..) |*f, fi| {
+                            const col: dvui.Color = switch (f.severity) {
+                                .err => .{ .r = 235, .g = 90, .b = 90 },
+                                .warn => .{ .r = 235, .g = 200, .b = 80 },
+                                .info => .{ .r = 150, .g = 190, .b = 235 },
+                            };
+                            const badge = switch (f.severity) {
+                                .err => "E",
+                                .warn => "W",
+                                .info => "I",
+                            };
+                            var rbuf: [128]u8 = undefined;
+                            const row = std.fmt.bufPrint(&rbuf, "[{s}] {s}: {s}", .{ badge, @tagName(f.rule), f.message() }) catch f.message();
+                            dvui.labelNoFmt(@src(), row, .{}, .{ .id_extra = 7556 + fi, .color_text = col });
+                        }
+                        fsc.deinit();
+                    }
+                } else {
+                    dvui.labelNoFmt(@src(), "Click \"Lint NavMesh\" to run the linter.", .{}, .{ .id_extra = 7554 });
                 }
             }
 
@@ -2553,6 +2654,47 @@ fn captureFrame(
             bctx.context().log(.err, "capture: write manifest failed: {s}", .{@errorName(e)});
         };
     }
+}
+
+/// --lint headless runner: lint `nav`, print each finding "[SEV] RULE: message
+/// (refs...)" to stderr, and exit the process with code = error-count (clamped to
+/// u8). No navmesh -> "no navmesh" + exit(2). Never returns.
+fn runLintHeadless(gpa: std.mem.Allocator, nav: ?*recast.detour.NavMesh) noreturn {
+    const out = nav orelse {
+        std.debug.print("[lint] no navmesh built (load a mesh / build failed)\n", .{});
+        std.process.exit(2);
+    };
+    var report = navmesh_lint.lint(out, 0.02, gpa) catch |e| {
+        std.debug.print("[lint] error: {s}\n", .{@errorName(e)});
+        std.process.exit(2);
+    };
+    defer report.deinit(gpa);
+
+    for (report.findings.items) |*f| {
+        const sev = switch (f.severity) {
+            .err => "ERROR",
+            .warn => "WARN",
+            .info => "INFO",
+        };
+        // Append the culprit refs (if any) as a parenthesised hex list.
+        var refbuf: [80]u8 = undefined;
+        var rp: usize = 0;
+        if (f.ref_count > 0) {
+            rp += (std.fmt.bufPrint(refbuf[rp..], " (", .{}) catch refbuf[rp..rp]).len;
+            for (0..f.ref_count) |i| {
+                const sep = if (i == 0) "" else ", ";
+                rp += (std.fmt.bufPrint(refbuf[rp..], "{s}0x{X}", .{ sep, f.refs[i] }) catch refbuf[rp..rp]).len;
+            }
+            rp += (std.fmt.bufPrint(refbuf[rp..], ")", .{}) catch refbuf[rp..rp]).len;
+        }
+        std.debug.print("[{s}] {s}: {s}{s}\n", .{ sev, @tagName(f.rule), f.message(), refbuf[0..rp] });
+    }
+    std.debug.print(
+        "[lint] {d} error(s), {d} warning(s), {d} info\n",
+        .{ report.error_count, report.warn_count, report.info_count },
+    );
+    const code: u8 = @intCast(@min(report.error_count, @as(usize, 255)));
+    std.process.exit(code);
 }
 
 /// Загрузить меш по индексу: load -> build -> setNavMesh -> reset камеры.
