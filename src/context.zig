@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 /// Log categories for Recast operations
 pub const LogCategory = enum {
@@ -79,6 +80,16 @@ pub const Context = struct {
             s.func(s.ptr, category, msg);
             return;
         }
+
+        // Под тест-раннером (zig build test) дочерний процесс общается с
+        // build-сервером через `--listen=-`, и его stderr перехватывается в pipe.
+        // Сотни [PROGRESS]-строк из полного recast-пайплайна (его прогоняют десятки
+        // интеграционных тестов) гонятся с чтением result-манифеста сервером и на
+        // Windows всплывают как «unable to read results of configure phase ...
+        // FileNotFound» + recursive panic. Sink (демка) не затрагивается — у неё
+        // is_test=false и она идёт по ветке sink выше. Глушим только stderr-вывод
+        // тестового бинаря; вся логика/ассерты тестов нетронуты.
+        if (builtin.is_test) return;
 
         const prefix = switch (category) {
             .progress => "[PROGRESS]",
