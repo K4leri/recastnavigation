@@ -315,6 +315,10 @@ pub fn main(main_init: std.process.Init) !void {
     var prev_undo = false; // edge-детект Ctrl+Z (undo)
     var prev_redo = false; // edge-детект Ctrl+Y / Ctrl+Shift+Z (redo)
     var geom_edited = false; // set when undo/redo changed geom -> trigger rebuild
+    // F6 incremental rebuild: the geom edit-bbox from the PREVIOUS frame. Unioning
+    // it with the post-edit bbox makes the dirty-tile set cover deletes too (the
+    // deleted object was present last frame). Recomputed every frame below.
+    var prev_geom_bbox: ?EditBBox = geomEditBBox(&geom);
     while (!g_window.shouldClose()) {
         const frame_start = impl.nanoTime();
 
@@ -579,10 +583,31 @@ pub fn main(main_init: std.process.Init) !void {
             area_types.rebuild_needed = false; // satisfied by this rebuild
             switch (sample_kind) {
                 .solo => _ = solo.build(),
-                .tile => _ = tile.build(),
+                .tile => {
+                    // F6: incremental rebuild for Tile when enabled and a navmesh
+                    // already exists. Mark the tiles touched by this edit (union of
+                    // the bbox BEFORE the edit — covers deletes — with the bbox AFTER),
+                    // then rebuild only those. Falls back to a full build otherwise.
+                    if (tile.incremental and tile.navMesh() != null) {
+                        const cur_bbox = geomEditBBox(&geom);
+                        if (prev_geom_bbox) |b| tile.markDirtyBBox(b.minx, b.minz, b.maxx, b.maxz);
+                        if (cur_bbox) |b| tile.markDirtyBBox(b.minx, b.minz, b.maxx, b.maxz);
+                        if (tile.dirtyCount() > 0) {
+                            const n = tile.rebuildDirty();
+                            bctx.context().log(.progress, "Incremental rebuild: {d} tile(s)", .{n});
+                        } else {
+                            // No locatable edit bbox (e.g. all geometry cleared) -> full build.
+                            _ = tile.build();
+                        }
+                    } else {
+                        _ = tile.build();
+                    }
+                },
                 .temp => _ = temp.build(),
             }
         }
+        // Track the current geom edit-bbox for next frame's delete-coverage union.
+        prev_geom_bbox = geomEditBBox(&geom);
 
         // Auto-save debounce: (re)start the countdown on each edit; fire once settled.
         // If auto_save is turned off, cancel any pending save so turning it back on
@@ -1713,6 +1738,47 @@ fn loadSceneNow(
 }
 
 /// Точка пикинга: пересечение с мешем (если есть), иначе с плоскостью y=0.
+/// XZ bbox (minx,minz,maxx,maxz) of all convex volumes + off-mesh endpoints in the
+/// geom, or null if there are none. Used by the F6 incremental-rebuild dirty-tile
+/// tracking: unioning the bbox from the frame BEFORE an edit with the one AFTER
+/// covers add/move (object present after) AND delete (object present before).
+const EditBBox = struct { minx: f32, minz: f32, maxx: f32, maxz: f32 };
+fn geomEditBBox(geom: *const InputGeom) ?EditBBox {
+    var any = false;
+    var minx: f32 = std.math.floatMax(f32);
+    var minz: f32 = std.math.floatMax(f32);
+    var maxx: f32 = -std.math.floatMax(f32);
+    var maxz: f32 = -std.math.floatMax(f32);
+    for (geom.volumes.items) |*vol| {
+        const nv: usize = @intCast(vol.nverts);
+        var i: usize = 0;
+        while (i < nv) : (i += 1) {
+            const vx = vol.verts[i * 3 + 0];
+            const vz = vol.verts[i * 3 + 2];
+            minx = @min(minx, vx);
+            maxx = @max(maxx, vx);
+            minz = @min(minz, vz);
+            maxz = @max(maxz, vz);
+            any = true;
+        }
+    }
+    const oc = geom.offMeshCount();
+    var c: usize = 0;
+    while (c < oc) : (c += 1) {
+        const v = geom.off_verts.items[c * 6 ..][0..6];
+        // both endpoints (start xyz, end xyz)
+        for ([_]usize{ 0, 3 }) |o| {
+            minx = @min(minx, v[o + 0]);
+            maxx = @max(maxx, v[o + 0]);
+            minz = @min(minz, v[o + 2]);
+            maxz = @max(maxz, v[o + 2]);
+            any = true;
+        }
+    }
+    if (!any) return null;
+    return .{ .minx = minx, .minz = minz, .maxx = maxx, .maxz = maxz };
+}
+
 fn pickPoint(geom: *const InputGeom, start: Vec3, end: Vec3) ?Vec3 {
     const s = start.toArray();
     const e = end.toArray();
