@@ -2668,6 +2668,33 @@ pub fn main(main_init: std.process.Init) !void {
                 }
             }
 
+            // LIVE why-stuck: короткий тег причины НАД каждым реально застрявшим
+            // агентом (classify ∉ {moving, arrived}). Густо-красный, gated на
+            // Show Why-Stuck чекбоксе (внутри forEachWhyStuckLabel) + labels-группе.
+            if (view_state.groups.labels and active_tool == .crowd) {
+                const WSCtx = struct {
+                    cam: *const Camera,
+                    viewport: [4]i32,
+                    vh: f32,
+                    col: dvui.Color,
+                };
+                const wsctx = WSCtx{
+                    .cam = &cam,
+                    .viewport = viewport,
+                    .vh = vh,
+                    .col = dvui.Color{ .r = 255, .g = 64, .b = 32, .a = 255 },
+                };
+                crowd_tool.forEachWhyStuckLabel(wsctx, struct {
+                    fn emit(c: WSCtx, pos: [3]f32, text: []const u8) void {
+                        const wp = Vec3.init(pos[0], pos[1], pos[2]);
+                        if (c.cam.worldToScreen(wp, c.viewport)) |sp| {
+                            if (sp.z >= 0 and sp.z <= 1)
+                                ui.screenTextEx(sp.x, c.vh - sp.y, text, c.col, true);
+                        }
+                    }
+                }.emit);
+            }
+
             // подпись "TARGET" над целью толпы (как renderOverlay оригинала)
             if (view_state.groups.labels and active_tool == .crowd and crowd_tool.has_target) {
                 const wp = Vec3.init(crowd_tool.target_pos[0], crowd_tool.target_pos[1], crowd_tool.target_pos[2]);

@@ -11,6 +11,7 @@ const area_types = @import("area_types.zig");
 const vh_mod = @import("value_history.zig");
 const ValueHistory = vh_mod.ValueHistory;
 const io_util = @import("io_util.zig");
+const why_stuck = @import("diag/why_stuck.zig");
 
 const dt = recast.detour;
 const dc = recast.detour_crowd;
@@ -58,6 +59,7 @@ pub const CrowdTool = struct {
     show_grid: bool = false,
     show_nodes: bool = false,
     show_perf_graph: bool = false,
+    show_why_stuck: bool = false, // LIVE why-stuck диагностика (метки над застрявшими + панель).
     // Perf-graph histories (1:1 Tool_Crowd crowdTotalTime / crowdSampleCount).
     crowd_total_time: ValueHistory = .{}, // ms per crowd update
     crowd_sample_count: ValueHistory = .{}, // velocity samples per update
@@ -347,6 +349,71 @@ pub const CrowdTool = struct {
         };
     }
 
+    /// Маппинг CrowdAgent -> why_stuck.Signals (LIVE-диагностика «why-stuck»).
+    /// Снимает только УЖЕ хранимые поля агента (ядро не трогаем). near_target —
+    /// горизонтальная (2D) дистанция npos->target_pos < radius*2 (порог как у
+    /// CrowdTool вообще: радиус агента — естественная "у цели" зона). Для
+    /// velocity-таргета (target_pos = вектор скорости, не точка) near_target
+    /// бессмыслен -> false.
+    pub fn gatherSignals(ag: anytype) why_stuck.Signals {
+        const vx = ag.vel[0];
+        const vy = ag.vel[1];
+        const vz = ag.vel[2];
+        const speed = @sqrt(vx * vx + vy * vy + vz * vz);
+
+        const ts = ag.target_state;
+        const target_none = (ts == .target_none);
+        const target_failed = (ts == .target_failed);
+        const target_pending = (ts == .target_requesting or
+            ts == .target_waiting_for_queue or
+            ts == .target_waiting_for_path);
+
+        // near_target: 2D-дистанция до целевой точки < radius*2. Только для
+        // настоящих point-таргетов (не velocity), где target_pos — позиция в мире.
+        var near_target = false;
+        if (ts != .target_velocity and ts != .target_none) {
+            const dx = ag.npos[0] - ag.target_pos[0];
+            const dz = ag.npos[2] - ag.target_pos[2];
+            const d2 = dx * dx + dz * dz;
+            const thr = ag.params.radius * 2.0;
+            near_target = d2 < thr * thr;
+        }
+
+        return .{
+            .state_invalid = (ag.state == .invalid),
+            .target_none = target_none,
+            .target_failed = target_failed,
+            .target_pending = target_pending,
+            .partial = ag.partial,
+            .ncorners = @intCast(ag.ncorners),
+            .desired_speed = ag.desired_speed,
+            .speed = speed,
+            .near_target = near_target,
+        };
+    }
+
+    /// Итератор по «застрявшим» агентам для отрисовки why-stuck меток в мире
+    /// (метки рисует main.zig, владеющий cam/worldToScreen — как forEachSearchLabel
+    /// у tester'а). «Застрявший» = classify(...) НЕ ∈ {moving, arrived}. emit
+    /// получает позицию над агентом + короткий reasonText(verdict).
+    pub fn forEachWhyStuckLabel(
+        self: *CrowdTool,
+        ctx: anytype,
+        comptime emit: fn (@TypeOf(ctx), pos: [3]f32, text: []const u8) void,
+    ) void {
+        if (!self.show_why_stuck) return;
+        const c = if (self.crowd) |*cc| cc else return;
+        for (0..self.agent_count) |i| {
+            const ag = c.getAgent(@intCast(i)) orelse continue;
+            if (!ag.active) continue;
+            const sig = gatherSignals(ag);
+            const v = why_stuck.classify(sig);
+            if (v == .moving or v == .arrived) continue; // реально не застрял
+            const wp: [3]f32 = .{ ag.npos[0], ag.npos[1] + ag.params.height + 0.3, ag.npos[2] };
+            emit(ctx, wp, why_stuck.reasonShort(v));
+        }
+    }
+
     pub fn render(self: *CrowdTool) void {
         const c = if (self.crowd) |*cc| cc else return;
         const dd = self.dd_gl.debugDraw();
@@ -604,6 +671,28 @@ pub const CrowdTool = struct {
             _ = dvui.checkbox(@src(), &self.show_vo, "Show VO", .{});
             _ = dvui.checkbox(@src(), &self.show_opt, "Show Path Optimization", .{});
             _ = dvui.checkbox(@src(), &self.show_neighbors, "Show Neighbors", .{});
+            _ = dvui.checkbox(@src(), &self.show_why_stuck, "Show Why-Stuck", .{});
+        }
+
+        // LIVE why-stuck: развёрнутое объяснение для ВЫДЕЛЕННОГО агента (под Selected
+        // Debug Draw). Метки над всеми застрявшими рисует main.zig (worldToScreen).
+        if (self.show_why_stuck) {
+            if (self.crowd) |*c| {
+                if (self.selected) |sel| {
+                    if (c.getAgent(@intCast(sel))) |ag| {
+                        if (ag.active) {
+                            const sig = gatherSignals(ag);
+                            const v = why_stuck.classify(sig);
+                            var ebuf: [512]u8 = undefined;
+                            const txt = why_stuck.explainText(&ebuf, v, sig);
+                            dvui.label(@src(), "Why-Stuck [agent {d}]:", .{sel}, .{});
+                            dvui.labelNoFmt(@src(), txt, .{}, .{ .expand = .horizontal });
+                        }
+                    }
+                } else {
+                    dvui.labelNoFmt(@src(), "Why-Stuck: select an agent for details", .{}, .{});
+                }
+            }
         }
         if (ui.treeNode(@src(), "Debug Draw")) {
             _ = dvui.checkbox(@src(), &self.show_labels, "Show Labels", .{});

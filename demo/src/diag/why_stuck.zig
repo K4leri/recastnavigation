@@ -134,6 +134,23 @@ pub fn reasonText(v: Verdict) []const u8 {
     };
 }
 
+/// Короткий тег вердикта для мировой метки НАД застрявшим агентом (по worldToScreen).
+/// reasonText — целые предложения, слишком длинны для метки в сцене; здесь — 1-2 слова.
+/// Short verdict tag for an in-world label above a stuck agent.
+pub fn reasonShort(v: Verdict) []const u8 {
+    return switch (v) {
+        .moving => "moving",
+        .arrived => "arrived",
+        .off_navmesh => "OFF-MESH",
+        .no_target => "no target",
+        .target_pending => "pending",
+        .no_path => "NO PATH",
+        .partial_path => "PARTIAL",
+        .blocked_by_neighbors => "BLOCKED",
+        .unknown => "stuck?",
+    };
+}
+
 /// Развёрнутое объяснение ("Explain"): дописывает детали (счётчики/скорости)
 /// в `buf`, возвращает срез. Не аллоцирует.
 /// Longer "Explain" detail; references speeds / corner counts. Writes into the
@@ -294,6 +311,13 @@ test "reasonText: non-empty for every verdict" {
     inline for (std.meta.fields(Verdict)) |f| {
         const v: Verdict = @enumFromInt(f.value);
         try std.testing.expect(reasonText(v).len > 0);
+    }
+}
+
+test "reasonShort: non-empty for every verdict" {
+    inline for (std.meta.fields(Verdict)) |f| {
+        const v: Verdict = @enumFromInt(f.value);
+        try std.testing.expect(reasonShort(v).len > 0);
     }
 }
 
