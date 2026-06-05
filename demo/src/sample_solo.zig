@@ -1048,7 +1048,7 @@ pub const SampleSolo = struct {
     }
 
     fn drawDebugMode(self: *SampleSolo) void {
-        dvui.labelNoFmt(@src(), "Draw", .{}, .{});
+        dvui.labelNoFmt(@src(), "Draw Settings", .{}, .{});
         const has_nav = self.navmesh != null;
         const has_hf = self.hf != null;
         const has_chf = self.chf != null;

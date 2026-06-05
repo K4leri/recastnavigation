@@ -513,7 +513,7 @@ pub const SampleTile = struct {
     }
 
     pub fn drawDebugMode(self: *SampleTile) void {
-        dvui.labelNoFmt(@src(), "Draw", .{}, .{});
+        dvui.labelNoFmt(@src(), "Draw Settings", .{}, .{});
         const has_nav = self.navmesh != null;
         self.dmOpt("Input Mesh", .mesh, self.geom != null, 0);
         self.dmOpt("Navmesh", .navmesh, has_nav, 1);

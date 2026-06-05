@@ -1919,12 +1919,15 @@ pub fn main(main_init: std.process.Init) !void {
             // Wireframe routes the navmesh draw through poly_visit.outlineNavMesh
             // (edges only). The group checkboxes hide each scene group across all
             // three samples. id_extra 356..361 (after the 340..355 iso range).
-            ui.section(@src(), "Layers / Wireframe");
+            ui.section(@src(), "Layers");
             {
                 const grp = &view_state.groups;
+                // "Show input mesh" / "Show navmesh" checkboxes removed: they duplicated
+                // the Draw Settings draw-mode controls. The render gates on
+                // grp.input_mesh / grp.navmesh remain; both default true (view_state.zig)
+                // and nothing else flips them, so input-mesh + navmesh always render
+                // (controlled by the draw mode).
                 _ = dvui.checkbox(@src(), &view_state.wireframe, "Wireframe (navmesh edges)", .{ .id_extra = 356 });
-                _ = dvui.checkbox(@src(), &grp.input_mesh, "Show input mesh", .{ .id_extra = 357 });
-                _ = dvui.checkbox(@src(), &grp.navmesh, "Show navmesh", .{ .id_extra = 358 });
                 _ = dvui.checkbox(@src(), &grp.offmesh, "Show off-mesh links", .{ .id_extra = 359 });
                 _ = dvui.checkbox(@src(), &grp.convex, "Show convex volumes", .{ .id_extra = 360 });
                 _ = dvui.checkbox(@src(), &grp.labels, "Agent/test labels (crowd/target/A* g-h-f)", .{ .id_extra = 361 });
