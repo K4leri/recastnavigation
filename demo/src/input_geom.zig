@@ -208,6 +208,13 @@ pub const InputGeom = struct {
     pub fn deleteConvexVolume(self: *InputGeom, i: usize) void {
         if (i < self.volumes.items.len) _ = self.volumes.orderedRemove(i);
     }
+    /// Re-insert a fully-formed ConvexVolume (incl. id/mode/band/verts) at index
+    /// `i` — undo of a delete. Does NOT touch next_volume_id (the captured id is
+    /// re-used verbatim, which is correct because it was never recycled).
+    pub fn insertConvexVolume(self: *InputGeom, i: usize, vol: ConvexVolume) !void {
+        const at = @min(i, self.volumes.items.len);
+        try self.volumes.insert(at, vol);
+    }
 
     // --- off-mesh connections ---
     pub fn addOffMeshConnection(self: *InputGeom, start: [3]f32, end: [3]f32, radius: f32, bidir: u8, area: u8, flags: u16) !void {
@@ -224,6 +231,32 @@ pub const InputGeom = struct {
     }
     pub fn offMeshCount(self: *const InputGeom) usize {
         return self.off_rad.items.len;
+    }
+    /// Remove the off-mesh connection at index `i` from every parallel array.
+    /// orderedRemove keeps the remaining connections in order (1-в-1 with how
+    /// upstream Tool_OffMeshConnection deletes — swap-last is avoided so undo can
+    /// re-insert at the captured index and restore the exact ordering).
+    pub fn deleteOffMeshConnection(self: *InputGeom, i: usize) void {
+        if (i >= self.offMeshCount()) return;
+        // 6 verts per connection.
+        var k: usize = 0;
+        while (k < 6) : (k += 1) _ = self.off_verts.orderedRemove(i * 6);
+        _ = self.off_rad.orderedRemove(i);
+        _ = self.off_dir.orderedRemove(i);
+        _ = self.off_area.orderedRemove(i);
+        _ = self.off_flags.orderedRemove(i);
+        _ = self.off_id.orderedRemove(i);
+    }
+    /// Re-insert a previously-captured off-mesh connection at index `i` (undo of a
+    /// delete). Restores all 6 fields at the exact position so ordering matches.
+    pub fn insertOffMeshConnection(self: *InputGeom, i: usize, verts: [6]f32, radius: f32, dir: u8, area: u8, flags: u16, id: u32) !void {
+        const at = @min(i, self.offMeshCount());
+        try self.off_verts.insertSlice(at * 6, &verts);
+        try self.off_rad.insert(at, radius);
+        try self.off_dir.insert(at, dir);
+        try self.off_area.insert(at, area);
+        try self.off_flags.insert(at, flags);
+        try self.off_id.insert(at, id);
     }
 
     // --- отрисовка ---
