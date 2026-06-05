@@ -14,6 +14,7 @@ const area_types = @import("../area_types.zig");
 const cs = @import("color_scheme.zig");
 const components = @import("components.zig");
 const isolation = @import("isolation.zig");
+const reachability = @import("../diag/reachability.zig");
 
 const NavMesh = dt.NavMesh;
 
@@ -199,6 +200,67 @@ pub fn fillNavMesh(dd: dbg.DebugDraw, mesh: *const NavMesh, scheme: cs.ColorSche
 
             const ctx = buildCtx(&ranges, tile, p, ti, i);
             const col = cs.colorForPoly(scheme, ctx);
+
+            for (0..@as(usize, pd.tri_count)) |j| {
+                const t_idx = (pd.tri_base + @as(u32, @intCast(j))) * 4;
+                const t = tile.detail_tris[t_idx .. t_idx + 4];
+                for (0..3) |k| {
+                    if (t[k] < p.vert_count) {
+                        const v_idx = @as(usize, p.verts[t[k]]) * 3;
+                        dd.vertex(@ptrCast(&tile.verts[v_idx]), col);
+                    } else {
+                        const d_idx = (@as(usize, pd.vert_base) + @as(usize, t[k] - p.vert_count)) * 3;
+                        dd.vertex(@ptrCast(&tile.detail_verts[d_idx]), col);
+                    }
+                }
+            }
+        }
+    }
+
+    dd.end();
+    dd.depthMask(true);
+}
+
+/// Colour for an UNREACHABLE poly in the reachability heatmap: dim translucent
+/// grey, so regions the source can't reach read as visually distinct (not part of
+/// the green->red gradient). Cluster A, A6.
+const HEATMAP_UNREACHED: u32 = dbg.rgba(70, 70, 70, 110);
+
+/// Reachability heatmap overlay (cluster A, A6). Mirrors `fillNavMesh`'s
+/// detail-triangle fill, but colours each non-offmesh poly by its ACCUMULATED
+/// reachability cost from the heatmap's source (not the per-poly area cost):
+///   reachable -> cost gradient COST_LO(cheap/near) .. COST_HI(dear/far),
+///                normalised over [hm.lo, hm.hi];
+///   unreachable / filtered-out -> dim grey (HEATMAP_UNREACHED), so unreachable
+///                regions are obviously different from the reachable ramp.
+/// Looks each poly up by its ref via `hm.costForRef` (O(1) per poly). Same
+/// depthMask(false) + .tris pass as fillNavMesh.
+///
+/// Хитмап достижимости: заливка каждого поли цветом по накопленной стоимости из
+/// источника; недостижимые — тусклый серый.
+pub fn fillNavMeshHeatmap(
+    dd: dbg.DebugDraw,
+    mesh: *const NavMesh,
+    hm: *const reachability.Heatmap,
+) void {
+    dd.depthMask(false);
+    dd.begin(.tris, 1.0);
+
+    for (0..@intCast(mesh.max_tiles)) |ti| {
+        const tile = &mesh.tiles[ti];
+        const hdr = tile.header orelse continue;
+        const base = mesh.getPolyRefBase(tile);
+
+        for (0..@intCast(hdr.poly_count)) |i| {
+            const p = &tile.polys[i];
+            if (p.getType() == .offmesh_connection) continue;
+            const pd = &tile.detail_meshes[i];
+
+            const ref = base | @as(dt.PolyRef, @intCast(i));
+            const col = if (hm.costForRef(mesh, ref)) |cost|
+                cs.colorForPoly(.cost, .{ .cost = cost, .cost_min = hm.lo, .cost_max = hm.hi })
+            else
+                HEATMAP_UNREACHED;
 
             for (0..@as(usize, pd.tri_count)) |j| {
                 const t_idx = (pd.tri_base + @as(u32, @intCast(j))) * 4;

@@ -11,6 +11,8 @@ const area_types = @import("area_types.zig");
 const poly_flags = @import("poly_flags.zig");
 const ui = @import("ui.zig");
 const components = @import("render/components.zig");
+const poly_visit = @import("render/poly_visit.zig");
+const reachability = @import("diag/reachability.zig");
 const diagnose = @import("diag/diagnose.zig");
 const wnp = @import("diag/why_no_path.zig");
 const astar_player = @import("diag/astar_player.zig");
@@ -114,6 +116,15 @@ pub const NavMeshTesterTool = struct {
     slice_finished: bool = false, // поиск завершён (success/failure) + finalize сделан
     slice_status: dt.Status = .{}, // последний статус update/init (для status-строки)
 
+    // --- Reachability heatmap (cluster A, A6) --------------------------------
+    // When ON and start_ref != 0, flood from the start poly under the current
+    // filter and overlay each reachable poly's accumulated cost as a green->red
+    // gradient (unreachable = dim grey). The flood is O((V+E) log V) and RARE:
+    // computed only when start/filter change (recalc), cached here, freed on
+    // recompute + deinit. `heatmap` null = nothing computed yet (or no source).
+    reach_on: bool = false,
+    heatmap: ?reachability.Heatmap = null,
+
     pub fn init(alloc: std.mem.Allocator, dd_gl: *ddgl.DebugDrawGL) NavMeshTesterTool {
         var self = NavMeshTesterTool{ .alloc = alloc, .dd_gl = dd_gl, .filter = dt.QueryFilter.init() };
         self.applyFlags();
@@ -129,6 +140,27 @@ pub const NavMeshTesterTool = struct {
     pub fn deinit(self: *NavMeshTesterTool) void {
         if (self.query) |q| q.deinit();
         self.query = null;
+        self.freeHeatmap();
+    }
+
+    /// Free the cached reachability heatmap (no-op if none). Called before each
+    /// recompute and on deinit/navmesh-reload so the per-tile slices never leak.
+    /// Освобождает кэш хитмапа (перед пересчётом / при deinit).
+    fn freeHeatmap(self: *NavMeshTesterTool) void {
+        if (self.heatmap) |*hm| hm.deinit();
+        self.heatmap = null;
+    }
+
+    /// (Re)compute the reachability heatmap from the current start_ref under the
+    /// current filter, if the overlay is on. Frees any previous heatmap first.
+    /// Called from recalc (start/filter changed) and when the toggle flips on.
+    /// On OOM/flood failure, leaves heatmap = null (overlay falls back to nothing).
+    fn recomputeHeatmap(self: *NavMeshTesterTool) void {
+        self.freeHeatmap();
+        if (!self.reach_on) return;
+        const nav = self.navmesh orelse return;
+        if (self.start_ref == 0) return;
+        self.heatmap = reachability.flood(nav, self.start_ref, &self.filter, self.alloc) catch null;
     }
 
     pub fn setNavMesh(self: *NavMeshTesterTool, nm: ?*dt.NavMesh) void {
@@ -141,6 +173,7 @@ pub const NavMeshTesterTool = struct {
         self.nstraight = 0;
         self.spos_set = false;
         self.epos_set = false;
+        self.freeHeatmap(); // stale heatmap can't apply to a new mesh
         // Reset the sliced-search player so a stale slice can't tick against the new
         // (freshly-initialised, never-sliced) query after a navmesh reload.
         self.slice_active = false;
@@ -274,6 +307,11 @@ pub const NavMeshTesterTool = struct {
             .pathfind_follow, .pathfind_straight, .pathfind_sliced => self.runDiagnosis(q),
             else => {},
         }
+
+        // Reachability heatmap (A6): recompute only here — recalc fires exactly on
+        // the inputs that change the flood (start point click / filter flag edit /
+        // mode switch). Result is cached on the tool; render() only reads it.
+        self.recomputeHeatmap();
     }
 
     /// Запускает живую диагностику why-no-path и сохраняет вердикт на инструменте.
@@ -500,6 +538,15 @@ pub const NavMeshTesterTool = struct {
         self.tickSlice();
 
         const dd = self.dd_gl.debugDraw();
+
+        // Reachability heatmap (A6): overlay the cost gradient FIRST (under the
+        // start/end/path highlights, which stay readable on top). Cached — drawn
+        // only; no per-frame flood.
+        if (self.reach_on) {
+            if (self.heatmap) |*hm| {
+                if (self.navmesh) |nm| poly_visit.fillNavMeshHeatmap(dd, nm, hm);
+            }
+        }
 
         // подсветка полигонов результата: start/end/path разными цветами (как оригинал)
         if (self.navmesh) |nm| {
@@ -755,6 +802,19 @@ pub const NavMeshTesterTool = struct {
         if (changed) {
             self.applyFlags();
             self.recalc();
+        }
+
+        // Reachability heatmap toggle (A6). Flooding from the current start poly
+        // under the active filter; recomputes only on toggle / start / filter.
+        ui.section(@src(), "Reachability");
+        if (dvui.checkbox(@src(), &self.reach_on, "Heatmap from start", .{})) {
+            self.recomputeHeatmap();
+        }
+        if (self.reach_on) {
+            if (self.heatmap) |hm|
+                dvui.label(@src(), "reached: {d}  cost {d:.2}..{d:.2}", .{ hm.reached, hm.lo, hm.hi }, .{})
+            else
+                dvui.labelNoFmt(@src(), "(set a start point — LMB)", .{}, .{});
         }
 
         _ = dvui.separator(@src(), .{ .expand = .horizontal });
