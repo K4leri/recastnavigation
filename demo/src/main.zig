@@ -152,7 +152,7 @@ pub fn main(main_init: std.process.Init) !void {
     // С дефолтным LESS совпадающие фрагменты проигрывают z-тест -> навмеш невидим/мерцает.
     zgl.depthFunc(.less_or_equal);
     zgl.enable(.multisample); // 4x MSAA сглаживает копланарные швы граней вокселей (как RecastDemo)
-    std.debug.print("[GL] samples={d} BUILD_MARKER=tester-oob-v5 renderer={s} vendor={s}\n", .{ zgl.getInteger(.samples), zgl.getString(.renderer) orelse "?", zgl.getString(.vendor) orelse "?" });
+    std.debug.print("[GL] samples={d} BUILD_MARKER=props-fix-v6 renderer={s} vendor={s}\n", .{ zgl.getInteger(.samples), zgl.getString(.renderer) orelse "?", zgl.getString(.vendor) orelse "?" });
     zgl.enable(.blend);
     zgl.blendFunc(.src_alpha, .one_minus_src_alpha);
 
@@ -1347,28 +1347,38 @@ pub fn main(main_init: std.process.Init) !void {
                     .select => {
                         // F3 selection panel: live count + clear / delete buttons.
                         dvui.label(@src(), "Selected: {d} volume(s), {d} off-mesh", .{ selection.volumes.items.len, selection.offmesh.items.len }, .{});
-                        var row = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
-                        defer row.deinit();
-                        if (dvui.button(@src(), "Clear selection", .{ .grayed = selection.isEmpty() }, .{ .id_extra = 980 })) {
-                            selection.clear();
-                        }
-                        if (dvui.button(@src(), "Delete selected", .{ .grayed = selection.isEmpty() }, .{ .id_extra = 981 })) {
-                            if (!selection.isEmpty()) {
-                                deleteSelected(main_init.gpa, &geom, &selection, &undo_stack);
+                        // NOTE: each button row is wrapped in its OWN `{}` so the
+                        // horizontal box's `defer deinit()` fires HERE — not at the end
+                        // of the whole `.select` case. Without the scope the boxes stay
+                        // open and the entire Properties inspector below would render
+                        // INSIDE the last horizontal box (squished off-panel -> the user
+                        // sees no edit fields at all). This was the "no params" bug.
+                        {
+                            var row = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
+                            defer row.deinit();
+                            if (dvui.button(@src(), "Clear selection", .{ .grayed = selection.isEmpty() }, .{ .id_extra = 980 })) {
                                 selection.clear();
-                                geom_edited = true;
+                            }
+                            if (dvui.button(@src(), "Delete selected", .{ .grayed = selection.isEmpty() }, .{ .id_extra = 981 })) {
+                                if (!selection.isEmpty()) {
+                                    deleteSelected(main_init.gpa, &geom, &selection, &undo_stack);
+                                    selection.clear();
+                                    geom_edited = true;
+                                }
                             }
                         }
                         // Copy / Paste mirror the Ctrl+C / Ctrl+V hotkeys (F3 W2).
-                        var row2 = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
-                        defer row2.deinit();
-                        if (dvui.button(@src(), "Copy (Ctrl+C)", .{ .grayed = selection.isEmpty() }, .{ .id_extra = 982 })) {
-                            if (!selection.isEmpty()) doCopy(&clipboard, &geom, &selection);
-                        }
-                        if (dvui.button(@src(), "Paste (Ctrl+V)", .{ .grayed = clipboard.isEmpty() }, .{ .id_extra = 983 })) {
-                            if (!clipboard.isEmpty()) {
-                                doPaste(main_init.gpa, &clipboard, &geom, &selection, &undo_stack);
-                                geom_edited = true;
+                        {
+                            var row2 = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
+                            defer row2.deinit();
+                            if (dvui.button(@src(), "Copy (Ctrl+C)", .{ .grayed = selection.isEmpty() }, .{ .id_extra = 982 })) {
+                                if (!selection.isEmpty()) doCopy(&clipboard, &geom, &selection);
+                            }
+                            if (dvui.button(@src(), "Paste (Ctrl+V)", .{ .grayed = clipboard.isEmpty() }, .{ .id_extra = 983 })) {
+                                if (!clipboard.isEmpty()) {
+                                    doPaste(main_init.gpa, &clipboard, &geom, &selection, &undo_stack);
+                                    geom_edited = true;
+                                }
                             }
                         }
 
