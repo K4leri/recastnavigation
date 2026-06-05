@@ -4,7 +4,6 @@
 //! Задача #9: окно + GL-контекст + dvui ontop + кадровый цикл.
 
 const std = @import("std");
-const builtin = @import("builtin");
 const dvui = @import("dvui");
 const Backend = @import("glfw-backend");
 const zgl = @import("zgl");
@@ -56,24 +55,8 @@ fn scrollCallback(_: *zglfw.Window, _: f64, yoffset: f64) callconv(.c) void {
     g_scroll += yoffset;
 }
 
-extern "user32" fn SetProcessDpiAwarenessContext(value: ?*anyopaque) callconv(.winapi) c_int;
-
 pub fn main(main_init: std.process.Init) !void {
     if (dvui.render_backend.kind != .opengl) @compileError("ожидается opengl render_backend");
-
-    // Make the process DPI-UNAWARE *before* glfw initialises (glfw respects an
-    // already-set awareness). The dvui glfw backend scales cursor coordinates by
-    // glfwGetWindowContentScale() while laying the UI out at the raw framebuffer
-    // size (which on Windows equals the window size, i.e. scale 1). On a high-DPI
-    // monitor (e.g. a 4K @ 150%) contentScale is 1.5 but the framebuffer is not,
-    // so the cursor is pushed 1.5x too far and clicks land below/right of the
-    // target — only on the hi-DPI monitor. DPI-unaware forces contentScale to 1.0
-    // everywhere, so clicks are correct on every monitor (Windows bitmap-scales
-    // the window on hi-DPI). DPI_AWARENESS_CONTEXT_UNAWARE == (HANDLE)-1.
-    if (builtin.os.tag == .windows) {
-        const DPI_AWARENESS_CONTEXT_UNAWARE: ?*anyopaque = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
-        _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_UNAWARE);
-    }
 
     // --- окно + GL 3.3 core контекст (владеем мы) ---
     try zglfw.init();
