@@ -42,6 +42,7 @@ const Selection = @import("edit/selection.zig").Selection;
 const selection_mod = @import("edit/selection.zig");
 const snap_mod = @import("edit/snap.zig");
 const Clipboard = @import("edit/clipboard.zig").Clipboard;
+const inspector = @import("edit/inspector.zig");
 const Vec3 = recast.math.Vec3;
 
 const ActiveTool = tool_registry.ToolId; // { none, tester, prune, offmesh, convex, crowd }
@@ -354,6 +355,14 @@ pub fn main(main_init: std.process.Init) !void {
     var prev_undo = false; // edge-детект Ctrl+Z (undo)
     var prev_redo = false; // edge-детект Ctrl+Y / Ctrl+Shift+Z (redo)
     var geom_edited = false; // set when undo/redo changed geom -> trigger rebuild
+
+    // F5 Properties inspector — staging buffers that mirror the SINGLE selected
+    // object. `inspect_id`/`inspect_is_volume` track which object the buffers
+    // currently reflect; when the single selection differs, they are re-seeded.
+    var inspect_id: u32 = 0;
+    var inspect_is_volume: bool = false;
+    var inspect_vol: inspector.VolumeStaging = .{};
+    var inspect_off: inspector.OffMeshStaging = .{};
     // F6 incremental rebuild: the geom edit-bbox from the PREVIOUS frame. Unioning
     // it with the post-edit bbox makes the dirty-tile set cover deletes too (the
     // deleted object was present last frame). Recomputed every frame below.
@@ -1135,6 +1144,123 @@ pub fn main(main_init: std.process.Init) !void {
                                 doPaste(main_init.gpa, &clipboard, &geom, &selection, &undo_stack);
                                 geom_edited = true;
                             }
+                        }
+
+                        // --- F5 Properties inspector (single-selection only) ---
+                        if (selection.count() == 1) {
+                            if (selection.volumes.items.len == 1) {
+                                // Resolve the live volume by its stable id.
+                                const sel_id = selection.volumes.items[0];
+                                var vi: ?usize = null;
+                                for (geom.volumes.items, 0..) |*v, i| {
+                                    if (v.id == sel_id) vi = i;
+                                }
+                                if (vi) |idx| {
+                                    const live = geom.volumes.items[idx];
+                                    // Re-seed staging when the selected object changed.
+                                    if (!(inspect_is_volume and inspect_id == sel_id)) {
+                                        inspect_vol = inspector.VolumeStaging.seed(live);
+                                        inspect_id = sel_id;
+                                        inspect_is_volume = true;
+                                    }
+                                    ui.section(@src(), "Properties — Volume");
+                                    dvui.label(@src(), "id: {d}", .{sel_id}, .{});
+                                    // Mode radios (prism/surface).
+                                    if (ui.radio(@src(), inspect_vol.mode == .prism, "Prism (flat box)", 940))
+                                        inspect_vol.mode = .prism;
+                                    if (ui.radio(@src(), inspect_vol.mode == .surface, "Surface (draped slab)", 941))
+                                        inspect_vol.mode = .surface;
+                                    _ = dvui.sliderEntry(@src(), "hmin {d:.2}", .{ .value = &inspect_vol.hmin, .min = -100, .max = 100, .interval = null }, .{ .expand = .horizontal });
+                                    _ = dvui.sliderEntry(@src(), "hmax {d:.2}", .{ .value = &inspect_vol.hmax, .min = -100, .max = 100, .interval = null }, .{ .expand = .horizontal });
+                                    if (inspect_vol.mode == .surface) {
+                                        _ = dvui.sliderEntry(@src(), "band below {d:.2}", .{ .value = &inspect_vol.band_below, .min = 0, .max = 50, .interval = null }, .{ .expand = .horizontal });
+                                        _ = dvui.sliderEntry(@src(), "band above {d:.2}", .{ .value = &inspect_vol.band_above, .min = 0, .max = 50, .interval = null }, .{ .expand = .horizontal });
+                                    }
+                                    // Area dropdown — only `used` area types are offered.
+                                    inspectorAreaDropdown(&inspect_vol.area);
+
+                                    var arow = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
+                                    defer arow.deinit();
+                                    if (dvui.button(@src(), "Apply", .{}, .{ .id_extra = 942 })) {
+                                        const before = live;
+                                        const after = inspector.buildAfterVolume(live, inspect_vol);
+                                        geom.volumes.items[idx] = after; // mutate live (id-keyed index)
+                                        undo_stack.record(.{ .edit_volume = .{ .id = sel_id, .before = before, .after = after } });
+                                        geom_edited = true;
+                                        inspect_vol = inspector.VolumeStaging.seed(after); // re-seed
+                                        std.debug.print("[INFO] inspector: applied edit to volume id {d}\n", .{sel_id});
+                                    }
+                                    if (dvui.button(@src(), "Revert", .{}, .{ .id_extra = 943 })) {
+                                        inspect_vol = inspector.VolumeStaging.seed(live);
+                                    }
+                                }
+                            } else if (selection.offmesh.items.len == 1) {
+                                // Resolve the live off-mesh by off_id.
+                                const sel_id = selection.offmesh.items[0];
+                                var oi: ?usize = null;
+                                for (geom.off_id.items, 0..) |oid, i| {
+                                    if (oid == sel_id) oi = i;
+                                }
+                                if (oi) |idx| {
+                                    const live = edit_op.OffMeshData.capture(&geom, idx);
+                                    if (!(!inspect_is_volume and inspect_id == sel_id)) {
+                                        inspect_off = inspector.OffMeshStaging.seed(live);
+                                        inspect_id = sel_id;
+                                        inspect_is_volume = false;
+                                    }
+                                    ui.section(@src(), "Properties — Off-Mesh");
+                                    dvui.label(@src(), "id: {d}", .{sel_id}, .{});
+                                    dvui.labelNoFmt(@src(), "Start (x,y,z)", .{}, .{});
+                                    _ = dvui.sliderEntry(@src(), "sx {d:.2}", .{ .value = &inspect_off.start[0], .min = -1000, .max = 1000, .interval = null }, .{ .expand = .horizontal });
+                                    _ = dvui.sliderEntry(@src(), "sy {d:.2}", .{ .value = &inspect_off.start[1], .min = -1000, .max = 1000, .interval = null }, .{ .expand = .horizontal });
+                                    _ = dvui.sliderEntry(@src(), "sz {d:.2}", .{ .value = &inspect_off.start[2], .min = -1000, .max = 1000, .interval = null }, .{ .expand = .horizontal });
+                                    dvui.labelNoFmt(@src(), "End (x,y,z)", .{}, .{});
+                                    _ = dvui.sliderEntry(@src(), "ex {d:.2}", .{ .value = &inspect_off.end[0], .min = -1000, .max = 1000, .interval = null }, .{ .expand = .horizontal });
+                                    _ = dvui.sliderEntry(@src(), "ey {d:.2}", .{ .value = &inspect_off.end[1], .min = -1000, .max = 1000, .interval = null }, .{ .expand = .horizontal });
+                                    _ = dvui.sliderEntry(@src(), "ez {d:.2}", .{ .value = &inspect_off.end[2], .min = -1000, .max = 1000, .interval = null }, .{ .expand = .horizontal });
+                                    _ = dvui.sliderEntry(@src(), "radius {d:.2}", .{ .value = &inspect_off.rad, .min = 0, .max = 50, .interval = null }, .{ .expand = .horizontal });
+                                    // Direction toggle (0 = one-way, 1 = bidirectional).
+                                    {
+                                        var biz = inspect_off.dir != 0;
+                                        if (dvui.checkbox(@src(), &biz, "Bidirectional", .{ .id_extra = 944 }))
+                                            inspect_off.dir = if (biz) 1 else 0;
+                                    }
+                                    inspectorAreaDropdown(&inspect_off.area);
+                                    // Flags — one checkbox per registered (non-reserved) poly flag.
+                                    dvui.labelNoFmt(@src(), "Flags", .{}, .{});
+                                    {
+                                        var fi: usize = 0;
+                                        while (fi < poly_flags.MAX_FLAGS) : (fi += 1) {
+                                            const fl = poly_flags.get(fi) orelse continue;
+                                            const bit = poly_flags.bitOf(fi).?;
+                                            var on = (inspect_off.flags & bit) != 0;
+                                            if (dvui.checkbox(@src(), &on, fl.name(), .{ .id_extra = 950 + fi })) {
+                                                if (on) inspect_off.flags |= bit else inspect_off.flags &= ~bit;
+                                            }
+                                        }
+                                    }
+
+                                    var orow = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
+                                    defer orow.deinit();
+                                    if (dvui.button(@src(), "Apply", .{}, .{ .id_extra = 945 })) {
+                                        const before = live;
+                                        const after = inspector.buildAfterOffmesh(live, inspect_off);
+                                        // Mutate live via the op, then record (one edit_offmesh).
+                                        const op = edit_op.EditOp{ .edit_offmesh = .{ .id = sel_id, .before = before, .after = after } };
+                                        op.apply(&geom);
+                                        undo_stack.record(op);
+                                        geom_edited = true;
+                                        inspect_off = inspector.OffMeshStaging.seed(after); // re-seed
+                                        std.debug.print("[INFO] inspector: applied edit to off-mesh id {d}\n", .{sel_id});
+                                    }
+                                    if (dvui.button(@src(), "Revert", .{}, .{ .id_extra = 946 })) {
+                                        inspect_off = inspector.OffMeshStaging.seed(live);
+                                    }
+                                }
+                            }
+                        } else {
+                            // Not a single selection — reset so it re-seeds next time.
+                            inspect_id = 0;
                         }
                     },
                 }
@@ -2100,6 +2226,38 @@ fn pickPoint(geom: *const InputGeom, start: Vec3, end: Vec3) ?Vec3 {
 /// original list exactly (the invariant proved by the composite undo_stack test).
 /// On any allocation failure the captured ops are freed and nothing is recorded
 /// (the geom mutations already happened are left as-is — a no-undo edge case).
+/// F5 inspector area dropdown: lists every `used` area type by name and writes
+/// the chosen area id back into `area_proxy` (an f32 holding the u8 area). The
+/// dropdown index <-> area-id mapping is rebuilt each frame from the registry so
+/// it tracks add/remove of area types. Falls back to a passthrough label when no
+/// types exist.
+fn inspectorAreaDropdown(area_proxy: *f32) void {
+    var labels: [area_types.MAX_AREA_TYPES][]const u8 = undefined;
+    var ids: [area_types.MAX_AREA_TYPES]usize = undefined;
+    var n: usize = 0;
+    var cur_choice: usize = 0;
+    const cur_id: usize = @intFromFloat(std.math.clamp(@round(area_proxy.*), 0, 63));
+    var i: usize = 0;
+    while (i < area_types.MAX_AREA_TYPES) : (i += 1) {
+        if (area_types.get(i)) |t| {
+            if (t.used) {
+                labels[n] = t.name();
+                ids[n] = i;
+                if (i == cur_id) cur_choice = n;
+                n += 1;
+            }
+        }
+    }
+    if (n == 0) {
+        dvui.label(@src(), "area: {d}", .{cur_id}, .{});
+        return;
+    }
+    dvui.labelNoFmt(@src(), "Area", .{}, .{});
+    if (dvui.dropdown(@src(), labels[0..n], .{ .choice = &cur_choice }, .{}, .{ .expand = .horizontal })) {
+        area_proxy.* = @floatFromInt(ids[cur_choice]);
+    }
+}
+
 fn deleteSelected(alloc: std.mem.Allocator, geom: *InputGeom, sel: *Selection, undo_stack: *UndoStack) void {
     const Managed = std.array_list.Managed;
     // Collect current indices for each selected id (skip ids no longer present).
