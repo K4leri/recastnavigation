@@ -1926,7 +1926,7 @@ pub fn main(main_init: std.process.Init) !void {
                 _ = dvui.checkbox(@src(), &grp.navmesh, "Show navmesh", .{ .id_extra = 358 });
                 _ = dvui.checkbox(@src(), &grp.offmesh, "Show off-mesh links", .{ .id_extra = 359 });
                 _ = dvui.checkbox(@src(), &grp.convex, "Show convex volumes", .{ .id_extra = 360 });
-                _ = dvui.checkbox(@src(), &grp.labels, "Show labels", .{ .id_extra = 361 });
+                _ = dvui.checkbox(@src(), &grp.labels, "Agent/test labels (crowd/target/A* g-h-f)", .{ .id_extra = 361 });
             }
 
             // --- Capture (cluster E, P2-1) moved to its own floating window
@@ -2566,7 +2566,9 @@ pub fn main(main_init: std.process.Init) !void {
             // mode (none/hovered/all). `hovered` labels the poly under the cursor;
             // `all` labels every visible poly, auto-downgrading to `hovered` when the
             // would-be count exceeds overlay.MAX_ALL_LABELS (perf + readability).
-            if (view_state.groups.labels and overlay.mode != .none) {
+            // Poly Labels is its OWN control (the radio), independent of the
+            // "Agent/test labels" group toggle — they were redundant/confusing.
+            if (overlay.mode != .none) {
                 const nm_opt = switch (sample_kind) {
                     .solo => solo.navMesh(),
                     .tile => tile.navMesh(),
