@@ -39,4 +39,5 @@ test {
     _ = @import("diag/query_bench.zig");
     _ = @import("diag/poly_inspect.zig");
     _ = @import("diag/artifacts.zig");
+    _ = @import("diag/mem_budget.zig");
 }

@@ -23,6 +23,7 @@ const rc = recast.recast;
 const dt = recast.detour;
 const dbg = recast.debug;
 const Vec3 = recast.math.Vec3;
+const mem_budget = @import("diag/mem_budget.zig");
 
 pub const DrawMode = enum { mesh, navmesh, navmesh_trans, navmesh_bvtree, navmesh_portals };
 
@@ -454,6 +455,36 @@ pub const SampleTile = struct {
         if (dvui.button(@src(), "Load", .{}, .{})) self.loadNavMesh();
         dvui.label(@src(), "Build Time: {d:.1}ms", .{self.build_time_ms}, .{});
         _ = dvui.separator(@src(), .{ .expand = .horizontal });
+        self.drawMemory();
+    }
+
+    /// Memory Budget (C3) — Tile variant.
+    /// Reports total navmesh bytes (sum of all tile data_size) + tile count + avg.
+    /// id_extra range 7531-7540.
+    pub fn drawMemory(self: *SampleTile) void {
+        ui.section(@src(), "Memory");
+        const nm = if (self.navmesh) |*n| n else {
+            dvui.labelNoFmt(@src(), "Build the Tile mesh to see memory usage.", .{}, .{ .id_extra = 7531 });
+            return;
+        };
+
+        // Sum data_size across all live tiles (tiles with header != null are live).
+        var total_bytes: usize = 0;
+        var tile_count: usize = 0;
+        for (nm.tiles) |*tile| {
+            if (tile.header != null) {
+                total_bytes += tile.data_size;
+                tile_count += 1;
+            }
+        }
+
+        var fbuf: [32]u8 = undefined;
+        dvui.label(@src(), "NavMesh tile data : {s}", .{mem_budget.formatBytes(&fbuf, total_bytes)}, .{ .id_extra = 7532 });
+        dvui.label(@src(), "Tile count        : {d}", .{tile_count}, .{ .id_extra = 7533 });
+        if (tile_count > 0) {
+            const avg = total_bytes / tile_count;
+            dvui.label(@src(), "Avg per tile      : {s}", .{mem_budget.formatBytes(&fbuf, avg)}, .{ .id_extra = 7534 });
+        }
     }
 
     const SAVE_PATH = "all_tiles_navmesh.bin";

@@ -23,6 +23,7 @@ const dt = recast.detour;
 const tc = recast.detour_tilecache;
 const dbg = recast.debug;
 const Vec3 = recast.math.Vec3;
+const mem_budget = @import("diag/mem_budget.zig");
 
 // --- компрессор без сжатия (точно под vtable, без @ptrCast) ---
 const NoopCompressor = struct {
@@ -392,6 +393,51 @@ pub const SampleTempObstacles = struct {
         if (dvui.button(@src(), "Save", .{}, .{})) self.saveNavMesh();
         if (dvui.button(@src(), "Load", .{}, .{})) self.loadNavMesh();
         _ = dvui.separator(@src(), .{ .expand = .horizontal });
+        self.drawMemory();
+    }
+
+    /// Memory Budget (C3) — TempObstacles / TileCache variant.
+    /// Reports navmesh tile bytes + tilecache compressed bytes.
+    /// NOTE: The compressor is a no-op (NoopCompressor), so raw == compressed.
+    /// id_extra range 7541-7550.
+    pub fn drawMemory(self: *SampleTempObstacles) void {
+        ui.section(@src(), "Memory");
+        const nm = if (self.navmesh) |*n| n else {
+            dvui.labelNoFmt(@src(), "Build the TempObstacles mesh to see memory.", .{}, .{ .id_extra = 7541 });
+            return;
+        };
+
+        var fbuf: [32]u8 = undefined;
+
+        // NavMesh tile data — sum data_size of live tiles (same as Tile variant).
+        var nm_bytes: usize = 0;
+        var nm_tile_count: usize = 0;
+        for (nm.tiles) |*tile| {
+            if (tile.header != null) {
+                nm_bytes += tile.data_size;
+                nm_tile_count += 1;
+            }
+        }
+        dvui.label(@src(), "NavMesh tile data : {s} ({d} tiles)", .{ mem_budget.formatBytes(&fbuf, nm_bytes), nm_tile_count }, .{ .id_extra = 7542 });
+
+        // TileCache compressed layers — sum compressed.len of live tiles.
+        // With the no-op compressor: compressed bytes == raw bytes (identity transform).
+        if (self.tilecache) |*tch| {
+            var tc_compressed: usize = 0;
+            var tc_tile_count: usize = 0;
+            for (0..tch.getTileCount()) |i| {
+                const ct = tch.getTile(i);
+                if (ct.header != null) {
+                    tc_compressed += ct.compressed.len;
+                    tc_tile_count += 1;
+                }
+            }
+            dvui.label(@src(), "TileCache layers  : {s} ({d} layers, compressor no-op: raw==compressed)", .{
+                mem_budget.formatBytes(&fbuf, tc_compressed), tc_tile_count,
+            }, .{ .id_extra = 7543 });
+        } else {
+            dvui.labelNoFmt(@src(), "TileCache: N/A", .{}, .{ .id_extra = 7544 });
+        }
     }
 
     const SAVE_PATH = "temp_navmesh.bin";

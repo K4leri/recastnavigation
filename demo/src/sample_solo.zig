@@ -21,6 +21,7 @@ const convex_surface = @import("convex_surface.zig");
 const build_stats = @import("diag/build_stats.zig");
 const profiler = @import("diag/profiler.zig");
 const artifacts = @import("diag/artifacts.zig");
+const mem_budget = @import("diag/mem_budget.zig");
 
 const rc = recast.recast;
 const dt = recast.detour;
@@ -854,6 +855,7 @@ pub const SampleSolo = struct {
         }
 
         self.drawArtifactScan();
+        self.drawMemory();
     }
 
     /// Build Profiler + Run History (C1). Таблица стадий выбранной сборки
@@ -976,6 +978,45 @@ pub const SampleSolo = struct {
         } else {
             dvui.labelNoFmt(@src(), "press Scan to run detectors", .{}, .{ .id_extra = 7477 });
         }
+    }
+
+    /// Memory Budget (C3): navmesh tile blob + polymesh + detail-mesh byte sizes.
+    /// Only called when build_gen > 0 (all three structures exist).
+    /// id_extra range 7520-7530 (no collision with B's 7400-7485 or C1's 7490-7519).
+    pub fn drawMemory(self: *SampleSolo) void {
+        ui.section(@src(), "Memory");
+        if (self.build_gen == 0) {
+            dvui.labelNoFmt(@src(), "Build the Solo mesh to see memory usage.", .{}, .{ .id_extra = 7520 });
+            return;
+        }
+
+        var fbuf: [32]u8 = undefined;
+
+        // Navmesh tile data blob (exact: this IS the createNavMeshData output length).
+        const nm_bytes = if (self.navmesh_data) |d| d.len else 0;
+        dvui.label(@src(), "NavMesh tile data : {s}", .{mem_budget.formatBytes(&fbuf, nm_bytes)}, .{ .id_extra = 7521 });
+
+        // PolyMesh — use exact slice lengths (more accurate than count-based approx,
+        // since slices are what was actually allocated; avoids maxpolys vs npolys gap).
+        const pm_bytes = if (self.pmesh) |*pm| blk: {
+            break :blk pm.verts.len * @sizeOf(u16) +
+                pm.polys.len * @sizeOf(u16) +
+                pm.regs.len * @sizeOf(u16) +
+                pm.flags.len * @sizeOf(u16) +
+                pm.areas.len * @sizeOf(u8);
+        } else 0;
+        dvui.label(@src(), "PolyMesh          : {s}", .{mem_budget.formatBytes(&fbuf, pm_bytes)}, .{ .id_extra = 7522 });
+
+        // PolyMeshDetail — exact slice lengths.
+        const dm_bytes = if (self.dmesh) |*dm| blk: {
+            break :blk dm.meshes.len * @sizeOf(u32) +
+                dm.verts.len * @sizeOf(f32) +
+                dm.tris.len * @sizeOf(u8);
+        } else 0;
+        dvui.label(@src(), "PolyMeshDetail    : {s}", .{mem_budget.formatBytes(&fbuf, dm_bytes)}, .{ .id_extra = 7523 });
+
+        const total = nm_bytes + pm_bytes + dm_bytes;
+        dvui.label(@src(), "Total (structures): {s}", .{mem_budget.formatBytes(&fbuf, total)}, .{ .id_extra = 7524 });
     }
 
     const SAVE_PATH = "solo_navmesh.bin";
