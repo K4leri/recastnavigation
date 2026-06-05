@@ -14,6 +14,8 @@ const sample = @import("sample.zig");
 const area_types = @import("area_types.zig");
 const poly_flags = @import("poly_flags.zig");
 const ui = @import("ui.zig");
+const UndoStack = @import("edit/undo_stack.zig").UndoStack;
+const EditOp = @import("edit/edit_op.zig").EditOp;
 const dbg = recast.debug;
 const rc = recast.recast;
 
@@ -33,10 +35,11 @@ pub const ConvexVolumeTool = struct {
     band_above: f32 = 1.0,
     band_below: f32 = 1.0,
     dirty: bool = false,
+    undo: *UndoStack,
     editor: ?Edit = null, // open add/edit dialog for an area type
 
-    pub fn init(alloc: std.mem.Allocator, geom: *InputGeom, dd_gl: *ddgl.DebugDrawGL) ConvexVolumeTool {
-        return .{ .geom = geom, .dd_gl = dd_gl, .pts = std.array_list.Managed(f32).init(alloc) };
+    pub fn init(alloc: std.mem.Allocator, geom: *InputGeom, dd_gl: *ddgl.DebugDrawGL, undo: *UndoStack) ConvexVolumeTool {
+        return .{ .geom = geom, .dd_gl = dd_gl, .undo = undo, .pts = std.array_list.Managed(f32).init(alloc) };
     }
 
     pub fn deinit(self: *ConvexVolumeTool) void {
@@ -65,7 +68,11 @@ pub const ConvexVolumeTool = struct {
                 }
             }
             if (nearest) |idx| {
+                // Capture the full volume (id/mode/band/verts) BEFORE removing it,
+                // so undo can re-insert it at the same index byte-for-byte.
+                const captured = self.geom.volumes.items[idx];
                 self.geom.deleteConvexVolume(idx);
+                self.undo.record(.{ .delete_volume = .{ .index = idx, .vol = captured } });
                 self.dirty = true;
             }
             return;
@@ -131,6 +138,8 @@ pub const ConvexVolumeTool = struct {
                             last.mode = self.new_mode;
                             last.band_below = self.band_below;
                             last.band_above = self.band_above;
+                            // Record AFTER stamping so the captured copy is final.
+                            self.undo.record(.{ .add_volume = last.* });
                         }
                         self.dirty = true;
                     }
@@ -147,6 +156,8 @@ pub const ConvexVolumeTool = struct {
                         last.mode = self.new_mode;
                         last.band_below = self.band_below;
                         last.band_above = self.band_above;
+                        // Record AFTER stamping so the captured copy is final.
+                        self.undo.record(.{ .add_volume = last.* });
                     }
                     self.dirty = true;
                 }

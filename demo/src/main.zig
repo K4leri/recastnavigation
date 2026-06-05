@@ -36,6 +36,7 @@ const OffMeshConnectionTool = @import("tool_offmesh.zig").OffMeshConnectionTool;
 const ConvexVolumeTool = @import("tool_convex.zig").ConvexVolumeTool;
 const CrowdTool = @import("tool_crowd.zig").CrowdTool;
 const NavMeshPruneTool = @import("tool_prune.zig").NavMeshPruneTool;
+const UndoStack = @import("edit/undo_stack.zig").UndoStack;
 const Vec3 = recast.math.Vec3;
 
 const ActiveTool = tool_registry.ToolId; // { none, tester, prune, offmesh, convex, crowd }
@@ -165,10 +166,15 @@ pub fn main(main_init: std.process.Init) !void {
     var prev_sample_kind: SampleKind = .solo;
     var last_gen: u32 = 0;
 
+    // Scene-edit undo/redo stack (cluster F / F1). Owned here; threaded into the
+    // convex + off-mesh tools so their add/delete edits are recorded.
+    var undo_stack = UndoStack.init(main_init.gpa);
+    defer undo_stack.deinit();
+
     var tester = NavMeshTesterTool.init(main_init.gpa, &dd_gl);
     defer tester.deinit();
-    var offmesh_tool = OffMeshConnectionTool.init(&geom, &dd_gl);
-    var convex_tool = ConvexVolumeTool.init(main_init.gpa, &geom, &dd_gl);
+    var offmesh_tool = OffMeshConnectionTool.init(&geom, &dd_gl, &undo_stack);
+    var convex_tool = ConvexVolumeTool.init(main_init.gpa, &geom, &dd_gl, &undo_stack);
     defer convex_tool.deinit();
     var crowd_tool = CrowdTool.init(main_init.gpa, &dd_gl);
     defer crowd_tool.deinit();
@@ -311,6 +317,9 @@ pub fn main(main_init: std.process.Init) !void {
     var prev_v = false; // edge-детект для клавиши V (вариант рендера вокселей)
     var prev_space = false; // edge-детект SPACE (run/pause толпы)
     var prev_step = false; // edge-детект "1" (single step толпы)
+    var prev_undo = false; // edge-детект Ctrl+Z (undo)
+    var prev_redo = false; // edge-детект Ctrl+Y / Ctrl+Shift+Z (redo)
+    var geom_edited = false; // set when undo/redo changed geom -> trigger rebuild
     while (!g_window.shouldClose()) {
         const frame_start = impl.nanoTime();
 
@@ -439,6 +448,25 @@ pub fn main(main_init: std.process.Init) !void {
             std.debug.print("[VOXVAR] {s}\n", .{vox_names[dd_gl.voxel_variant % 8]});
         }
         prev_v = v_now;
+        // --- Undo / Redo (scene edits, F1) — edge-triggered, gated by keyboardFree
+        // (so it never fires while typing into a text field). Ctrl+Z = undo;
+        // Ctrl+Y or Ctrl+Shift+Z = redo. One press = one action.
+        {
+            const ctrl = g_window.getKey(.left_control) == .press or g_window.getKey(.right_control) == .press;
+            const shift_k = g_window.getKey(.left_shift) == .press or g_window.getKey(.right_shift) == .press;
+            const z = g_window.getKey(.z) == .press;
+            const y = g_window.getKey(.y) == .press;
+            const undo_now = ctrl and z and !shift_k;
+            const redo_now = ctrl and (y or (z and shift_k));
+            if (undo_now and !prev_undo) {
+                if (undo_stack.undo(&geom)) geom_edited = true;
+            }
+            if (redo_now and !prev_redo) {
+                if (undo_stack.redo(&geom)) geom_edited = true;
+            }
+            prev_undo = undo_now;
+            prev_redo = redo_now;
+        }
         } // end keyboardFree hotkey gate
         // SPACE — run/pause симуляции толпы; "1" — один шаг (1-в-1 CrowdTool onToggle/singleStep).
         // Только для активного crowd-инструмента и не когда курсор над dvui-панелью.
@@ -511,10 +539,13 @@ pub fn main(main_init: std.process.Init) !void {
         }
         prev_lmb = lmb;
 
-        // перестройка navmesh, если инструмент изменил геометрию
-        if (offmesh_tool.dirty or convex_tool.dirty) {
+        // перестройка navmesh, если инструмент изменил геометрию (или undo/redo
+        // изменил geom — F1: navmesh должен отразить откат/повтор правки).
+        if (offmesh_tool.dirty or convex_tool.dirty or geom_edited) {
             offmesh_tool.dirty = false;
             convex_tool.dirty = false;
+            geom_edited = false;
+            area_types.rebuild_needed = false; // satisfied by this rebuild
             switch (sample_kind) {
                 .solo => _ = solo.build(),
                 .tile => _ = tile.build(),
@@ -694,6 +725,32 @@ pub fn main(main_init: std.process.Init) !void {
                     .crowd => crowd_tool.drawMenu(),
                 }
             }
+
+            // --- Edit History (F1: undo/redo for scene edits) ---
+            ui.section(@src(), "Edit History");
+            {
+                var row = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
+                defer row.deinit();
+                const can_u = undo_stack.canUndo();
+                const can_r = undo_stack.canRedo();
+                if (dvui.button(@src(), "Undo", .{}, .{ .id_extra = 970 })) {
+                    if (can_u and undo_stack.undo(&geom)) geom_edited = true;
+                }
+                if (dvui.button(@src(), "Redo", .{}, .{ .id_extra = 971 })) {
+                    if (can_r and undo_stack.redo(&geom)) geom_edited = true;
+                }
+            }
+            if (undo_stack.nextUndoName()) |nm| {
+                dvui.label(@src(), "Undo: {s}", .{nm}, .{});
+            } else {
+                dvui.labelNoFmt(@src(), "Undo: (nothing)", .{}, .{});
+            }
+            if (undo_stack.nextRedoName()) |nm| {
+                dvui.label(@src(), "Redo: {s}", .{nm}, .{});
+            } else {
+                dvui.labelNoFmt(@src(), "Redo: (nothing)", .{}, .{});
+            }
+            dvui.labelNoFmt(@src(), "Ctrl+Z undo  Ctrl+Y / Ctrl+Shift+Z redo", .{}, .{});
         }
 
         // --- Properties (правая колонка) ---
