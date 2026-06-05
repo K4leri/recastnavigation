@@ -148,20 +148,24 @@ pub fn flood(nav: *const NavMesh, src_ref: PolyRef, filter: *const QueryFilter, 
             return std.math.order(a.cost, b.cost);
         }
     };
-    var open = std.PriorityQueue(QEntry, void, QEntry.lessThan).init(alloc, {});
-    defer open.deinit();
+    // std.PriorityQueue is unmanaged in Zig 0.16: the allocator is passed to
+    // push/deinit (not stored on the queue).
+    var open = std.PriorityQueue(QEntry, void, QEntry.lessThan).initContext({});
+    defer open.deinit(alloc);
 
     sslot[sd.poly] = 0;
-    try open.add(.{ .cost = 0, .ref = src_ref });
+    try open.push(alloc, .{ .cost = 0, .ref = src_ref });
 
     var hi: f32 = 0;
     var reached: usize = 1;
 
-    while (open.removeOrNull()) |cur| {
+    while (open.pop()) |cur| {
         // Stale-entry skip: a poly may sit in the heap with an outdated (higher)
         // cost after a relaxation; the slot holds the settled value.
         const cd = nav.decodePolyId(cur.ref);
+        if (cd.tile >= hm.tile_cost.len) continue; // defensive (costForRef guards the same)
         const cur_slot = hm.tile_cost[cd.tile] orelse continue;
+        if (cd.poly >= cur_slot.len) continue;
         if (cur.cost > cur_slot[cd.poly]) continue;
 
         var ct: ?*const dt.MeshTile = null;
@@ -184,6 +188,7 @@ pub fn flood(nav: *const NavMesh, src_ref: PolyRef, filter: *const QueryFilter, 
             if (!filter.passFilter(nref, ntile, npoly)) continue;
 
             const nd = nav.decodePolyId(nref);
+            if (nd.tile >= hm.tile_cost.len) continue; // defensive bound (foreign/garbage ref)
             const nslot = hm.tile_cost[nd.tile] orelse continue;
             if (nd.poly >= nslot.len) continue;
 
@@ -194,7 +199,7 @@ pub fn flood(nav: *const NavMesh, src_ref: PolyRef, filter: *const QueryFilter, 
                 if (nslot[nd.poly] == Heatmap.UNREACHED) reached += 1;
                 nslot[nd.poly] = new_cost;
                 hi = @max(hi, new_cost);
-                try open.add(.{ .cost = new_cost, .ref = nref });
+                try open.push(alloc, .{ .cost = new_cost, .ref = nref });
             }
         }
     }
