@@ -26,6 +26,7 @@ const scene_container = @import("persist/scene_container.zig");
 const InputGate = @import("input_gate.zig").InputGate;
 const tool_registry = @import("tool_registry.zig");
 const InputGeom = @import("input_geom.zig").InputGeom;
+const ConvexVolume = @import("input_geom.zig").ConvexVolume;
 const SampleSolo = @import("sample_solo.zig").SampleSolo;
 const scheme_state = @import("render/scheme_state.zig");
 const SampleTile = @import("sample_tile.zig").SampleTile;
@@ -40,6 +41,7 @@ const edit_op = @import("edit/edit_op.zig");
 const Selection = @import("edit/selection.zig").Selection;
 const selection_mod = @import("edit/selection.zig");
 const snap_mod = @import("edit/snap.zig");
+const Clipboard = @import("edit/clipboard.zig").Clipboard;
 const Vec3 = recast.math.Vec3;
 
 const ActiveTool = tool_registry.ToolId; // { none, tester, prune, offmesh, convex, crowd }
@@ -58,6 +60,17 @@ fn glGetProcAddress(p: zglfw.GlProc, proc: [:0]const u8) ?zgl.binding.FunctionPo
 fn scrollCallback(_: *zglfw.Window, _: f64, yoffset: f64) callconv(.c) void {
     g_scroll += yoffset;
 }
+
+/// One snapshotted object's BEFORE-state for an in-progress group move (F3).
+/// Keyed by stable id. Exactly one of `vol`/`off` is set per the `kind` tag.
+/// The live geom verts are recomputed from this snapshot each frame (snapshot +
+/// delta) so dragging never accumulates drift.
+const MoveSnapItem = struct {
+    kind: enum { volume, offmesh },
+    id: u32,
+    vol: ConvexVolume, // valid when kind == .volume
+    off: edit_op.OffMeshData, // valid when kind == .offmesh
+};
 
 pub fn main(main_init: std.process.Init) !void {
     if (dvui.render_backend.kind != .opengl) @compileError("ожидается opengl render_backend");
@@ -241,6 +254,18 @@ pub fn main(main_init: std.process.Init) !void {
     var sel_drag_start: ?Vec3 = null;
     var sel_drag_cur: ?Vec3 = null;
     var prev_delete = false; // edge-detect Del (group-delete in select tool)
+    // F3 WAVE 2 — copy/paste clipboard (value copies of selected objects).
+    var clipboard = Clipboard.init(main_init.gpa);
+    defer clipboard.deinit();
+    var prev_copy = false; // edge-detect Ctrl+C
+    var prev_paste = false; // edge-detect Ctrl+V
+    // F3 WAVE 2 — group move. `move_drag_start` = the world anchor at LMB-down on
+    // an already-selected object; non-null only while a move is in progress (and
+    // mutually exclusive with sel_drag_start). `move_snap` holds each selected
+    // object's BEFORE-state so every frame recomputes verts = snapshot + delta.
+    var move_drag_start: ?Vec3 = null;
+    var move_snap = std.array_list.Managed(MoveSnapItem).init(main_init.gpa);
+    defer move_snap.deinit();
     const dt: f32 = 1.0 / 60.0;
 
     // --- Auto-save state (cluster F) ---
@@ -598,6 +623,16 @@ pub fn main(main_init: std.process.Init) !void {
                                 }
                                 sel_drag_start = null;
                                 sel_drag_cur = null;
+                            } else if (hitOnSelected(&geom, &selection, hp[0], hp[2])) {
+                                // Click landed on an ALREADY-selected object -> begin a
+                                // GROUP MOVE (not a box). Snapshot the BEFORE-state of every
+                                // selected object so each frame recomputes verts from the
+                                // snapshot + the live delta (drift-free). Box drag stays off.
+                                move_snap.clearRetainingCapacity();
+                                snapshotSelection(&geom, &selection, &move_snap);
+                                move_drag_start = h;
+                                sel_drag_start = null;
+                                sel_drag_cur = null;
                             } else {
                                 // Begin a box drag from this world point.
                                 sel_drag_start = h;
@@ -614,6 +649,13 @@ pub fn main(main_init: std.process.Init) !void {
         if (active_tool != .select and sel_drag_start != null) {
             sel_drag_start = null;
             sel_drag_cur = null;
+        }
+        // Leaving the select tool mid-MOVE must drop the move + free the snapshot
+        // (mirrors the box cleanup above). The geom keeps whatever live delta was
+        // applied so far — no undo is recorded for an abandoned move.
+        if (active_tool != .select and move_drag_start != null) {
+            move_drag_start = null;
+            move_snap.clearRetainingCapacity();
         }
         // --- Select-tool rubber-band: per-frame update + release resolution (F3) ---
         // While LMB is held in the select tool with a drag in progress, recompute the
@@ -652,7 +694,76 @@ pub fn main(main_init: std.process.Init) !void {
                 sel_drag_cur = null;
             }
         }
+        // --- Select-tool GROUP MOVE: per-frame live drag + release commit (F3 W2) ---
+        // While LMB held with a move in progress, recompute the cursor world point and
+        // re-apply (cur - anchor) XZ to every selected object FROM THE SNAPSHOT (not
+        // incrementally). The highlight render redraws selected objects straight from
+        // geom, so they follow the cursor automatically. On release, snap the final
+        // anchor (unless Ctrl/snap-off), re-apply the committed delta, then record one
+        // composite of edit_volume/edit_offmesh ops (skipped if the net move is ~0).
+        if (active_tool == .select and move_drag_start != null) {
+            const ctrl_held = g_window.getKey(.left_control) == .press or g_window.getKey(.right_control) == .press;
+            const anchor = move_drag_start.?;
+            // Current cursor world point (same pickRay path as the box drag).
+            var cur_w = anchor;
+            const win_sz3 = g_window.getSize();
+            const sx3: f64 = if (win_sz3[0] > 0) @as(f64, @floatFromInt(fb[0])) / @as(f64, @floatFromInt(win_sz3[0])) else 1.0;
+            const sy3: f64 = if (win_sz3[1] > 0) @as(f64, @floatFromInt(fb[1])) / @as(f64, @floatFromInt(win_sz3[1])) else 1.0;
+            if (cam.pickRay(@floatCast(cur[0] * sx3), @floatCast(cur[1] * sy3), viewport)) |r3| {
+                if (pickPoint(&geom, r3.start, r3.end)) |h3| cur_w = h3;
+            }
+            // Live (un-snapped) delta for drag feedback.
+            applyMoveDelta(&geom, &move_snap, cur_w.x - anchor.x, cur_w.z - anchor.z);
+
+            // Falling edge: LMB released -> commit the move.
+            if (prev_lmb and !lmb) {
+                // Snap the FINAL anchor world point (snap the anchor, delta = snapped -
+                // start) unless snapping is off or Ctrl bypasses it for this drag.
+                var dx = cur_w.x - anchor.x;
+                var dz = cur_w.z - anchor.z;
+                if (snap_cfg.mode != .off and !ctrl_held) {
+                    const moved_anchor = [3]f32{ anchor.x + dx, anchor.y, anchor.z + dz };
+                    const sr = snap_mod.snapPoint(&geom, moved_anchor, snap_cfg);
+                    dx = sr.pos[0] - anchor.x;
+                    dz = sr.pos[2] - anchor.z;
+                }
+                // Re-apply the committed (possibly snapped) delta one last time.
+                applyMoveDelta(&geom, &move_snap, dx, dz);
+
+                // No-op move (anchor barely shifted) -> don't pollute the undo stack.
+                if (@abs(dx) < 1e-4 and @abs(dz) < 1e-4) {
+                    // Restore exact snapshot (delta 0) so any float noise is erased.
+                    applyMoveDelta(&geom, &move_snap, 0, 0);
+                } else {
+                    commitMove(main_init.gpa, &geom, &move_snap, &undo_stack);
+                    geom_edited = true;
+                    std.debug.print("[INFO] select: moved {d} object(s) by ({d:.3},{d:.3})\n", .{ move_snap.items.len, dx, dz });
+                }
+                move_drag_start = null;
+                move_snap.clearRetainingCapacity();
+            }
+        }
         prev_lmb = lmb;
+
+        // --- Select-tool COPY / PASTE (F3 W2) — Ctrl+C / Ctrl+V, edge-triggered,
+        // gated by keyboardFree so they never fire while typing in a text field.
+        if (active_tool == .select and gate.keyboardFree()) {
+            const ctrl = g_window.getKey(.left_control) == .press or g_window.getKey(.right_control) == .press;
+            const copy_now = ctrl and g_window.getKey(.c) == .press;
+            const paste_now = ctrl and g_window.getKey(.v) == .press;
+            if (copy_now and !prev_copy and !selection.isEmpty()) {
+                doCopy(&clipboard, &geom, &selection);
+            }
+            if (paste_now and !prev_paste and !clipboard.isEmpty()) {
+                doPaste(main_init.gpa, &clipboard, &geom, &selection, &undo_stack);
+                geom_edited = true;
+            }
+            prev_copy = copy_now;
+            prev_paste = paste_now;
+        } else {
+            prev_copy = false;
+            prev_paste = false;
+        }
 
         // --- Group delete (F3): Del key in select tool removes all selected objects
         // as ONE composite edit. Edge-triggered, gated by keyboardFree (so it never
@@ -1010,6 +1121,18 @@ pub fn main(main_init: std.process.Init) !void {
                             if (!selection.isEmpty()) {
                                 deleteSelected(main_init.gpa, &geom, &selection, &undo_stack);
                                 selection.clear();
+                                geom_edited = true;
+                            }
+                        }
+                        // Copy / Paste mirror the Ctrl+C / Ctrl+V hotkeys (F3 W2).
+                        var row2 = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
+                        defer row2.deinit();
+                        if (dvui.button(@src(), "Copy (Ctrl+C)", .{ .grayed = selection.isEmpty() }, .{ .id_extra = 982 })) {
+                            if (!selection.isEmpty()) doCopy(&clipboard, &geom, &selection);
+                        }
+                        if (dvui.button(@src(), "Paste (Ctrl+V)", .{ .grayed = clipboard.isEmpty() }, .{ .id_extra = 983 })) {
+                            if (!clipboard.isEmpty()) {
+                                doPaste(main_init.gpa, &clipboard, &geom, &selection, &undo_stack);
                                 geom_edited = true;
                             }
                         }
@@ -2027,6 +2150,185 @@ fn deleteSelected(alloc: std.mem.Allocator, geom: *InputGeom, sel: *Selection, u
 
     undo_stack.record(edit_op.makeComposite(alloc, ops));
     std.debug.print("[INFO] select: group-delete {d} volume(s) + {d} off-mesh (composite)\n", .{ vol_idx.items.len, off_idx.items.len });
+}
+
+/// World-unit XZ offset applied to pasted objects so the paste is visible and
+/// not exactly overlapping the originals (F3 WAVE 2).
+const PASTE_OFFSET: f32 = 1.0;
+
+/// True when (px,pz) lands on an object that is ALREADY in the selection — used to
+/// disambiguate select-tool LMB-down (hit-selected => move, else => box).
+fn hitOnSelected(geom: *const InputGeom, sel: *const Selection, px: f32, pz: f32) bool {
+    if (selection_mod.hitTest(geom, px, pz, 0.5)) |hit| {
+        return switch (hit) {
+            .volume => |id| sel.containsVolume(id),
+            .offmesh => |id| sel.containsOffmesh(id),
+        };
+    }
+    return false;
+}
+
+/// Snapshot the BEFORE-state of every selected object into `out` (keyed by id) so
+/// a group move can recompute verts = snapshot + delta each frame. Ids no longer
+/// present in geom are skipped. OOM drops the offending item (move proceeds with
+/// fewer objects) rather than crashing.
+fn snapshotSelection(geom: *const InputGeom, sel: *const Selection, out: *std.array_list.Managed(MoveSnapItem)) void {
+    for (sel.volumes.items) |id| {
+        for (geom.volumes.items) |*v| {
+            if (v.id == id) {
+                out.append(.{ .kind = .volume, .id = id, .vol = v.*, .off = undefined }) catch {};
+                break;
+            }
+        }
+    }
+    for (sel.offmesh.items) |id| {
+        for (geom.off_id.items, 0..) |oid, i| {
+            if (oid == id) {
+                out.append(.{ .kind = .offmesh, .id = id, .vol = undefined, .off = edit_op.OffMeshData.capture(geom, i) }) catch {};
+                break;
+            }
+        }
+    }
+}
+
+/// Re-apply an XZ delta to every snapshotted object's LIVE geom state from its
+/// snapshot (verts = snapshot.verts + (dx,_,dz)). Recomputing from the snapshot
+/// each call (rather than incrementally) keeps the drag drift-free. Y is unchanged.
+fn applyMoveDelta(geom: *InputGeom, snap: *const std.array_list.Managed(MoveSnapItem), dx: f32, dz: f32) void {
+    for (snap.items) |*it| {
+        switch (it.kind) {
+            .volume => {
+                if (volIndexById(geom, it.id)) |vi| {
+                    var v = it.vol; // snapshot copy
+                    const n: usize = @intCast(v.nverts);
+                    var k: usize = 0;
+                    while (k < n) : (k += 1) {
+                        v.verts[k * 3 + 0] += dx;
+                        v.verts[k * 3 + 2] += dz;
+                    }
+                    geom.volumes.items[vi] = v;
+                }
+            },
+            .offmesh => {
+                if (offIndexById(geom, it.id)) |oi| {
+                    const base = oi * 6;
+                    geom.off_verts.items[base + 0] = it.off.verts[0] + dx;
+                    geom.off_verts.items[base + 1] = it.off.verts[1];
+                    geom.off_verts.items[base + 2] = it.off.verts[2] + dz;
+                    geom.off_verts.items[base + 3] = it.off.verts[3] + dx;
+                    geom.off_verts.items[base + 4] = it.off.verts[4];
+                    geom.off_verts.items[base + 5] = it.off.verts[5] + dz;
+                }
+            },
+        }
+    }
+}
+
+/// Record a single composite of edit_volume/edit_offmesh ops capturing each moved
+/// object's BEFORE (snapshot) and AFTER (current live geom) state. Id-keyed, so it
+/// survives later list reordering. OOM -> skip the undo record (geom already moved).
+fn commitMove(alloc: std.mem.Allocator, geom: *InputGeom, snap: *const std.array_list.Managed(MoveSnapItem), undo_stack: *UndoStack) void {
+    if (snap.items.len == 0) return;
+    // Build into an ArrayList so toOwnedSlice yields an exactly-sized heap slice
+    // (some snapshot ids could be absent — skip those). On OOM, skip the undo
+    // record (the geom is already moved; just no undo for this move).
+    var list = std.array_list.Managed(edit_op.EditOp).init(alloc);
+    for (snap.items) |*it| {
+        switch (it.kind) {
+            .volume => {
+                if (volIndexById(geom, it.id)) |vi|
+                    list.append(.{ .edit_volume = .{ .id = it.id, .before = it.vol, .after = geom.volumes.items[vi] } }) catch {};
+            },
+            .offmesh => {
+                if (offIndexById(geom, it.id)) |oi|
+                    list.append(.{ .edit_offmesh = .{ .id = it.id, .before = it.off, .after = edit_op.OffMeshData.capture(geom, oi) } }) catch {};
+            },
+        }
+    }
+    if (list.items.len == 0) {
+        list.deinit();
+        return;
+    }
+    const ops = list.toOwnedSlice() catch {
+        list.deinit();
+        return;
+    };
+    undo_stack.record(edit_op.makeComposite(alloc, ops));
+}
+
+/// Copy the current selection into the clipboard (value copies). Ctrl+C / button.
+fn doCopy(clipboard: *Clipboard, geom: *const InputGeom, sel: *const Selection) void {
+    clipboard.copyFrom(geom, sel) catch |e| {
+        std.debug.print("[WARN] select: copy failed: {s}\n", .{@errorName(e)});
+        return;
+    };
+    std.debug.print("[INFO] select: copied {d} volume(s) + {d} off-mesh\n", .{ clipboard.volumes.items.len, clipboard.offmesh.items.len });
+}
+
+/// Paste every clipboard object into geom with a small XZ offset, each as a FRESH
+/// id (add_volume/add_offmesh), recorded as ONE composite ("paste = one undo").
+/// Volumes preserve mode/band/area/verts (offset applied); off-mesh endpoints are
+/// offset too. After paste the selection is REPLACED with the new objects' ids so
+/// the user can immediately move them. OOM on the ops slice -> skip the undo.
+fn doPaste(alloc: std.mem.Allocator, clipboard: *const Clipboard, geom: *InputGeom, sel: *Selection, undo_stack: *UndoStack) void {
+    if (clipboard.isEmpty()) return;
+    // Build the add-ops into an ArrayList -> exactly-sized owned slice for the
+    // composite (one undo). On OOM, skip the undo record (objects still pasted).
+    var list = std.array_list.Managed(edit_op.EditOp).init(alloc);
+    sel.clear();
+
+    for (clipboard.volumes.items) |src| {
+        // Translate every vertex by the paste offset (XZ), keep Y.
+        var verts: [12 * 3]f32 = src.verts;
+        const nv: usize = @intCast(src.nverts);
+        var k: usize = 0;
+        while (k < nv) : (k += 1) {
+            verts[k * 3 + 0] += PASTE_OFFSET;
+            verts[k * 3 + 2] += PASTE_OFFSET;
+        }
+        // addConvexVolume assigns a FRESH id but doesn't take mode/band; set them on
+        // the appended volume, then capture THAT final volume as the add op so
+        // undo/redo reproduce mode/band.
+        geom.addConvexVolume(verts[0 .. nv * 3], src.nverts, src.hmin, src.hmax, src.area) catch continue;
+        const li = geom.volumes.items.len - 1;
+        geom.volumes.items[li].mode = src.mode;
+        geom.volumes.items[li].band_below = src.band_below;
+        geom.volumes.items[li].band_above = src.band_above;
+        list.append(.{ .add_volume = geom.volumes.items[li] }) catch {};
+        sel.volumes.append(geom.volumes.items[li].id) catch {};
+    }
+
+    for (clipboard.offmesh.items) |src| {
+        const start = [3]f32{ src.verts[0] + PASTE_OFFSET, src.verts[1], src.verts[2] + PASTE_OFFSET };
+        const end = [3]f32{ src.verts[3] + PASTE_OFFSET, src.verts[4], src.verts[5] + PASTE_OFFSET };
+        geom.addOffMeshConnection(start, end, src.rad, src.dir, src.area, src.flags) catch continue;
+        const li = geom.offMeshCount() - 1;
+        list.append(.{ .add_offmesh = edit_op.OffMeshData.capture(geom, li) }) catch {};
+        sel.offmesh.append(geom.off_id.items[li]) catch {};
+    }
+
+    if (list.items.len == 0) {
+        list.deinit();
+        return;
+    }
+    const ops = list.toOwnedSlice() catch {
+        list.deinit();
+        return;
+    };
+    undo_stack.record(edit_op.makeComposite(alloc, ops));
+    std.debug.print("[INFO] select: pasted {d} volume(s) + {d} off-mesh (composite)\n", .{ clipboard.volumes.items.len, clipboard.offmesh.items.len });
+}
+
+/// Locate a convex volume's array index by stable id (move helpers).
+fn volIndexById(geom: *const InputGeom, id: u32) ?usize {
+    for (geom.volumes.items, 0..) |*v, i| if (v.id == id) return i;
+    return null;
+}
+
+/// Locate an off-mesh connection's array index by stable off_id (move helpers).
+fn offIndexById(geom: *const InputGeom, id: u32) ?usize {
+    for (geom.off_id.items, 0..) |oid, i| if (oid == id) return i;
+    return null;
 }
 
 /// Пересечение луча (start->end) с плоскостью y=0.
