@@ -13,6 +13,7 @@ const sample = @import("../sample.zig");
 const area_types = @import("../area_types.zig");
 const cs = @import("color_scheme.zig");
 const components = @import("components.zig");
+const isolation = @import("isolation.zig");
 
 const NavMesh = dt.NavMesh;
 
@@ -72,13 +73,49 @@ fn costRange(mesh: *const NavMesh) CostRange {
     return if (found) .{ .lo = lo, .hi = hi } else .{ .lo = 0, .hi = 0 };
 }
 
+/// Precomputed per-scheme ranges + optional connected-components, so the per-poly
+/// `PolyColorCtx` build (shared by fillNavMesh and fillNavMeshFiltered) doesn't
+/// rescan the whole mesh for every polygon.
+const SchemeRanges = struct {
+    hr: HeightRange = .{ .lo = 0, .hi = 0 },
+    cr: CostRange = .{ .lo = 0, .hi = 0 },
+    comps: ?components.Components = null,
+
+    fn compute(mesh: *const NavMesh, scheme: cs.ColorScheme, alloc: std.mem.Allocator) SchemeRanges {
+        return .{
+            .hr = if (scheme == .height) heightRange(mesh) else .{ .lo = 0, .hi = 0 },
+            .cr = if (scheme == .cost) costRange(mesh) else .{ .lo = 0, .hi = 0 },
+            .comps = if (scheme == .component) (components.compute(mesh, alloc) catch null) else null,
+        };
+    }
+
+    fn deinit(self: *SchemeRanges) void {
+        if (self.comps) |*c| c.deinit();
+    }
+};
+
+/// Build the colour-scheme context for one polygon given precomputed ranges.
+/// Shared by the plain and filtered fill so the two never drift. `ti`/`i` are the
+/// tile/poly indices (used to look up the poly's connected component).
+fn buildCtx(ranges: *const SchemeRanges, tile: *const dt.MeshTile, p: *const dt.Poly, ti: usize, i: usize) cs.PolyColorCtx {
+    return cs.PolyColorCtx{
+        .area_col = sample.sampleAreaToCol(p.getArea()),
+        .flags = p.flags,
+        .height = polyHeight(tile, p),
+        .height_min = ranges.hr.lo,
+        .height_max = ranges.hr.hi,
+        .component = if (ranges.comps) |*c| @as(i32, c.getByIndex(ti, i)) else 0,
+        .cost = polyCost(p.getArea()),
+        .cost_min = ranges.cr.lo,
+        .cost_max = ranges.cr.hi,
+    };
+}
+
 pub fn fillNavMesh(dd: dbg.DebugDraw, mesh: *const NavMesh, scheme: cs.ColorScheme, alloc: std.mem.Allocator) void {
-    // Height range needs a full extra traversal; only pay it for the height ramp.
-    const hr: HeightRange = if (scheme == .height) heightRange(mesh) else .{ .lo = 0, .hi = 0 };
-    // Cost range: scan every non-offmesh poly's area-type cost; only for .cost scheme.
-    const cr: CostRange = if (scheme == .cost) costRange(mesh) else .{ .lo = 0, .hi = 0 };
-    var comps: ?components.Components = if (scheme == .component) (components.compute(mesh, alloc) catch null) else null;
-    defer if (comps) |*c| c.deinit();
+    // Precompute scheme ranges/components once (height/cost ramps + components
+    // each need a full mesh traversal); reused for every polygon below.
+    var ranges = SchemeRanges.compute(mesh, scheme, alloc);
+    defer ranges.deinit();
 
     dd.depthMask(false);
     dd.begin(.tris, 1.0);
@@ -92,17 +129,7 @@ pub fn fillNavMesh(dd: dbg.DebugDraw, mesh: *const NavMesh, scheme: cs.ColorSche
             if (p.getType() == .offmesh_connection) continue;
             const pd = &tile.detail_meshes[i];
 
-            const ctx = cs.PolyColorCtx{
-                .area_col = sample.sampleAreaToCol(p.getArea()),
-                .flags = p.flags,
-                .height = polyHeight(tile, p),
-                .height_min = hr.lo,
-                .height_max = hr.hi,
-                .component = if (comps) |*c| @as(i32, c.getByIndex(ti, i)) else 0,
-                .cost = polyCost(p.getArea()),
-                .cost_min = cr.lo,
-                .cost_max = cr.hi,
-            };
+            const ctx = buildCtx(&ranges, tile, p, ti, i);
             const col = cs.colorForPoly(scheme, ctx);
 
             for (0..@as(usize, pd.tri_count)) |j| {
@@ -123,6 +150,120 @@ pub fn fillNavMesh(dd: dbg.DebugDraw, mesh: *const NavMesh, scheme: cs.ColorSche
 
     dd.end();
     dd.depthMask(true);
+}
+
+/// Darken + fade a colour for the DIM verdict: RGB *= ~0.35, A *= ~0.5.
+/// Operates on the packed 0xAABBGGRR u32 (same layout as dbg.rgba).
+fn dimCol(col: u32) u32 {
+    const r = (col & 0xff) * 90 / 255; // ~0.35
+    const g = ((col >> 8) & 0xff) * 90 / 255;
+    const b = ((col >> 16) & 0xff) * 90 / 255;
+    const a = ((col >> 24) & 0xff) / 2; // ~0.5
+    return dbg.rgba(@intCast(r), @intCast(g), @intCast(b), @intCast(a));
+}
+
+// Outline colours for the second (.lines) pass — keeps the clipped navmesh
+// readable without the faithful boundary draw (which is suppressed when a filter
+// is active). Drawn polys get a solid dark-grey ring; dim polys a fainter one.
+const OUTLINE_DRAW: u32 = dbg.rgba(0, 0, 0, 160);
+const OUTLINE_DIM: u32 = dbg.rgba(0, 0, 0, 60);
+
+/// Filtered navmesh draw (cluster E, P0-2). REPLACES the faithful navmesh draw
+/// (debugDrawNavMesh + the plain fillNavMesh overdraw) whenever `filter.active()`:
+/// the sample calls THIS instead, so unclipped floors don't show through.
+///
+/// Per non-offmesh poly: centroid_y = polyHeight; tile identity = header.x/header.y
+/// (simpler + cheaper than decoding a poly ref, and MeshTileHeader carries the tile
+/// coords directly). verdict = filter.verdictFor(...).
+///   hide -> poly skipped entirely (fill AND outline).
+///   draw -> fill with the active scheme colour.
+///   dim  -> fill with dimCol() (darker RGB + lower alpha).
+/// Pass 1: `.tris` detail-tri fill (depthMask(false), like fillNavMesh).
+/// Pass 2: `.lines` outer-ring outline of every non-hidden poly (outer ring of
+/// p.verts; no inner/outer edge classification — kept simple).
+pub fn fillNavMeshFiltered(
+    dd: dbg.DebugDraw,
+    mesh: *const NavMesh,
+    scheme: cs.ColorScheme,
+    filter: isolation.Filter,
+    alloc: std.mem.Allocator,
+) void {
+    var ranges = SchemeRanges.compute(mesh, scheme, alloc);
+    defer ranges.deinit();
+
+    // --- Pass 1: filled detail triangles ---
+    dd.depthMask(false);
+    dd.begin(.tris, 1.0);
+
+    for (0..@intCast(mesh.max_tiles)) |ti| {
+        const tile = &mesh.tiles[ti];
+        const hdr = tile.header orelse continue;
+
+        for (0..@intCast(hdr.poly_count)) |i| {
+            const p = &tile.polys[i];
+            if (p.getType() == .offmesh_connection) continue;
+
+            const v = isolation.verdictFor(filter, polyHeight(tile, p), hdr.x, hdr.y, p.getArea(), p.flags);
+            if (v == .hide) continue;
+
+            const ctx = buildCtx(&ranges, tile, p, ti, i);
+            const base_col = cs.colorForPoly(scheme, ctx);
+            const col = if (v == .dim) dimCol(base_col) else base_col;
+
+            const pd = &tile.detail_meshes[i];
+            for (0..@as(usize, pd.tri_count)) |j| {
+                const t_idx = (pd.tri_base + @as(u32, @intCast(j))) * 4;
+                const t = tile.detail_tris[t_idx .. t_idx + 4];
+                for (0..3) |k| {
+                    if (t[k] < p.vert_count) {
+                        const v_idx = @as(usize, p.verts[t[k]]) * 3;
+                        dd.vertex(@ptrCast(&tile.verts[v_idx]), col);
+                    } else {
+                        const d_idx = (@as(usize, pd.vert_base) + @as(usize, t[k] - p.vert_count)) * 3;
+                        dd.vertex(@ptrCast(&tile.detail_verts[d_idx]), col);
+                    }
+                }
+            }
+        }
+    }
+
+    dd.end();
+
+    // --- Pass 2: outer-ring outline of every non-hidden poly ---
+    dd.begin(.lines, 2.0);
+
+    for (0..@intCast(mesh.max_tiles)) |_ti| {
+        const tile = &mesh.tiles[_ti];
+        const hdr = tile.header orelse continue;
+
+        for (0..@intCast(hdr.poly_count)) |i| {
+            const p = &tile.polys[i];
+            if (p.getType() == .offmesh_connection) continue;
+
+            const v = isolation.verdictFor(filter, polyHeight(tile, p), hdr.x, hdr.y, p.getArea(), p.flags);
+            if (v == .hide) continue;
+            const lc = if (v == .dim) OUTLINE_DIM else OUTLINE_DRAW;
+
+            const vc: usize = p.vert_count;
+            for (0..vc) |k| {
+                const next = (k + 1) % vc;
+                const v0 = @as(usize, p.verts[k]) * 3;
+                const v1 = @as(usize, p.verts[next]) * 3;
+                dd.vertex(@ptrCast(&tile.verts[v0]), lc);
+                dd.vertex(@ptrCast(&tile.verts[v1]), lc);
+            }
+        }
+    }
+
+    dd.end();
+    dd.depthMask(true);
+}
+
+test "dimCol darkens RGB and halves alpha" {
+    // Opaque white -> ~35% grey, 50% alpha.
+    const out = dimCol(dbg.rgba(255, 255, 255, 200));
+    try std.testing.expectEqual(@as(u32, 255 * 90 / 255), out & 0xff);
+    try std.testing.expectEqual(@as(u32, 100), (out >> 24) & 0xff);
 }
 
 test "polyCost: known area returns registry cost; unknown area -> 1.0" {
