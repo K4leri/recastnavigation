@@ -951,8 +951,11 @@ pub fn main(main_init: std.process.Init) !void {
                     var vsc = dvui.scrollArea(@src(), .{}, .{ .expand = .horizontal, .min_size_content = .{ .h = list_rows * 30 } });
                     defer vsc.deinit();
                     for (variants, 0..) |v, vi| {
-                        var vrow = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal, .id_extra = vi });
-                        defer vrow.deinit();
+                        // Overlay: the full-width load button is the base; the small
+                        // trash icon is drawn ON TOP at the right edge (looks like a
+                        // right segment of the same button).
+                        var ov = dvui.overlay(@src(), .{ .expand = .horizontal, .id_extra = vi });
+                        defer ov.deinit();
                         // index 0 = newest -> highlighted as the default selection.
                         const lbl = if (vi == 0)
                             std.fmt.allocPrint(main_init.gpa, "{s}  (newest)", .{v.variant}) catch v.variant
@@ -962,7 +965,7 @@ pub fn main(main_init: std.process.Init) !void {
                         if (dvui.button(@src(), lbl, .{}, .{ .id_extra = 5000 + vi, .expand = .horizontal })) {
                             loadSceneNow(main_init.gpa, app.meshes_folder, v.path, cur_name, &geom, &solo, &tile, &temp, &tester, &crowd_tool, &prune_tool, &cam, &bctx);
                         }
-                        if (dvui.buttonIcon(@src(), "del", dvui.entypo.trash, .{}, .{}, .{ .id_extra = 5800 + vi, .gravity_y = 0.5 })) {
+                        if (dvui.buttonIcon(@src(), "del", dvui.entypo.trash, .{}, .{}, .{ .id_extra = 5800 + vi, .gravity_x = 1.0, .gravity_y = 0.5 })) {
                             pending_delete = vi;
                         }
                     }
