@@ -456,8 +456,9 @@ pub fn main(main_init: std.process.Init) !void {
             const shift_k = g_window.getKey(.left_shift) == .press or g_window.getKey(.right_shift) == .press;
             const z = g_window.getKey(.z) == .press;
             const y = g_window.getKey(.y) == .press;
+            const t = g_window.getKey(.t) == .press;
             const undo_now = ctrl and z and !shift_k;
-            const redo_now = ctrl and (y or (z and shift_k));
+            const redo_now = ctrl and (y or t or (z and shift_k));
             if (undo_now and !prev_undo) {
                 // Context-aware: when the convex tool is active, try removing the
                 // last in-progress point first; fall through to the committed-edit
@@ -467,10 +468,13 @@ pub fn main(main_init: std.process.Init) !void {
                 }
             }
             if (redo_now and !prev_redo) {
-                // Context-aware: restore the last popped point first; fall through
-                // to the committed-edit redo stack if the point buffer is empty.
-                if (!(active_tool == .convex and convex_tool.redoPoint())) {
-                    if (undo_stack.redo(&geom)) geom_edited = true;
+                // Redo mirrors undo's GLOBAL order: in-progress points are always
+                // newer than any committed edit, so undo pops points first then the
+                // edit -> redo must re-apply the committed edit FIRST, then points.
+                if (undo_stack.redo(&geom)) {
+                    geom_edited = true;
+                } else if (active_tool == .convex) {
+                    _ = convex_tool.redoPoint();
                 }
             }
             prev_undo = undo_now;
@@ -752,8 +756,10 @@ pub fn main(main_init: std.process.Init) !void {
                     }
                 }
                 if (dvui.button(@src(), "Redo", .{ .grayed = !can_r and !convex_has_popped }, .{ .id_extra = 971 })) {
-                    if (!(active_tool == .convex and convex_tool.redoPoint())) {
-                        if (can_r and undo_stack.redo(&geom)) geom_edited = true;
+                    if (can_r and undo_stack.redo(&geom)) {
+                        geom_edited = true;
+                    } else if (active_tool == .convex) {
+                        _ = convex_tool.redoPoint();
                     }
                 }
             }
