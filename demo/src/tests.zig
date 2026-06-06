@@ -8,6 +8,7 @@ test {
     _ = @import("build_context.zig");
     _ = @import("app_state.zig");
     _ = @import("io_util.zig");
+    _ = @import("navmesh_walk.zig");
     _ = @import("input_geom.zig");
     _ = @import("convex_surface.zig");
     _ = @import("render/color_scheme.zig");

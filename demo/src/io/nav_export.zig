@@ -24,6 +24,7 @@ const recast = @import("recast-nav");
 const export_metrics = @import("export_metrics.zig");
 const area_types = @import("../area_types.zig");
 const sample = @import("../sample.zig");
+const walk = @import("../navmesh_walk.zig");
 
 const dt = recast.detour;
 
@@ -127,32 +128,6 @@ pub fn gatherMetrics(
 }
 
 // ===========================================================================
-// Геометрия: общий безопасный обход detail-меша
-// ===========================================================================
-
-/// Извлечь world-space координаты вершины `k` детального треугольника `t`
-/// (stride 4 в detail_tris). Возвращает null если индекс вне границ (bounds-safe,
-/// как в drawPolySafe). vc = poly.vert_count.
-fn detailVert(
-    t: *const dt.MeshTile,
-    poly: *const dt.Poly,
-    pd: *const dt.PolyDetail,
-    vc: usize,
-    tk: u8,
-) ?[3]f32 {
-    if (tk < vc) {
-        if (@as(usize, tk) >= poly.verts.len) return null;
-        const v_idx = @as(usize, poly.verts[tk]) * 3;
-        if (v_idx + 2 >= t.verts.len) return null;
-        return .{ t.verts[v_idx], t.verts[v_idx + 1], t.verts[v_idx + 2] };
-    } else {
-        const d_idx = (@as(usize, pd.vert_base) + (@as(usize, tk) - vc)) * 3;
-        if (d_idx + 2 >= t.detail_verts.len) return null;
-        return .{ t.detail_verts[d_idx], t.detail_verts[d_idx + 1], t.detail_verts[d_idx + 2] };
-    }
-}
-
-// ===========================================================================
 // Треугольная геометрия для glTF (.glb)
 // ===========================================================================
 
@@ -194,7 +169,7 @@ pub fn navTriangles(alloc: std.mem.Allocator, mesh: *const dt.NavMesh) !TriGeom 
                 var p: [3][3]f32 = undefined;
                 var ok = true;
                 for (0..3) |k| {
-                    if (detailVert(t, poly, pd, vc, tri[k])) |v| {
+                    if (walk.detailVert(t, poly, pd, vc, tri[k])) |v| {
                         p[k] = v;
                     } else {
                         ok = false;

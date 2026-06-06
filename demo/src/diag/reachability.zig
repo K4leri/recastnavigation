@@ -23,6 +23,7 @@
 
 const std = @import("std");
 const recast = @import("recast-nav");
+const walk = @import("../navmesh_walk.zig");
 const dt = recast.detour;
 
 const NavMesh = dt.NavMesh;
@@ -42,24 +43,9 @@ pub fn edgeWeight(a: [3]f32, b: [3]f32, area_cost: f32) f32 {
     return dist * area_cost;
 }
 
-/// Centroid (average of the poly's tile.verts) — mirrors poly_visit.polyHeight /
-/// the tester's getPolyCenter, but returns all three coords.
-fn polyCentroid(tile: *const dt.MeshTile, p: *const dt.Poly) [3]f32 {
-    var c = [3]f32{ 0, 0, 0 };
-    const nv: usize = p.vert_count;
-    if (nv == 0) return c;
-    for (0..nv) |i| {
-        const vi = @as(usize, p.verts[i]) * 3;
-        c[0] += tile.verts[vi];
-        c[1] += tile.verts[vi + 1];
-        c[2] += tile.verts[vi + 2];
-    }
-    const s = 1.0 / @as(f32, @floatFromInt(nv));
-    c[0] *= s;
-    c[1] *= s;
-    c[2] *= s;
-    return c;
-}
+/// Centroid (average of the poly's tile.verts) — shared via navmesh_walk
+/// (identical to the tester's getPolyCenter / filter_compare).
+const polyCentroid = walk.polyCentroid;
 
 /// Per-poly accumulated reachability cost from a source polygon, stored in the
 /// components.zig per-tile layout (a `?[]f32` per tile: cost per poly; an

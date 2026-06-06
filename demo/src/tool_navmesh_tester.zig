@@ -12,6 +12,7 @@ const poly_flags = @import("poly_flags.zig");
 const ui = @import("ui.zig");
 const components = @import("render/components.zig");
 const poly_visit = @import("render/poly_visit.zig");
+const walk = @import("navmesh_walk.zig");
 const reachability = @import("diag/reachability.zig");
 const diagnose = @import("diag/diagnose.zig");
 const wnp = @import("diag/why_no_path.zig");
@@ -37,6 +38,15 @@ const pathCol = dbg.rgba(0, 0, 0, 64);
 
 /// FIX-8 diagnostic: capped budget of [DRAWSAFE] smoking-gun prints (dangerous refs).
 var diag_budget: i32 = 60;
+
+/// Context + callback for drawPolySafe's detail-tri emission via navmesh_walk.
+const DrawTriCtx = struct { dd: dbg.DebugDraw, col: u32 };
+
+fn drawTri(ctx: DrawTriCtx, p0: [3]f32, p1: [3]f32, p2: [3]f32) void {
+    ctx.dd.vertex(@ptrCast(&p0), ctx.col);
+    ctx.dd.vertex(@ptrCast(&p1), ctx.col);
+    ctx.dd.vertex(@ptrCast(&p2), ctx.col);
+}
 
 pub const ToolMode = enum {
     pathfind_follow,
@@ -907,40 +917,14 @@ pub const NavMeshTesterTool = struct {
         const poly = tp.poly;
         if (@as(usize, d.poly) >= tile.detail_meshes.len) return;
         const pd = &tile.detail_meshes[d.poly];
-        const vc: usize = poly.vert_count;
 
         dd.depthMask(false);
         dd.begin(.tris, 1.0);
-        var ti: usize = 0;
-        while (ti < @as(usize, pd.tri_count)) : (ti += 1) {
-            const t_idx = (@as(usize, pd.tri_base) + ti) * 4;
-            if (t_idx + 3 >= tile.detail_tris.len) break;
-            const t = tile.detail_tris[t_idx .. t_idx + 4];
-            var pts: [3]*const [3]f32 = undefined;
-            var ok = true;
-            for (0..3) |k| {
-                if (t[k] < vc) {
-                    if (@as(usize, t[k]) >= poly.verts.len) {
-                        ok = false;
-                        break;
-                    }
-                    const v_idx = @as(usize, poly.verts[t[k]]) * 3;
-                    if (v_idx + 2 >= tile.verts.len) {
-                        ok = false;
-                        break;
-                    }
-                    pts[k] = @ptrCast(&tile.verts[v_idx]);
-                } else {
-                    const d_idx = (@as(usize, pd.vert_base) + (@as(usize, t[k]) - vc)) * 3;
-                    if (d_idx + 2 >= tile.detail_verts.len) {
-                        ok = false;
-                        break;
-                    }
-                    pts[k] = @ptrCast(&tile.detail_verts[d_idx]);
-                }
-            }
-            if (ok) for (pts) |p| dd.vertex(p, col);
-        }
+        // Detail-tri resolution lifted to navmesh_walk.forEachDetailTri (the SAME
+        // per-access bounds checks as the old inline loop: poly.verts / tile.verts /
+        // detail_verts + the t_idx tri-range guard). A bad tri vertex skips that
+        // triangle; a tri-range overrun stops the poly — byte-identical behaviour.
+        walk.forEachDetailTri(tile, poly, pd, DrawTriCtx{ .dd = dd, .col = col }, drawTri);
         dd.end();
         dd.depthMask(true);
     }
@@ -1100,23 +1084,12 @@ pub const NavMeshTesterTool = struct {
     }
 
     /// Центр полигона (среднее его вершин) — порт getPolyCenter из Tool_NavMeshTester.
+    /// Резолв ref + центроид через общий navmesh_walk; bad/нулевой ref -> {0,0,0}
+    /// (как раньше). tileAndPoly добавляет проверку `tile < tiles.len` (строго
+    /// безопаснее старого getTileAndPolyByRef-only; на валидном меше идентично).
     fn getPolyCenter(self: *NavMeshTesterTool, ref: dt.PolyRef) [3]f32 {
-        var c = [3]f32{ 0, 0, 0 };
-        const nm = self.navmesh orelse return c;
-        const r = nm.getTileAndPolyByRef(ref) catch return c;
-        const nv = r.poly.vert_count;
-        if (nv == 0) return c;
-        for (0..nv) |i| {
-            const vi = @as(usize, r.poly.verts[i]) * 3;
-            c[0] += r.tile.verts[vi];
-            c[1] += r.tile.verts[vi + 1];
-            c[2] += r.tile.verts[vi + 2];
-        }
-        const s = 1.0 / @as(f32, @floatFromInt(nv));
-        c[0] *= s;
-        c[1] *= s;
-        c[2] *= s;
-        return c;
+        const nm = self.navmesh orelse return .{ 0, 0, 0 };
+        return walk.polyCentroidByRef(nm, ref) orelse .{ 0, 0, 0 };
     }
 
     /// Дуги-стрелки дерева поиска: от центра каждого найденного поли к центру родителя

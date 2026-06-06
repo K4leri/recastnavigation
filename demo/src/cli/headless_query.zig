@@ -17,6 +17,7 @@ const std = @import("std");
 const recast = @import("recast-nav");
 const export_query = @import("../io/export_query.zig");
 const io_util = @import("../io_util.zig");
+const walk = @import("../navmesh_walk.zig");
 
 const dt = recast.detour;
 
@@ -43,22 +44,9 @@ fn dist3(a: [3]f32, b: [3]f32) f32 {
 }
 
 /// Центр полигона (среднее вершин) — порт getPolyCenter из tool_navmesh_tester.
+/// Резолв + центроид через общий navmesh_walk; bad/нулевой ref -> {0,0,0}.
 fn polyCenter(nav: *const dt.NavMesh, ref: dt.PolyRef) [3]f32 {
-    var c = [3]f32{ 0, 0, 0 };
-    const r = nav.getTileAndPolyByRef(ref) catch return c;
-    const nv = r.poly.vert_count;
-    if (nv == 0) return c;
-    for (0..nv) |i| {
-        const vi = @as(usize, r.poly.verts[i]) * 3;
-        c[0] += r.tile.verts[vi];
-        c[1] += r.tile.verts[vi + 1];
-        c[2] += r.tile.verts[vi + 2];
-    }
-    const s = 1.0 / @as(f32, @floatFromInt(nv));
-    c[0] *= s;
-    c[1] *= s;
-    c[2] *= s;
-    return c;
+    return walk.polyCentroidByRef(nav, ref) orelse .{ 0, 0, 0 };
 }
 
 /// Текстовый статус из dt.Status (для QueryRecord.status).

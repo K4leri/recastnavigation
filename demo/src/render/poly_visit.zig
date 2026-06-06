@@ -15,8 +15,25 @@ const cs = @import("color_scheme.zig");
 const components = @import("components.zig");
 const isolation = @import("isolation.zig");
 const reachability = @import("../diag/reachability.zig");
+const walk = @import("../navmesh_walk.zig");
 
 const NavMesh = dt.NavMesh;
+
+/// Shared detail-triangle fill: emit a poly's detail tris to `dd` in `col`.
+/// Mirrors the (previously inlined-3x) fill loop, now routed through
+/// navmesh_walk.forEachDetailTri (bounds-safe; the built mesh never trips the
+/// guards, so output is identical to the old raw-index loop).
+const FillCtx = struct { dd: dbg.DebugDraw, col: u32 };
+
+fn emitTri(ctx: FillCtx, p0: [3]f32, p1: [3]f32, p2: [3]f32) void {
+    ctx.dd.vertex(@ptrCast(&p0), ctx.col);
+    ctx.dd.vertex(@ptrCast(&p1), ctx.col);
+    ctx.dd.vertex(@ptrCast(&p2), ctx.col);
+}
+
+fn fillPolyDetail(dd: dbg.DebugDraw, tile: *const dt.MeshTile, poly: *const dt.Poly, pd: *const dt.PolyDetail, col: u32) void {
+    walk.forEachDetailTri(tile, poly, pd, FillCtx{ .dd = dd, .col = col }, emitTri);
+}
 
 fn polyHeight(tile: *const dt.MeshTile, p: *const dt.Poly) f32 {
     var sum: f32 = 0;
@@ -201,19 +218,7 @@ pub fn fillNavMesh(dd: dbg.DebugDraw, mesh: *const NavMesh, scheme: cs.ColorSche
             const ctx = buildCtx(&ranges, tile, p, ti, i);
             const col = cs.colorForPoly(scheme, ctx);
 
-            for (0..@as(usize, pd.tri_count)) |j| {
-                const t_idx = (pd.tri_base + @as(u32, @intCast(j))) * 4;
-                const t = tile.detail_tris[t_idx .. t_idx + 4];
-                for (0..3) |k| {
-                    if (t[k] < p.vert_count) {
-                        const v_idx = @as(usize, p.verts[t[k]]) * 3;
-                        dd.vertex(@ptrCast(&tile.verts[v_idx]), col);
-                    } else {
-                        const d_idx = (@as(usize, pd.vert_base) + @as(usize, t[k] - p.vert_count)) * 3;
-                        dd.vertex(@ptrCast(&tile.detail_verts[d_idx]), col);
-                    }
-                }
-            }
+            fillPolyDetail(dd, tile, p, pd, col);
         }
     }
 
@@ -262,19 +267,7 @@ pub fn fillNavMeshHeatmap(
             else
                 HEATMAP_UNREACHED;
 
-            for (0..@as(usize, pd.tri_count)) |j| {
-                const t_idx = (pd.tri_base + @as(u32, @intCast(j))) * 4;
-                const t = tile.detail_tris[t_idx .. t_idx + 4];
-                for (0..3) |k| {
-                    if (t[k] < p.vert_count) {
-                        const v_idx = @as(usize, p.verts[t[k]]) * 3;
-                        dd.vertex(@ptrCast(&tile.verts[v_idx]), col);
-                    } else {
-                        const d_idx = (@as(usize, pd.vert_base) + @as(usize, t[k] - p.vert_count)) * 3;
-                        dd.vertex(@ptrCast(&tile.detail_verts[d_idx]), col);
-                    }
-                }
-            }
+            fillPolyDetail(dd, tile, p, pd, col);
         }
     }
 
@@ -341,19 +334,7 @@ pub fn fillNavMeshFiltered(
             const col = if (v == .dim) dimCol(base_col) else base_col;
 
             const pd = &tile.detail_meshes[i];
-            for (0..@as(usize, pd.tri_count)) |j| {
-                const t_idx = (pd.tri_base + @as(u32, @intCast(j))) * 4;
-                const t = tile.detail_tris[t_idx .. t_idx + 4];
-                for (0..3) |k| {
-                    if (t[k] < p.vert_count) {
-                        const v_idx = @as(usize, p.verts[t[k]]) * 3;
-                        dd.vertex(@ptrCast(&tile.verts[v_idx]), col);
-                    } else {
-                        const d_idx = (@as(usize, pd.vert_base) + @as(usize, t[k] - p.vert_count)) * 3;
-                        dd.vertex(@ptrCast(&tile.detail_verts[d_idx]), col);
-                    }
-                }
-            }
+            fillPolyDetail(dd, tile, p, pd, col);
         }
     }
 

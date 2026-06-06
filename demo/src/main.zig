@@ -44,6 +44,7 @@ const overlay = @import("render/overlay.zig");
 const minimap = @import("render/minimap.zig");
 const capture = @import("render/capture.zig");
 const poly_visit = @import("render/poly_visit.zig");
+const navmesh_walk = @import("navmesh_walk.zig");
 const SampleTile = @import("sample_tile.zig").SampleTile;
 const SampleTempObstacles = @import("sample_temp_obstacles.zig").SampleTempObstacles;
 const NavMeshTesterTool = @import("tool_navmesh_tester.zig").NavMeshTesterTool;
@@ -3940,21 +3941,15 @@ fn polyCentroidY(tile: *const recast.detour.MeshTile, p: *const recast.detour.Po
 }
 
 /// Full XYZ centroid (average of outer-ring verts) of the poly behind `ref`.
+/// Резолв + центроид через общий navmesh_walk (tileAndPoly добавляет проверку
+/// tile < tiles.len; на валидном меше результат идентичен). bad/нулевой ref ->
+/// null; пустой поли (vert_count==0) -> walk возвращает {0,0,0}, как и null здесь
+/// был бы недостижим на построенном меше — но сохраняем старый null-контракт ниже.
 fn polyCentroid(nm: *const recast.detour.NavMesh, ref: u32) ?Vec3 {
-    const res = nm.getTileAndPolyByRef(ref) catch return null;
-    const p = res.poly;
-    if (p.vert_count == 0) return null;
-    var sx: f32 = 0;
-    var sy: f32 = 0;
-    var sz: f32 = 0;
-    for (0..p.vert_count) |k| {
-        const o = @as(usize, p.verts[k]) * 3;
-        sx += res.tile.verts[o + 0];
-        sy += res.tile.verts[o + 1];
-        sz += res.tile.verts[o + 2];
-    }
-    const n: f32 = @floatFromInt(p.vert_count);
-    return Vec3.init(sx / n, sy / n, sz / n);
+    const tp = navmesh_walk.tileAndPoly(nm, ref) orelse return null;
+    if (tp.poly.vert_count == 0) return null;
+    const c = navmesh_walk.polyCentroid(tp.tile, tp.poly);
+    return Vec3.init(c[0], c[1], c[2]);
 }
 
 /// Format + draw one poly's overlay label at its on-screen centroid. Resolves the
