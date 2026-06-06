@@ -29,6 +29,38 @@ fn dragSlider(src: std.builtin.SourceLocation, comptime fmt: []const u8, value: 
     }
 }
 
+/// Инлайн-значок «(?)»: при наведении мышкой всплывает floating-tooltip с
+/// `text` (текст переносится через textLayout — не режется по ширине панели,
+/// в отличие от обычного label). Ставь рядом с заголовком секции.
+pub fn helpIcon(src: std.builtin.SourceLocation, comptime text: []const u8) void {
+    var wd: dvui.WidgetData = undefined;
+    _ = dvui.buttonIcon(src, "help", dvui.entypo.info_with_circle, .{}, .{
+        .fill_color = .{ .r = 110, .g = 170, .b = 235 },
+    }, .{
+        .data_out = &wd,
+        .gravity_y = 0.5,
+        .id_extra = 8001,
+        .min_size_content = .{ .h = 16 },
+        .padding = dvui.Rect.all(2),
+    });
+    dvui.tooltip(
+        src,
+        .{ .active_rect = wd.borderRectScale().r, .position = .vertical, .interactive = true },
+        text,
+        .{},
+        .{ .id_extra = 8002, .min_size_content = .{ .w = 320 } },
+    );
+}
+
+/// Заголовок секции с инлайн-значком «(?)» справа (см. `helpIcon`).
+pub fn sectionHelp(src: std.builtin.SourceLocation, comptime title: []const u8, comptime help: []const u8) void {
+    _ = dvui.separator(src, .{ .expand = .horizontal, .id_extra = 8010 });
+    var row = dvui.box(src, .{ .dir = .horizontal }, .{ .expand = .horizontal, .id_extra = 8011 });
+    defer row.deinit();
+    dvui.labelNoFmt(src, title, .{}, .{ .font = dvui.themeGet().font_heading, .id_extra = 8012, .gravity_y = 0.5 });
+    helpIcon(src, help);
+}
+
 /// Слайдер f32 с подписью (формат должен содержать одно поле {d:...}).
 pub fn slider(src: std.builtin.SourceLocation, comptime fmt: []const u8, value: *f32, min: f32, max: f32) void {
     dragSlider(src, fmt, value, min, max, null);

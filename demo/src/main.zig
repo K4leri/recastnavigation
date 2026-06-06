@@ -2298,8 +2298,13 @@ pub fn main(main_init: std.process.Init) !void {
             var fw = dvui.floatingWindow(@src(), .{ .rect = &flags_rect, .open_flag = &show_flags }, .{ .id_extra = 9 });
             defer fw.deinit();
             _ = dvui.windowHeader("Poly Flags", "", &show_flags);
-            dvui.labelNoFmt(@src(), "Reachability flags (max 16).", .{}, .{});
-            _ = dvui.separator(@src(), .{ .expand = .horizontal });
+            ui.sectionHelp(@src(), "What are Poly Flags?",
+                \\Poly Flags = per-polygon capability bits: walk / swim / door / jump / disabled (max 16). A polygon can carry SEVERAL flags.
+                \\
+                \\The query filter sets include/exclude masks - a path may only cross polygons whose flags pass the filter. This enables/disables areas per agent (can it swim? is the door open?).
+                \\
+                \\Link to Area Type: each area type grants a set of these flags to its polygons at build. Area Type -> movement cost; Poly Flags -> passability.
+            );
             {
                 var i: usize = 0;
                 while (i < poly_flags.MAX_FLAGS) : (i += 1) {

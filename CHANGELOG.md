@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-06-06
+
+### Added
+- **In-app help for Area Type and Poly Flags.** Both concepts were easy to
+  confuse; each section title now carries a hoverable **(?)** marker that pops a
+  wrapped floating tooltip. *Area Type* (Tools → Convex): terrain class painted
+  onto polygons, one per polygon, drives movement **cost**. *Poly Flags* (manager
+  window): per-polygon capability bits (walk/swim/door/jump/disabled) the query
+  filter includes/excludes to gate **passability** — and the link between them
+  (an area type grants flags at build). New `ui.helpIcon` / `ui.sectionHelp`
+  helpers. (`demo/src/ui.zig`, `demo/src/tool_convex.zig`, `demo/src/main.zig`)
+
 ### Fixed
 - **Follow-mode path now crosses off-mesh connections.** The smooth/follow path
   (`smoothPath`) only handled the END steer flag, not
@@ -17,6 +29,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `getOffMeshConnectionPolyEndPoints`, teleport to the far endpoint, continue).
   Off-mesh scene save/load was verified correct (two new deterministic repro
   tests). (`demo/src/tool_navmesh_tester.zig`)
+
+### Changed — internal dedup wave (demo-only, behaviour-identical)
+Consolidated duplicated `demo/src/*` logic into shared modules with **zero**
+behaviour change — proven by byte-identical navmesh hashes for all three samples
+(solo `0x0830…`, tile `0xa64b…`, temp `0x4b27…`), byte-identical `.gset`/glb/JSON
+exports, and green suites (`demo-test` 260/260, core 91/91). Faithful `src/*`
+untouched. ~60+ duplicate copies removed across four tiers:
+- **A1** — `io/json_emit.zig` (JSON emit), `ui.zig` rgba→Color helpers, crowd
+  update-flags.
+- **A2** — `navmesh_walk.zig`: one shared, bounds-checked read-only navmesh
+  traversal (centroid / tile-and-poly / detail-vert / detail-tri iteration),
+  migrated across 8 consumers.
+- **B** — `persist/byteio.zig` (overflow-safe LE reader/writer) + record framing
+  in `checksum.zig`; `io/glb.zig` (GLB container codec); comptime settings table.
+- **C** — `sample.zig` shared build derivations (`deriveCfg` / `computeTileGrid`
+  / `markConvexVolumes`) and `render/navmesh_layer.zig`, single-sourcing the
+  solo/tile/temp samples' build + render.
 
 ## [0.2.0] - 2026-06-05
 

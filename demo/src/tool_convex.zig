@@ -308,7 +308,13 @@ pub const ConvexVolumeTool = struct {
         // Area Type — pick the type painted into the next volume (radio), plus a
         // pencil to open its editor. The list is the runtime registry, so custom
         // types appear here too.
-        dvui.labelNoFmt(@src(), "Area Type", .{}, .{});
+        ui.sectionHelp(@src(), "Area Type",
+            \\Area Type = terrain class painted onto navmesh polygons (grass / water / road / door / ...).
+            \\
+            \\Each type has a movement COST: pathfinding prefers cheap areas and avoids expensive ones. A polygon has EXACTLY ONE area type.
+            \\
+            \\The pencil opens an editor for that type: its color, movement cost, and the set of Poly Flags it grants to its polygons at build.
+        );
         {
             var id: usize = 0;
             while (id < area_types.MAX_AREA_TYPES) : (id += 1) {
