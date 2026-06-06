@@ -6,6 +6,8 @@ const std = @import("std");
 const dvui = @import("dvui");
 const recast = @import("recast-nav");
 const ui = @import("ui.zig");
+const convex_surface = @import("convex_surface.zig");
+const InputGeom = @import("input_geom.zig").InputGeom;
 
 // ============================================================================
 // Enums (1в1 с RecastDemo/Sample.h)
@@ -78,6 +80,93 @@ pub const CommonSettings = struct {
     filter_ledge_spans: bool = true,
     filter_walkable_low_height_spans: bool = true,
 };
+
+// ============================================================================
+// Производные параметры сборки (RecastDemo handleBuild конвертации).
+// ============================================================================
+
+/// Воксельно-производные параметры конфига Recast, выведенные из CommonSettings
+/// и (cs, ch). 1-в-1 с конвертациями RecastDemo (Sample_*::handleBuild):
+/// округления (@ceil/@floor), квадраты регионов и detail-параметры — все три
+/// сэмпла считали это идентично; здесь единственный источник.
+pub const DerivedCfg = struct {
+    walkable_height: i32,
+    walkable_climb: i32,
+    walkable_radius: i32,
+    max_edge_len: i32,
+    min_region_area: i32,
+    merge_region_area: i32,
+    detail_sample_dist: f32,
+    detail_sample_max_error: f32,
+};
+
+/// Вывести производные параметры из настроек и (cs, ch). cs/ch передаются явно,
+/// т.к. вызывающие читают их в локальные переменные перед вызовом (1-в-1 порядок
+/// и формулы RecastDemo).
+pub fn deriveCfg(s: *const CommonSettings, cs: f32, ch: f32) DerivedCfg {
+    return .{
+        .walkable_height = @intFromFloat(@ceil(s.agent_height / ch)),
+        .walkable_climb = @intFromFloat(@floor(s.agent_max_climb / ch)),
+        .walkable_radius = @intFromFloat(@ceil(s.agent_radius / cs)),
+        .max_edge_len = @intFromFloat(s.edge_max_len / cs),
+        .min_region_area = @intFromFloat(s.region_min_size * s.region_min_size),
+        .merge_region_area = @intFromFloat(s.region_merge_size * s.region_merge_size),
+        .detail_sample_dist = if (s.detail_sample_dist < 0.9) 0 else cs * s.detail_sample_dist,
+        .detail_sample_max_error = ch * s.detail_sample_max_error,
+    };
+}
+
+/// Покрасить все выпуклые объёмы геометрии в CompactHeightfield. Байт-идентично
+/// во всех трёх сэмплах (после erodeWalkableArea, до партиционирования).
+/// prism -> markConvexPolyArea, surface -> markConvexPolyAreaSurface.
+pub fn markConvexVolumes(ctx: *recast.Context, geom: *InputGeom, chf: *recast.CompactHeightfield) void {
+    for (geom.volumes.items) |*vol| {
+        const nv: usize = @intCast(vol.nverts);
+        switch (vol.mode) {
+            .prism => recast.recast.area.markConvexPolyArea(ctx, vol.verts[0 .. nv * 3], nv, vol.hmin, vol.hmax, vol.area, chf),
+            .surface => convex_surface.markConvexPolyAreaSurface(vol.verts[0 .. nv * 3], nv, vol.band_below, vol.band_above, vol.area, chf),
+        }
+    }
+}
+
+// ============================================================================
+// Тайловая сетка (RecastDemo Sample_TileMesh / Sample_TempObstacles).
+// ============================================================================
+
+/// Производные тайловой сетки, выведенные из воксельной сетки (gw,gh) и tile_size.
+/// 1-в-1 с RecastDemo: tw/th = ceil-деление, tile_bits/poly_bits через nextPow2+
+/// ilog2, max_tiles/max_polys = 1<<bits. `layer_factor` умножает tw*th перед
+/// bit-расчётом (Tile=1, TempObstacles=4 — резерв слоёв tilecache).
+pub const TileGrid = struct {
+    ts: i32, // tile_size в вокселях (целое)
+    tw: i32, // тайлов по X
+    th: i32, // тайлов по Y
+    tcs: f32, // размер тайла в мировых единицах (tile_size * cs)
+    tile_bits: u5,
+    poly_bits: u5,
+    max_tiles: i32,
+    max_polys: i32,
+};
+
+/// Вычислить тайловую сетку. gw/gh — воксельный размер (calcGridSize).
+/// layer_factor: Tile=1, TempObstacles=4 (зарезервировать tiles под слои).
+pub fn computeTileGrid(gw: i32, gh: i32, tile_size: f32, cs: f32, layer_factor: i32) TileGrid {
+    const ts: i32 = @intFromFloat(tile_size);
+    const tw = @divTrunc(gw + ts - 1, ts);
+    const th = @divTrunc(gh + ts - 1, ts);
+    const tile_bits: u5 = @intCast(@min(recast.math.ilog2(recast.math.nextPow2(@intCast(tw * th * layer_factor))), 14));
+    const poly_bits: u5 = @intCast(22 - @as(u32, tile_bits));
+    return .{
+        .ts = ts,
+        .tw = tw,
+        .th = th,
+        .tcs = tile_size * cs,
+        .tile_bits = tile_bits,
+        .poly_bits = poly_bits,
+        .max_tiles = @as(i32, 1) << tile_bits,
+        .max_polys = @as(i32, 1) << poly_bits,
+    };
+}
 
 // ============================================================================
 // Единая таблица k=v-настроек (источник истины для cli / headless / diff).

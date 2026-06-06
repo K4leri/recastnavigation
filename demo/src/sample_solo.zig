@@ -13,11 +13,9 @@ const ddgl = @import("debug_draw_gl.zig");
 const io_util = @import("io_util.zig");
 const ui = @import("ui.zig");
 const nav_io = @import("navmesh_io.zig");
-const poly_visit = @import("render/poly_visit.zig");
-const scheme_state = @import("render/scheme_state.zig");
 const filter_state = @import("render/filter_state.zig");
 const view_state = @import("render/view_state.zig");
-const convex_surface = @import("convex_surface.zig");
+const navmesh_layer = @import("render/navmesh_layer.zig");
 const build_stats = @import("diag/build_stats.zig");
 const profiler = @import("diag/profiler.zig");
 const artifacts = @import("diag/artifacts.zig");
@@ -210,14 +208,15 @@ pub const SampleSolo = struct {
         // конфиг (конвертация параметров как RecastDemo)
         const cs = s.cell_size;
         const ch = s.cell_height;
-        const walkable_height: i32 = @intFromFloat(@ceil(s.agent_height / ch));
-        const walkable_climb: i32 = @intFromFloat(@floor(s.agent_max_climb / ch));
-        const walkable_radius: i32 = @intFromFloat(@ceil(s.agent_radius / cs));
-        const max_edge_len: i32 = @intFromFloat(s.edge_max_len / cs);
-        const min_region_area: i32 = @intFromFloat(s.region_min_size * s.region_min_size);
-        const merge_region_area: i32 = @intFromFloat(s.region_merge_size * s.region_merge_size);
-        const detail_sample_dist: f32 = if (s.detail_sample_dist < 0.9) 0 else cs * s.detail_sample_dist;
-        const detail_sample_max_error: f32 = ch * s.detail_sample_max_error;
+        const d = sample.deriveCfg(s, cs, ch);
+        const walkable_height = d.walkable_height;
+        const walkable_climb = d.walkable_climb;
+        const walkable_radius = d.walkable_radius;
+        const max_edge_len = d.max_edge_len;
+        const min_region_area = d.min_region_area;
+        const merge_region_area = d.merge_region_area;
+        const detail_sample_dist = d.detail_sample_dist;
+        const detail_sample_max_error = d.detail_sample_max_error;
         const border_size: i32 = 0;
 
         var bmin = Vec3.init(geom.bmin[0], geom.bmin[1], geom.bmin[2]);
@@ -377,13 +376,7 @@ pub const SampleSolo = struct {
         //  `regions` stage; distancefield is its own watershed-only stage.)
         var t_reg = io_util.PerfTimer.start();
         try rc.area.erodeWalkableArea(ctx, cfg.walkable_radius, &chf, a);
-        for (geom.volumes.items) |*vol| {
-            const nv: usize = @intCast(vol.nverts);
-            switch (vol.mode) {
-                .prism => rc.area.markConvexPolyArea(ctx, vol.verts[0 .. nv * 3], nv, vol.hmin, vol.hmax, vol.area, &chf),
-                .surface => convex_surface.markConvexPolyAreaSurface(vol.verts[0 .. nv * 3], nv, vol.band_below, vol.band_above, vol.area, &chf),
-            }
-        }
+        sample.markConvexVolumes(ctx, geom, &chf);
         // Partitioning (ветвление по типу, 1-в-1 Sample_SoloMesh::handleBuild).
         switch (s.partition_type) {
             .watershed => {
@@ -530,18 +523,11 @@ pub const SampleSolo = struct {
     // poly_visit.outlineNavMesh (works with filter on/off), else filtered draw
     // (clip/iso active) else faithful + optional scheme overdraw.
     fn drawNavmeshLayer(self: *SampleSolo, dd: dbg.DebugDraw, n: *dt.NavMesh) void {
-        if (!view_state.groups.navmesh) return;
-        if (view_state.wireframe) {
-            poly_visit.outlineNavMesh(dd, n, scheme_state.active, filter_state.active, self.alloc);
-        } else if (filter_state.active.active()) {
-            poly_visit.fillNavMeshFiltered(dd, n, scheme_state.active, filter_state.active, self.alloc);
-        } else {
-            dbg.debugDrawNavMesh(dd, n, 0);
-            if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
-        }
+        navmesh_layer.drawNavmeshLayer(dd, n, self.alloc);
         // B-3: overdraw flagged culprit polys in a warning colour (reads the cached
-        // report — analyze runs on the button, not here).
-        if (self.highlight_culprits) self.drawArtifactHighlight(dd, n);
+        // report — analyze runs on the button, not here). Gated like the shared
+        // layer was (skip if the navmesh group is off).
+        if (view_state.groups.navmesh and self.highlight_culprits) self.drawArtifactHighlight(dd, n);
     }
 
     /// Warning colour for highlighted artifact culprits (translucent orange).
@@ -707,14 +693,7 @@ pub const SampleSolo = struct {
         // Off-mesh connections and convex volumes are part of the scene and are
         // drawn regardless of the active tool (1:1 Sample::handleRender). The
         // tools only render their in-progress editing state.
-        if (self.geom) |g| {
-            // Mesh bounds wireframe (1:1 Sample::handleRender — duDebugDrawBoxWire,
-            // white 255,255,255,128). Marks the 3D object's extent.
-            dbg.debugDrawBoxWire(dd, g.bmin[0], g.bmin[1], g.bmin[2], g.bmax[0], g.bmax[1], g.bmax[2], dbg.rgba(255, 255, 255, 128), 1.0);
-            // Cluster E (P1-1): convex / off-mesh gated on their groups.
-            if (view_state.groups.convex) g.drawConvexVolumes(dd);
-            if (view_state.groups.offmesh) g.drawOffMeshConnections(dd);
-        }
+        navmesh_layer.drawSceneOverlays(dd, self.geom);
 
         // ВОССТАНОВЛЕНИЕ GL-стейта после варианта вокселей — чтобы НЕ протекало в UI/др. режимы.
         if (voxel_mode) {

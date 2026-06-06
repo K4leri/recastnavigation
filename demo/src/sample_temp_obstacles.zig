@@ -12,11 +12,7 @@ const ddgl = @import("debug_draw_gl.zig");
 const io_util = @import("io_util.zig");
 const ui = @import("ui.zig");
 const nav_io = @import("navmesh_io.zig");
-const convex_surface = @import("convex_surface.zig");
-const poly_visit = @import("render/poly_visit.zig");
-const scheme_state = @import("render/scheme_state.zig");
-const filter_state = @import("render/filter_state.zig");
-const view_state = @import("render/view_state.zig");
+const navmesh_layer = @import("render/navmesh_layer.zig");
 
 const rc = recast.recast;
 const dt = recast.detour;
@@ -166,20 +162,19 @@ pub const SampleTempObstacles = struct {
         var gw: i32 = 0;
         var gh: i32 = 0;
         recast.RecastConfig.calcGridSize(bmin, bmax, cs, &gw, &gh);
-        const ts: i32 = @intFromFloat(self.tile_size);
-        const tw = @divTrunc(gw + ts - 1, ts);
-        const th = @divTrunc(gh + ts - 1, ts);
-        const tcs = self.tile_size * cs;
+        // навмеш (multi-tile) — резерв с запасом на слои (layer_factor=4).
+        const grid = sample.computeTileGrid(gw, gh, self.tile_size, cs, 4);
+        const ts = grid.ts;
+        const tw = grid.tw;
+        const th = grid.th;
+        const tcs = grid.tcs;
 
-        // навмеш (multi-tile) — резерв с запасом на слои
-        const tile_bits: u5 = @intCast(@min(recast.math.ilog2(recast.math.nextPow2(@intCast(tw * th * 4))), 14));
-        const poly_bits: u5 = @intCast(22 - @as(u32, tile_bits));
         var nav_params = dt.NavMeshParams.init();
         nav_params.orig = bmin;
         nav_params.tile_width = tcs;
         nav_params.tile_height = tcs;
-        nav_params.max_tiles = @as(i32, 1) << tile_bits;
-        nav_params.max_polys = @as(i32, 1) << poly_bits;
+        nav_params.max_tiles = grid.max_tiles;
+        nav_params.max_polys = grid.max_polys;
         var navmesh = dt.NavMesh.init(self.alloc, nav_params) catch return false;
         errdefer navmesh.deinit();
 
@@ -224,9 +219,10 @@ pub const SampleTempObstacles = struct {
         const s = &self.settings;
         const cs = s.cell_size;
         const ch = s.cell_height;
-        const walkable_height: i32 = @intFromFloat(@ceil(s.agent_height / ch));
-        const walkable_climb: i32 = @intFromFloat(@floor(s.agent_max_climb / ch));
-        const walkable_radius: i32 = @intFromFloat(@ceil(s.agent_radius / cs));
+        const d = sample.deriveCfg(s, cs, ch);
+        const walkable_height = d.walkable_height;
+        const walkable_climb = d.walkable_climb;
+        const walkable_radius = d.walkable_radius;
         const border_size = walkable_radius + 3;
         const tcs = self.tile_size * cs;
 
@@ -261,13 +257,7 @@ pub const SampleTempObstacles = struct {
         defer chf.deinit();
         try rc.compact.buildCompactHeightfield(ctx, walkable_height, walkable_climb, &hf, &chf);
         try rc.area.erodeWalkableArea(ctx, walkable_radius, &chf, a);
-        for (geom.volumes.items) |*vol| {
-            const nv: usize = @intCast(vol.nverts);
-            switch (vol.mode) {
-                .prism => rc.area.markConvexPolyArea(ctx, vol.verts[0 .. nv * 3], nv, vol.hmin, vol.hmax, vol.area, &chf),
-                .surface => convex_surface.markConvexPolyAreaSurface(vol.verts[0 .. nv * 3], nv, vol.band_below, vol.band_above, vol.area, &chf),
-            }
-        }
+        sample.markConvexVolumes(ctx, geom, &chf);
 
         var lset = rc.HeightfieldLayerSet.init(a);
         defer lset.deinit();
@@ -377,18 +367,9 @@ pub const SampleTempObstacles = struct {
         self.dd_gl.area_to_col = sample.sampleAreaToCol;
         const dd = self.dd_gl.debugDraw();
         if (self.navmesh) |*n| {
-            // Cluster E (P0-2/P1-1): navmesh group gate + wireframe/filter/faithful
-            // routing (mirrors sample_solo/sample_tile.drawNavmeshLayer).
-            if (view_state.groups.navmesh) {
-                if (view_state.wireframe) {
-                    poly_visit.outlineNavMesh(dd, n, scheme_state.active, filter_state.active, self.alloc);
-                } else if (filter_state.active.active()) {
-                    poly_visit.fillNavMeshFiltered(dd, n, scheme_state.active, filter_state.active, self.alloc);
-                } else {
-                    dbg.debugDrawNavMesh(dd, n, 0);
-                    if (scheme_state.active != .area) poly_visit.fillNavMesh(dd, n, scheme_state.active, self.alloc);
-                }
-            }
+            // Cluster E (P0-2/P1-1): shared navmesh layer (group gate + wireframe/
+            // filter/faithful routing) via render/navmesh_layer.zig.
+            navmesh_layer.drawNavmeshLayer(dd, n, self.alloc);
         }
 
         // препятствия (цилиндры)
@@ -428,14 +409,7 @@ pub const SampleTempObstacles = struct {
         }
 
         // Scene overlays drawn regardless of the active tool (1:1 Sample::handleRender).
-        if (self.geom) |g| {
-            // Mesh bounds wireframe (1:1 Sample::handleRender — duDebugDrawBoxWire,
-            // white 255,255,255,128). Marks the 3D object's extent.
-            dbg.debugDrawBoxWire(dd, g.bmin[0], g.bmin[1], g.bmin[2], g.bmax[0], g.bmax[1], g.bmax[2], dbg.rgba(255, 255, 255, 128), 1.0);
-            // Cluster E (P1-1): convex / off-mesh gated on their groups.
-            if (view_state.groups.convex) g.drawConvexVolumes(dd);
-            if (view_state.groups.offmesh) g.drawOffMeshConnections(dd);
-        }
+        navmesh_layer.drawSceneOverlays(dd, self.geom);
     }
 
     pub fn drawSettings(self: *SampleTempObstacles) void {
@@ -454,14 +428,10 @@ pub const SampleTempObstacles = struct {
         ui.sliderInt(@src(), "Tile Size: {d:.0}", &self.tile_size, 16, 128);
 
         if (self.geom != null and gw > 0) {
-            const ts: i32 = @intFromFloat(self.tile_size);
-            const tw = @divTrunc(gw + ts - 1, ts);
-            const th = @divTrunc(gh + ts - 1, ts);
-            dvui.label(@src(), "Tiles  {d} x {d}", .{ tw, th }, .{});
-            const tile_bits: u5 = @intCast(@min(recast.math.ilog2(recast.math.nextPow2(@intCast(tw * th * 4))), 14));
-            const poly_bits: u5 = @intCast(22 - @as(u32, tile_bits));
-            dvui.label(@src(), "Max Tiles  {d}", .{@as(i32, 1) << tile_bits}, .{});
-            dvui.label(@src(), "Max Polys  {d}", .{@as(i32, 1) << poly_bits}, .{});
+            const grid = sample.computeTileGrid(gw, gh, self.tile_size, s.cell_size, 4);
+            dvui.label(@src(), "Tiles  {d} x {d}", .{ grid.tw, grid.th }, .{});
+            dvui.label(@src(), "Max Tiles  {d}", .{grid.max_tiles}, .{});
+            dvui.label(@src(), "Max Polys  {d}", .{grid.max_polys}, .{});
         }
 
         ui.section(@src(), "Tile Cache");
