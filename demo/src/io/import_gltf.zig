@@ -23,6 +23,7 @@
 //! Никаких проектных зависимостей: только std (для автономного `zig test`).
 
 const std = @import("std");
+const glb_container = @import("glb.zig");
 
 pub const Mesh = struct {
     verts: []f32, // owned; тройки x,y,z (в world-space после node-трансформов)
@@ -185,56 +186,6 @@ fn readFixedFloats(v: V, key: []const u8, out: []f32) bool {
         out[i] = asF32(it) orelse return false;
     }
     return true;
-}
-
-// ---------------------------------------------------------------------------
-// Парсинг glb-контейнера: возвращает JSON-байты и опц. BIN-чанк.
-// ---------------------------------------------------------------------------
-const GlbChunks = struct {
-    json: []const u8,
-    bin: ?[]const u8,
-};
-
-fn readU32LE(bytes: []const u8, off: usize) Error!u32 {
-    if (off + 4 > bytes.len) return Error.BadGlb;
-    return std.mem.readInt(u32, bytes[off..][0..4], .little);
-}
-
-fn parseGlb(bytes: []const u8) Error!GlbChunks {
-    if (bytes.len < 12) return Error.BadGlb;
-    const magic = try readU32LE(bytes, 0);
-    if (magic != 0x46546C67) return Error.BadGlb; // 'glTF'
-    const version = try readU32LE(bytes, 4);
-    if (version != 2) return Error.BadGlb;
-    const total_len = try readU32LE(bytes, 8);
-    if (total_len > bytes.len) return Error.BadGlb;
-
-    var json: ?[]const u8 = null;
-    var bin: ?[]const u8 = null;
-
-    var off: usize = 12;
-    while (off + 8 <= total_len) {
-        const chunk_len: usize = @intCast(try readU32LE(bytes, off));
-        const chunk_type = try readU32LE(bytes, off + 4);
-        const data_start = off + 8;
-        const data_end = data_start + chunk_len;
-        if (data_end > total_len or data_end > bytes.len) return Error.BadGlb;
-        const data = bytes[data_start..data_end];
-        switch (chunk_type) {
-            0x4E4F534A => json = data, // 'JSON'
-            0x004E4942 => bin = data, //  'BIN\0'
-            else => {}, // прочие чанки игнорируем
-        }
-        off = data_end;
-    }
-
-    const j = json orelse return Error.BadGlb;
-    return .{ .json = j, .bin = bin };
-}
-
-fn isGlb(bytes: []const u8) bool {
-    if (bytes.len < 4) return false;
-    return std.mem.readInt(u32, bytes[0..4], .little) == 0x46546C67;
 }
 
 // ---------------------------------------------------------------------------
@@ -401,10 +352,12 @@ pub fn parse(alloc: std.mem.Allocator, bytes: []const u8) !Mesh {
     var glb_bin: ?[]const u8 = null;
     var json_bytes: []const u8 = bytes;
 
-    if (isGlb(bytes)) {
-        const chunks = try parseGlb(bytes);
+    if (glb_container.isGlb(bytes)) {
+        const chunks = try glb_container.parseContainer(bytes);
         json_bytes = chunks.json;
-        glb_bin = chunks.bin;
+        // parseContainer возвращает пустой срез при отсутствии BIN-чанка;
+        // маппим в null для resolveBuffers (буфер без uri требует BIN).
+        glb_bin = if (chunks.bin.len > 0) chunks.bin else null;
     }
 
     var parsed = std.json.parseFromSlice(V, alloc, json_bytes, .{}) catch return Error.InvalidGltf;

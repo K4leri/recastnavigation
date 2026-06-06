@@ -55,7 +55,11 @@ fn applySettingsJson(s: *sample.CommonSettings, tile_size: *?f32, obj: std.json.
             .integer => |n| @floatFromInt(n),
             else => continue,
         };
-        if (std.mem.eql(u8, key, "cell_size")) s.cell_size = num else if (std.mem.eql(u8, key, "cell_height")) s.cell_height = num else if (std.mem.eql(u8, key, "agent_height")) s.agent_height = num else if (std.mem.eql(u8, key, "agent_radius")) s.agent_radius = num else if (std.mem.eql(u8, key, "agent_max_climb")) s.agent_max_climb = num else if (std.mem.eql(u8, key, "agent_max_slope")) s.agent_max_slope = num else if (std.mem.eql(u8, key, "region_min_size")) s.region_min_size = num else if (std.mem.eql(u8, key, "region_merge_size")) s.region_merge_size = num else if (std.mem.eql(u8, key, "edge_max_len")) s.edge_max_len = num else if (std.mem.eql(u8, key, "edge_max_error")) s.edge_max_error = num else if (std.mem.eql(u8, key, "verts_per_poly")) s.verts_per_poly = num else if (std.mem.eql(u8, key, "detail_sample_dist")) s.detail_sample_dist = num else if (std.mem.eql(u8, key, "detail_sample_max_error")) s.detail_sample_max_error = num else if (std.mem.eql(u8, key, "tile_size")) tile_size.* = num;
+        // dispatch key->field — общий (sample.applySettingFloat). JSON-форма не
+        // поддерживает алиас `cells`, поэтому пропускаем его явно (forward-compat:
+        // нераспознанные ключи игнорируются).
+        if (std.mem.eql(u8, key, "cells")) continue;
+        _ = sample.applySettingFloat(s, tile_size, key, num);
     }
 }
 
@@ -596,44 +600,8 @@ fn missing(flag: []const u8) u8 {
 /// Поддерживает те же ключи, что cli build --cfg, + partition (строковый).
 fn applyMatrixKey(s: *sample.CommonSettings, tile_size: *?f32, key: []const u8, val: []const u8) bool {
     if (std.mem.eql(u8, key, "partition")) {
-        if (std.mem.eql(u8, val, "watershed")) {
-            s.partition_type = .watershed;
-        } else if (std.mem.eql(u8, val, "monotone")) {
-            s.partition_type = .monotone;
-        } else if (std.mem.eql(u8, val, "layers")) {
-            s.partition_type = .layers;
-        } else return false;
-        return true;
+        return sample.applyPartition(s, val);
     }
     const num = std.fmt.parseFloat(f32, val) catch return false;
-    if (std.mem.eql(u8, key, "cell_size") or std.mem.eql(u8, key, "cells")) {
-        s.cell_size = num;
-    } else if (std.mem.eql(u8, key, "cell_height")) {
-        s.cell_height = num;
-    } else if (std.mem.eql(u8, key, "agent_radius")) {
-        s.agent_radius = num;
-    } else if (std.mem.eql(u8, key, "agent_height")) {
-        s.agent_height = num;
-    } else if (std.mem.eql(u8, key, "agent_max_climb")) {
-        s.agent_max_climb = num;
-    } else if (std.mem.eql(u8, key, "agent_max_slope")) {
-        s.agent_max_slope = num;
-    } else if (std.mem.eql(u8, key, "region_min_size")) {
-        s.region_min_size = num;
-    } else if (std.mem.eql(u8, key, "region_merge_size")) {
-        s.region_merge_size = num;
-    } else if (std.mem.eql(u8, key, "edge_max_len")) {
-        s.edge_max_len = num;
-    } else if (std.mem.eql(u8, key, "edge_max_error")) {
-        s.edge_max_error = num;
-    } else if (std.mem.eql(u8, key, "verts_per_poly")) {
-        s.verts_per_poly = num;
-    } else if (std.mem.eql(u8, key, "detail_sample_dist")) {
-        s.detail_sample_dist = num;
-    } else if (std.mem.eql(u8, key, "detail_sample_max_error")) {
-        s.detail_sample_max_error = num;
-    } else if (std.mem.eql(u8, key, "tile_size")) {
-        tile_size.* = num;
-    } else return false;
-    return true;
+    return sample.applySettingFloat(s, tile_size, key, num);
 }

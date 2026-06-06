@@ -79,6 +79,75 @@ pub const CommonSettings = struct {
     filter_walkable_low_height_spans: bool = true,
 };
 
+// ============================================================================
+// Единая таблица k=v-настроек (источник истины для cli / headless / diff).
+// ============================================================================
+
+/// Имена всех float-полей CommonSettings (в порядке объявления). Используется
+/// как diff-таблица (diff.zig) и для dispatch key->field в applySettingFloat.
+/// Генерируется из самой структуры, чтобы не расходиться при добавлении полей.
+pub const settings_float_field_names: []const []const u8 = blk: {
+    const fields = @typeInfo(CommonSettings).@"struct".fields;
+    var names: [fields.len][]const u8 = undefined;
+    var n: usize = 0;
+    for (fields) |f| {
+        if (f.type == f32) {
+            names[n] = f.name;
+            n += 1;
+        }
+    }
+    const final = names[0..n].*;
+    break :blk &final;
+};
+
+/// Применить один float-ключ k=v к настройкам.
+/// Поддержаны все float-поля CommonSettings + алиас `cells`/`cell_size` +
+/// специальный `tile_size` (пишется в tile_size.*, т.к. это не поле структуры).
+/// Возвращает true, если ключ распознан и значение применено; false — иначе.
+pub fn applySettingFloat(s: *CommonSettings, tile_size: *?f32, key: []const u8, v: f32) bool {
+    // `cells` — алиас cell_size.
+    if (std.mem.eql(u8, key, "cells")) {
+        s.cell_size = v;
+        return true;
+    }
+    if (std.mem.eql(u8, key, "tile_size")) {
+        tile_size.* = v;
+        return true;
+    }
+    inline for (@typeInfo(CommonSettings).@"struct".fields) |f| {
+        if (f.type == f32) {
+            if (std.mem.eql(u8, key, f.name)) {
+                @field(s, f.name) = v;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+/// true, если key — распознаваемый float-ключ настроек (включая `cells`/`tile_size`).
+/// Для вызывающих, которым нужно отделить "неизвестный ключ" от "невалидное число".
+pub fn isSettingFloatKey(key: []const u8) bool {
+    if (std.mem.eql(u8, key, "cells") or std.mem.eql(u8, key, "tile_size")) return true;
+    for (settings_float_field_names) |name| {
+        if (std.mem.eql(u8, key, name)) return true;
+    }
+    return false;
+}
+
+/// Применить partition по строковому значению (watershed|monotone|layers).
+/// Возвращает true при распознанном значении, false — иначе.
+pub fn applyPartition(s: *CommonSettings, str: []const u8) bool {
+    if (std.mem.eql(u8, str, "watershed")) {
+        s.partition_type = .watershed;
+    } else if (std.mem.eql(u8, str, "monotone")) {
+        s.partition_type = .monotone;
+    } else if (std.mem.eql(u8, str, "layers")) {
+        s.partition_type = .layers;
+    } else return false;
+    return true;
+}
+
 /// Общие настройки сборки — порт Sample::drawCommonSettingsUI (1в1 порядок/диапазоны).
 /// gw/gh — размер воксельной сетки (0 = скрыть строку Voxels).
 pub fn drawCommonSettings(s: *CommonSettings, gw: i32, gh: i32) void {

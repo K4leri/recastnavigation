@@ -25,6 +25,7 @@ const std = @import("std");
 const write_atomic = @import("write_atomic.zig");
 const cs_mod = @import("checksum.zig");
 const tile_store = @import("tile_store.zig");
+const byteio = @import("byteio.zig");
 
 const Io = std.Io;
 const Dir = std.Io.Dir;
@@ -83,39 +84,13 @@ pub const Manifest = struct {
     }
 };
 
-fn putU32(b: *Buf, v: u32) !void {
-    var tmp: [4]u8 = undefined;
-    std.mem.writeInt(u32, &tmp, v, .little);
-    try b.appendSlice(&tmp);
-}
-fn putI32(b: *Buf, v: i32) !void {
-    try putU32(b, @bitCast(v));
-}
-
-/// Little-endian read cursor over the payload bytes.
-const PReader = struct {
-    data: []const u8,
-    pos: usize = 0,
-    fn readU32(self: *PReader) error{Truncated}!u32 {
-        if (self.pos + 4 > self.data.len) return error.Truncated;
-        const v = std.mem.readInt(u32, self.data[self.pos..][0..4], .little);
-        self.pos += 4;
-        return v;
-    }
-    fn readI32(self: *PReader) error{Truncated}!i32 {
-        return @bitCast(try self.readU32());
-    }
-    fn readBytes(self: *PReader, n: usize) error{Truncated}![]const u8 {
-        if (self.pos + n > self.data.len) return error.Truncated;
-        const s = self.data[self.pos .. self.pos + n];
-        self.pos += n;
-        return s;
-    }
-};
+// LE byte-io shared (byteio.LeWriter). Aliases keep serializePayload terse.
+const putU32 = byteio.LeWriter.putU32;
+const putI32 = byteio.LeWriter.putI32;
 
 /// Parse a manifest payload. `gset_name` and `tiles` are OWNED (free via free()).
 pub fn parsePayload(alloc: std.mem.Allocator, payload: []const u8) Error!Manifest {
-    var r = PReader{ .data = payload };
+    var r = byteio.LeReader.init(payload);
     var m = Manifest{};
     m.versions = .{
         .scene = try r.readU32(),

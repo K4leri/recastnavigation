@@ -183,6 +183,11 @@ fn cmpExactStr(b: *Builder, path: []const u8, a: std.json.Value, bv: std.json.Va
 
 // --- наборы имён полей ---
 
+// Имена float-настроек. diff.zig остаётся автономным (импортирует только std,
+// чтобы `zig test diff.zig` не тянул dvui через sample.zig), поэтому список
+// объявлен здесь, но синхронизирован с единой таблицей CommonSettings через
+// comptime-проверку в cli.zig (settings_float_fields_match). Порядок = порядок
+// объявления f32-полей CommonSettings.
 const settings_float_fields = [_][]const u8{
     "cell_size",            "cell_height",
     "agent_height",         "agent_radius",
@@ -192,6 +197,9 @@ const settings_float_fields = [_][]const u8{
     "verts_per_poly",       "detail_sample_dist",
     "detail_sample_max_error",
 };
+
+/// Публично для cross-check из cli.zig (синхронизация с CommonSettings).
+pub const settings_float_fields_pub: []const []const u8 = &settings_float_fields;
 
 const navmesh_count_fields = [_][]const u8{
     "num_tiles", "num_polys", "num_verts", "max_polys",

@@ -24,6 +24,7 @@ const area_types = @import("../area_types.zig");
 const poly_flags = @import("../poly_flags.zig");
 const write_atomic = @import("write_atomic.zig");
 const cs_mod = @import("checksum.zig");
+const byteio = @import("byteio.zig");
 
 const Io = std.Io;
 const Dir = std.Io.Dir;
@@ -31,7 +32,6 @@ const Dir = std.Io.Dir;
 /// Checksum shorthand: XXH3 over arbitrary bytes.
 const checksum = cs_mod.checksum;
 const ChunkHeader = cs_mod.ChunkHeader;
-const unpackHeader = cs_mod.unpackHeader;
 const HEADER_LEN = cs_mod.HEADER_LEN;
 
 pub const Error = error{
@@ -72,74 +72,14 @@ const AREA_REC_LEN: usize = 47;
 
 const Buf = std.array_list.Managed(u8);
 
-fn putU8(b: *Buf, v: u8) !void {
-    try b.append(v);
-}
-fn putU16(b: *Buf, v: u16) !void {
-    var tmp: [2]u8 = undefined;
-    std.mem.writeInt(u16, &tmp, v, .little);
-    try b.appendSlice(&tmp);
-}
-fn putU32(b: *Buf, v: u32) !void {
-    var tmp: [4]u8 = undefined;
-    std.mem.writeInt(u32, &tmp, v, .little);
-    try b.appendSlice(&tmp);
-}
-fn putU64(b: *Buf, v: u64) !void {
-    var tmp: [8]u8 = undefined;
-    std.mem.writeInt(u64, &tmp, v, .little);
-    try b.appendSlice(&tmp);
-}
-fn putF32(b: *Buf, v: f32) !void {
-    // @bitCast preserves the IEEE-754 bit pattern; writeInt LE makes it portable.
-    try putU32(b, @bitCast(v));
-}
+// LE byte-io shared (byteio.LeWriter / LeReader). Aliases keep the call-sites terse.
+const putU8 = byteio.LeWriter.putU8;
+const putU16 = byteio.LeWriter.putU16;
+const putU32 = byteio.LeWriter.putU32;
+const putU64 = byteio.LeWriter.putU64;
+const putF32 = byteio.LeWriter.putF32;
 
-// ---------------------------------------------------------------------------
-// Read helpers — little-endian cursor into a slice
-// ---------------------------------------------------------------------------
-
-const Reader = struct {
-    data: []const u8,
-    pos: usize = 0,
-
-    fn readU8(self: *Reader) !u8 {
-        if (self.pos + 1 > self.data.len) return error.Truncated;
-        const v = self.data[self.pos];
-        self.pos += 1;
-        return v;
-    }
-    fn readU16(self: *Reader) !u16 {
-        if (self.pos + 2 > self.data.len) return error.Truncated;
-        const v = std.mem.readInt(u16, self.data[self.pos..][0..2], .little);
-        self.pos += 2;
-        return v;
-    }
-    fn readU32(self: *Reader) !u32 {
-        if (self.pos + 4 > self.data.len) return error.Truncated;
-        const v = std.mem.readInt(u32, self.data[self.pos..][0..4], .little);
-        self.pos += 4;
-        return v;
-    }
-    fn readU64(self: *Reader) !u64 {
-        if (self.pos + 8 > self.data.len) return error.Truncated;
-        const v = std.mem.readInt(u64, self.data[self.pos..][0..8], .little);
-        self.pos += 8;
-        return v;
-    }
-    fn readF32(self: *Reader) !f32 {
-        return @bitCast(try self.readU32());
-    }
-    fn readBytes(self: *Reader, n: usize) ![]const u8 {
-        if (self.pos + n > self.data.len) return error.Truncated;
-        const s = self.data[self.pos .. self.pos + n];
-        self.pos += n;
-        return s;
-    }
-    fn remaining(self: *const Reader) usize {
-        return self.data.len - self.pos;
-    }
-};
+const Reader = byteio.LeReader;
 
 // ---------------------------------------------------------------------------
 // Flags serialization
@@ -193,19 +133,10 @@ pub fn serializeFlags(alloc: std.mem.Allocator) !Buf {
 /// Calls resetToBuiltins() first, then restoreFlag() for each valid record.
 /// Corrupt records are skipped (graceful degradation). Returns count applied.
 pub fn deserializeFlags(data: []const u8) Error!usize {
-    // Parse canonical chunk header: validates magic, version, truncation.
-    const hdr = try unpackHeader(data, FLAGS_MAGIC, REG_VERSION);
-
-    // Verify the canonical file-level checksum over the body.
-    // On mismatch: warn and attempt per-record recovery (graceful degradation).
-    const plen = std.math.cast(usize, hdr.payload_len) orelse return error.Truncated;
-    const body_end = std.math.add(usize, HEADER_LEN, plen) catch return error.Truncated;
-    if (body_end > data.len) return error.Truncated;
-    const body = data[HEADER_LEN..body_end];
-    const want_csum = ChunkHeader.computeChecksum(FLAGS_MAGIC, REG_VERSION, TYPE_FILE_HEADER, body);
-    if (want_csum != hdr.checksum) {
-        std.log.warn("flags.reg: file checksum mismatch — attempting per-record recovery", .{});
-    }
+    // Parse + bounds-check + file-level checksum (warn-and-recover on mismatch).
+    const fb = try cs_mod.fileBody(data, FLAGS_MAGIC, REG_VERSION, "flags.reg");
+    const body = fb.body;
+    const plen = fb.plen;
 
     // Validate body length is an exact multiple of FLAG_REC_LEN.
     if (plen % FLAG_REC_LEN != 0) return error.Truncated;
@@ -317,19 +248,10 @@ pub fn serializeAreas(alloc: std.mem.Allocator) !Buf {
 /// Calls resetToBuiltins() first. Corrupt records are skipped. Returns count applied.
 /// IMPORTANT: call after loadFlags/deserializeFlags (area.flags references flag bits).
 pub fn deserializeAreas(data: []const u8) Error!usize {
-    // Parse canonical chunk header: validates magic, version, truncation.
-    const hdr = try unpackHeader(data, AREAS_MAGIC, REG_VERSION);
-
-    // Verify the canonical file-level checksum over the body.
-    // On mismatch: warn and attempt per-record recovery (graceful degradation).
-    const plen = std.math.cast(usize, hdr.payload_len) orelse return error.Truncated;
-    const body_end = std.math.add(usize, HEADER_LEN, plen) catch return error.Truncated;
-    if (body_end > data.len) return error.Truncated;
-    const body = data[HEADER_LEN..body_end];
-    const want_csum = ChunkHeader.computeChecksum(AREAS_MAGIC, REG_VERSION, TYPE_FILE_HEADER, body);
-    if (want_csum != hdr.checksum) {
-        std.log.warn("areas.reg: file checksum mismatch — attempting per-record recovery", .{});
-    }
+    // Parse + bounds-check + file-level checksum (warn-and-recover on mismatch).
+    const fb = try cs_mod.fileBody(data, AREAS_MAGIC, REG_VERSION, "areas.reg");
+    const body = fb.body;
+    const plen = fb.plen;
 
     // Validate body length is an exact multiple of AREA_REC_LEN.
     if (plen % AREA_REC_LEN != 0) return error.Truncated;

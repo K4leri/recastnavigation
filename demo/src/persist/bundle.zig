@@ -34,6 +34,7 @@
 //! a canonical order); identical input -> byte-identical output.
 
 const std = @import("std");
+const byteio = @import("byteio.zig");
 
 /// Magic identifying a `.recastbundle` buffer: ASCII 'R','B','N','D' read as a
 /// little-endian u32.
@@ -120,33 +121,26 @@ pub fn pack(alloc: std.mem.Allocator, entries: []const Entry) ![]u8 {
     return out;
 }
 
-/// Lightweight bounds-checked cursor over the input buffer. Every read validates
-/// the requested span fits — never panics on a truncated/corrupt buffer.
+/// Lightweight bounds-checked cursor over the input buffer. Delegates to the
+/// shared byteio.LeReader (overflow-safe, never panics) and only re-labels its
+/// `error.Truncated` as `error.BundleTruncated` to keep the bundle error vocab.
 const Cursor = struct {
-    buf: []const u8,
-    off: usize = 0,
+    r: byteio.LeReader,
+
+    fn init(buf: []const u8) Cursor {
+        return .{ .r = byteio.LeReader.init(buf) };
+    }
 
     fn readU32(self: *Cursor) Error!u32 {
-        if (self.off + 4 > self.buf.len) return error.BundleTruncated;
-        const v = std.mem.readInt(u32, self.buf[self.off..][0..4], .little);
-        self.off += 4;
-        return v;
+        return self.r.readU32() catch error.BundleTruncated;
     }
 
     fn readU64(self: *Cursor) Error!u64 {
-        if (self.off + 8 > self.buf.len) return error.BundleTruncated;
-        const v = std.mem.readInt(u64, self.buf[self.off..][0..8], .little);
-        self.off += 8;
-        return v;
+        return self.r.readU64() catch error.BundleTruncated;
     }
 
     fn readBytes(self: *Cursor, n: usize) Error![]const u8 {
-        // Overflow-safe end computation.
-        const end = std.math.add(usize, self.off, n) catch return error.BundleTruncated;
-        if (end > self.buf.len) return error.BundleTruncated;
-        const s = self.buf[self.off..end];
-        self.off = end;
-        return s;
+        return self.r.readBytes(n) catch error.BundleTruncated;
     }
 };
 
@@ -175,7 +169,7 @@ pub const Unpacked = struct {
 /// The returned `Unpacked` owns all memory through an arena; `deinit` frees it all
 /// at once. `alloc` is the backing allocator for that arena.
 pub fn unpack(alloc: std.mem.Allocator, bytes: []const u8) !Unpacked {
-    var cur = Cursor{ .buf = bytes };
+    var cur = Cursor.init(bytes);
 
     // Header.
     const magic = try cur.readU32();

@@ -8,6 +8,7 @@
 //! было сохранить/переслать. Применение событий к реальной dc.Crowd — в tool_crowd.zig.
 
 const std = @import("std");
+const byteio = @import("../persist/byteio.zig");
 
 /// Тип события — какое пользовательское действие записано (тег сериализуется как u8).
 pub const EventKind = enum(u8) {
@@ -69,19 +70,10 @@ pub const EventLog = struct {
     const MAGIC = [4]u8{ 'C', 'R', 'W', 'R' };
     const VERSION: u32 = 1;
 
-    fn putU32(w: *std.array_list.Managed(u8), v: u32) !void {
-        var b: [4]u8 = undefined;
-        std.mem.writeInt(u32, &b, v, .little);
-        try w.appendSlice(&b);
-    }
-    fn putU64(w: *std.array_list.Managed(u8), v: u64) !void {
-        var b: [8]u8 = undefined;
-        std.mem.writeInt(u64, &b, v, .little);
-        try w.appendSlice(&b);
-    }
-    fn putF32(w: *std.array_list.Managed(u8), v: f32) !void {
-        try putU32(w, @bitCast(v));
-    }
+    // LE byte-io shared (byteio.LeWriter / LeReader). Aliases keep the call-sites terse.
+    const putU32 = byteio.LeWriter.putU32;
+    const putU64 = byteio.LeWriter.putU64;
+    const putF32 = byteio.LeWriter.putF32;
 
     /// Сериализует журнал в owned-буфер (вызывающий освобождает через alloc).
     pub fn serialize(self: *const EventLog, alloc: std.mem.Allocator) ![]u8 {
@@ -114,56 +106,25 @@ pub const EventLog = struct {
         return w.toOwnedSlice();
     }
 
-    const Reader = struct {
-        buf: []const u8,
-        off: usize = 0,
-
-        fn need(self: *Reader, n: usize) !void {
-            if (self.off + n > self.buf.len) return error.Truncated;
-        }
-        fn getU32(self: *Reader) !u32 {
-            try self.need(4);
-            const v = std.mem.readInt(u32, self.buf[self.off..][0..4], .little);
-            self.off += 4;
-            return v;
-        }
-        fn getU64(self: *Reader) !u64 {
-            try self.need(8);
-            const v = std.mem.readInt(u64, self.buf[self.off..][0..8], .little);
-            self.off += 8;
-            return v;
-        }
-        fn getF32(self: *Reader) !f32 {
-            return @bitCast(try self.getU32());
-        }
-        fn getU8(self: *Reader) !u8 {
-            try self.need(1);
-            const v = self.buf[self.off];
-            self.off += 1;
-            return v;
-        }
-    };
-
     /// Разбирает буфер в журнал (журнал должен быть свежим/очищенным; добавляет события).
     pub fn deserialize(self: *EventLog, buf: []const u8) !void {
-        var r = Reader{ .buf = buf };
-        try r.need(4);
-        if (!std.mem.eql(u8, r.buf[0..4], &MAGIC)) return error.BadMagic;
-        r.off = 4;
-        const ver = try r.getU32();
+        var r = byteio.LeReader.init(buf);
+        const magic = r.readBytes(4) catch return error.Truncated;
+        if (!std.mem.eql(u8, magic, &MAGIC)) return error.BadMagic;
+        const ver = try r.readU32();
         if (ver != VERSION) return error.BadVersion;
-        const n = try r.getU32();
+        const n = try r.readU32();
         try self.events.ensureUnusedCapacity(n);
         var i: u32 = 0;
         while (i < n) : (i += 1) {
-            const tag = try r.getU8();
+            const tag = try r.readU8();
             const kind = std.enums.fromInt(EventKind, tag) orelse return error.BadTag;
-            const fr = try r.getU64();
+            const fr = try r.readU64();
             const ev: CrowdEvent = switch (kind) {
-                .add_agent => .{ .add_agent = .{ .frame = fr, .pos = .{ try r.getF32(), try r.getF32(), try r.getF32() } } },
-                .move_target => .{ .move_target = .{ .frame = fr, .pos = .{ try r.getF32(), try r.getF32(), try r.getF32() } } },
-                .set_velocity => .{ .set_velocity = .{ .frame = fr, .vel = .{ try r.getF32(), try r.getF32(), try r.getF32() } } },
-                .remove_agent => .{ .remove_agent = .{ .frame = fr, .idx = try r.getU32() } },
+                .add_agent => .{ .add_agent = .{ .frame = fr, .pos = .{ try r.readF32(), try r.readF32(), try r.readF32() } } },
+                .move_target => .{ .move_target = .{ .frame = fr, .pos = .{ try r.readF32(), try r.readF32(), try r.readF32() } } },
+                .set_velocity => .{ .set_velocity = .{ .frame = fr, .vel = .{ try r.readF32(), try r.readF32(), try r.readF32() } } },
+                .remove_agent => .{ .remove_agent = .{ .frame = fr, .idx = try r.readU32() } },
             };
             try self.events.append(ev);
         }

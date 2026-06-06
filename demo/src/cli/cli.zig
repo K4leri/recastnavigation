@@ -17,6 +17,19 @@ const headless_run = @import("headless_run.zig");
 const io_util = @import("../io_util.zig");
 const bundle_io = @import("../persist/bundle_io.zig");
 
+// Cross-check: список float-настроек в diff.zig (автономный, std-only) обязан
+// совпадать с единой таблицей рядом с CommonSettings (sample.zig). Здесь видны
+// оба модуля, поэтому ловим расхождение на этапе компиляции demo.
+comptime {
+    const a = sample.settings_float_field_names;
+    const b = diff_mod.settings_float_fields_pub;
+    if (a.len != b.len) @compileError("diff settings_float_fields out of sync with CommonSettings");
+    for (a, b) |x, y| {
+        if (!std.mem.eql(u8, x, y))
+            @compileError("diff settings_float_fields out of sync with CommonSettings: " ++ x ++ " != " ++ y);
+    }
+}
+
 /// true, если `arg` — известная headless-подкоманда (build/diff/bundle) ИЛИ путь к
 /// .recastbundle (drag-onto-exe / `recast_demo file.recastbundle`). main.zig использует
 /// это, чтобы решить, идти ли headless-путём ВМЕСТО GUI.
@@ -203,50 +216,22 @@ fn parseF32(key: []const u8, val: []const u8) ?f32 {
 /// Применить один k=v к настройкам. Возвращает false при неизвестном ключе или
 /// невалидном значении. Поддержанные ключи перечислены в спеке D5.
 fn applyOne(settings: *sample.CommonSettings, tile_size: *?f32, key: []const u8, val: []const u8) bool {
-    // `cells` — алиас cell_size (как в спеке: "cells/cell_size").
-    if (std.mem.eql(u8, key, "cells") or std.mem.eql(u8, key, "cell_size")) {
-        settings.cell_size = parseF32(key, val) orelse return false;
-    } else if (std.mem.eql(u8, key, "cell_height")) {
-        settings.cell_height = parseF32(key, val) orelse return false;
-    } else if (std.mem.eql(u8, key, "agent_radius")) {
-        settings.agent_radius = parseF32(key, val) orelse return false;
-    } else if (std.mem.eql(u8, key, "agent_height")) {
-        settings.agent_height = parseF32(key, val) orelse return false;
-    } else if (std.mem.eql(u8, key, "agent_max_climb")) {
-        settings.agent_max_climb = parseF32(key, val) orelse return false;
-    } else if (std.mem.eql(u8, key, "agent_max_slope")) {
-        settings.agent_max_slope = parseF32(key, val) orelse return false;
-    } else if (std.mem.eql(u8, key, "region_min_size")) {
-        settings.region_min_size = parseF32(key, val) orelse return false;
-    } else if (std.mem.eql(u8, key, "region_merge_size")) {
-        settings.region_merge_size = parseF32(key, val) orelse return false;
-    } else if (std.mem.eql(u8, key, "edge_max_len")) {
-        settings.edge_max_len = parseF32(key, val) orelse return false;
-    } else if (std.mem.eql(u8, key, "edge_max_error")) {
-        settings.edge_max_error = parseF32(key, val) orelse return false;
-    } else if (std.mem.eql(u8, key, "verts_per_poly")) {
-        settings.verts_per_poly = parseF32(key, val) orelse return false;
-    } else if (std.mem.eql(u8, key, "detail_sample_dist")) {
-        settings.detail_sample_dist = parseF32(key, val) orelse return false;
-    } else if (std.mem.eql(u8, key, "detail_sample_max_error")) {
-        settings.detail_sample_max_error = parseF32(key, val) orelse return false;
-    } else if (std.mem.eql(u8, key, "tile_size")) {
-        tile_size.* = parseF32(key, val) orelse return false;
-    } else if (std.mem.eql(u8, key, "partition")) {
-        if (std.mem.eql(u8, val, "watershed")) {
-            settings.partition_type = .watershed;
-        } else if (std.mem.eql(u8, val, "monotone")) {
-            settings.partition_type = .monotone;
-        } else if (std.mem.eql(u8, val, "layers")) {
-            settings.partition_type = .layers;
-        } else {
+    // partition — строковое значение (общий dispatch в sample.applyPartition).
+    if (std.mem.eql(u8, key, "partition")) {
+        if (!sample.applyPartition(settings, val)) {
             warn("[build] --cfg partition: '{s}' (expected watershed|monotone|layers)\n", .{val});
             return false;
         }
-    } else {
+        return true;
+    }
+    // float-ключи: сперва распознать ключ (чтобы для неизвестного ключа не
+    // эмитить лишний "is not a number"), затем распарсить число локально.
+    if (!sample.isSettingFloatKey(key)) {
         warn("[build] --cfg: unknown key '{s}'\n", .{key});
         return false;
     }
+    const num = parseF32(key, val) orelse return false;
+    _ = sample.applySettingFloat(settings, tile_size, key, num);
     return true;
 }
 

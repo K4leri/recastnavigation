@@ -1,4 +1,5 @@
 const std = @import("std");
+const glb = @import("glb.zig");
 
 /// Собрать минимальный валидный glb (бинарный glTF 2.0) из треугольной геометрии.
 /// verts: плоские тройки x,y,z (f32). indices: плоские u32-индексы треугольников
@@ -119,51 +120,17 @@ pub fn writeGlb(alloc: std.mem.Allocator, verts: []const f32, indices: []const u
     try json.appendSlice("\"scenes\":[{\"nodes\":[0]}],");
     try json.appendSlice("\"scene\":0}");
 
-    // паддинг JSON пробелами (0x20) до кратности 4
-    while (json.items.len % 4 != 0) try json.append(0x20);
-    const json_chunk_len: usize = json.items.len;
-
-    // BIN-чанк паддинг нулями до кратности 4
-    const bin_chunk_len: usize = align4(bin.items.len);
-
-    // --- итоговый glb ---
-    const header_len: usize = 12;
-    const chunk_header_len: usize = 8;
-    const total_len: usize = header_len +
-        chunk_header_len + json_chunk_len +
-        chunk_header_len + bin_chunk_len;
-
-    var out = try std.array_list.Managed(u8).initCapacity(alloc, total_len);
-    errdefer out.deinit();
-
-    // header
-    try appendLe(&out, u32, 0x46546C67); // 'glTF' LE
-    try appendLe(&out, u32, 2); // version
-    try appendLe(&out, u32, @intCast(total_len)); // total length
-
-    // JSON chunk
-    try appendLe(&out, u32, @intCast(json_chunk_len));
-    try appendLe(&out, u32, 0x4E4F534A); // 'JSON'
-    try out.appendSlice(json.items);
-
-    // BIN chunk
-    try appendLe(&out, u32, @intCast(bin_chunk_len));
-    try appendLe(&out, u32, 0x004E4942); // 'BIN\0'
-    try out.appendSlice(bin.items);
-    while (out.items.len < total_len) try out.append(0); // паддинг BIN нулями
-
-    std.debug.assert(out.items.len == total_len);
-    return out.toOwnedSlice();
+    // Сборка контейнера (header + JSON-чанк с паддингом пробелами + BIN-чанк
+    // с паддингом нулями, всё кратно 4) — общий glb-контейнер.
+    return glb.writeContainer(alloc, json.items, bin.items);
 }
 
 inline fn align4(n: usize) usize {
-    return (n + 3) & ~@as(usize, 3);
+    return glb.align4(n);
 }
 
 fn appendLe(list: *std.array_list.Managed(u8), comptime T: type, value: T) !void {
-    var buf: [@sizeOf(T)]u8 = undefined;
-    std.mem.writeInt(T, &buf, value, .little);
-    try list.appendSlice(&buf);
+    return glb.appendLe(list, T, value);
 }
 
 fn appendUint(list: *std.array_list.Managed(u8), buf: []u8, value: anytype) !void {

@@ -223,6 +223,131 @@ pub fn buildChunk(
     return out;
 }
 
+// ===========================================================================
+// Shared file framing — dedup of the [file-header ‖ body] envelope used by
+// registry_io / scene_io (~5 copies of the same parse-and-verify boilerplate).
+//
+// A "file" is one outer ChunkHeader(TYPE_FILE_HEADER) over the whole body. The
+// body itself holds either fixed-length records (registry_io) or count-prefixed
+// per-record ChunkHeaders (scene_io). These helpers own ONLY the outer envelope;
+// the per-record interpretation stays in the caller.
+// ===========================================================================
+
+/// type_flags value for a file-header chunk (the outer envelope).
+pub const TYPE_FILE_HEADER: u16 = 0;
+/// type_flags value for a data record chunk (per-record framing).
+pub const TYPE_RECORD: u16 = 1;
+
+/// Result of parsing a file envelope: the no-copy body slice plus its byte length
+/// (callers use `plen` for fixed-record-count math).
+pub const FileBody = struct {
+    body: []const u8,
+    plen: usize,
+};
+
+/// Parse the outer file header, bounds-check, and verify the file-level checksum.
+/// On checksum MISMATCH this WARNS (per-record graceful recovery) instead of
+/// erroring — it mirrors the registry_io/scene_io degradation policy verbatim.
+/// Hard errors (Truncated / WrongMagic / WrongVersion) still propagate.
+///
+/// `name` is only used in the warn message (e.g. "flags.reg", "offmesh.bin").
+pub fn fileBody(data: []const u8, magic: u32, version: u32, name: []const u8) ChunkError!FileBody {
+    const hdr = try unpackHeader(data, magic, version);
+    const plen = std.math.cast(usize, hdr.payload_len) orelse return error.Truncated;
+    const body_end = std.math.add(usize, HEADER_LEN, plen) catch return error.Truncated;
+    if (body_end > data.len) return error.Truncated;
+    const body = data[HEADER_LEN..body_end];
+    const want = ChunkHeader.computeChecksum(magic, version, hdr.type_flags, body);
+    if (want != hdr.checksum) {
+        std.log.warn("persist: {s} file checksum mismatch — attempting per-record recovery", .{name});
+    }
+    return .{ .body = body, .plen = plen };
+}
+
+/// Like `fileBody` but tries `version` first and, on WrongVersion, falls back to
+/// `legacy_version`. Returns the body + the detected version. Used by volumes.bin
+/// (v2 current / v1 legacy). `info_on_legacy` (if non-null) is logged at info level
+/// when the legacy path is taken.
+pub fn fileBodyAnyVersion(
+    data: []const u8,
+    magic: u32,
+    version: u32,
+    legacy_version: u32,
+    name: []const u8,
+    info_on_legacy: ?[]const u8,
+) ChunkError!struct { body: []const u8, plen: usize, version: u32 } {
+    if (fileBody(data, magic, version, name)) |fb| {
+        return .{ .body = fb.body, .plen = fb.plen, .version = version };
+    } else |e1| {
+        if (e1 != error.WrongVersion) return e1;
+        const fb = try fileBody(data, magic, legacy_version, name);
+        if (info_on_legacy) |msg| std.log.info("{s}", .{msg});
+        return .{ .body = fb.body, .plen = fb.plen, .version = legacy_version };
+    }
+}
+
+/// Append a length-framed record [ChunkHeader(magic, version, TYPE_RECORD, payload)]
+/// ++ payload to `b`. The self-describing payload_len lets readRecord skip a corrupt
+/// record independently (graceful per-record degradation). `Buf` is the caller's
+/// `*std.array_list.Managed(u8)`.
+pub fn appendRecord(b: anytype, magic: u32, version: u32, payload: []const u8) !void {
+    const hdr = ChunkHeader.init(magic, version, TYPE_RECORD, payload).pack();
+    try b.appendSlice(&hdr);
+    try b.appendSlice(payload);
+}
+
+/// Assemble [ChunkHeader(magic, version, TYPE_FILE_HEADER, body)] ++ body into a
+/// freshly-init'd ArrayList of `BufType` (caller's managed u8 list type). Caller
+/// owns/deinits the returned list.
+pub fn assembleFile(comptime BufType: type, alloc: std.mem.Allocator, magic: u32, version: u32, body: []const u8) !BufType {
+    var out = BufType.init(alloc);
+    errdefer out.deinit();
+    const hdr_bytes = ChunkHeader.init(magic, version, TYPE_FILE_HEADER, body).pack();
+    try out.appendSlice(&hdr_bytes);
+    try out.appendSlice(body);
+    return out;
+}
+
+/// Iterate count-prefixed per-record chunks in `body`.
+///
+/// Layout: body = [count:u32 LE] ++ (record × count), each record = readRecord-
+/// parseable [ChunkHeader(magic, version)][payload]. For each successfully-parsed
+/// record, `cb(ctx, payload)` is invoked. A record that fails readRecord is logged
+/// and SKIPPED via its trusted skip offset; if the boundary is unknown (skip==0)
+/// iteration breaks (cannot resync) — the canonical idiom shared by all scene_io
+/// count-prefixed loops.
+///
+/// `cb` errors are logged-and-skipped (per-record degradation), NOT propagated,
+/// matching the existing decodeVolumes/decodeOffMesh behavior.
+pub fn forEachRecord(
+    body: []const u8,
+    magic: u32,
+    version: u32,
+    name: []const u8,
+    ctx: anytype,
+    comptime cb: fn (@TypeOf(ctx), []const u8) anyerror!void,
+) ChunkError!void {
+    // Count prefix is part of the body; a short body here is a hard Truncated.
+    if (body.len < 4) return error.Truncated;
+    const count = std.mem.readInt(u32, body[0..4], .little);
+    var pos: usize = 4;
+    var k: u32 = 0;
+    while (k < count) : (k += 1) {
+        var skip: usize = 0;
+        const rec = readRecord(body[pos..], magic, version, &skip) catch |e| {
+            std.log.warn("persist: {s}: skipping bad record #{d}: {s}", .{ name, k, @errorName(e) });
+            if (skip == 0) break; // boundary unknown — cannot resync
+            pos += skip;
+            continue;
+        };
+        pos += rec.next;
+        cb(ctx, rec.payload) catch |e| {
+            std.log.warn("persist: {s}: record #{d} dropped: {s}", .{ name, k, @errorName(e) });
+            continue;
+        };
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests (pure logic — `zig test demo/src/persist/checksum.zig`).
 // ---------------------------------------------------------------------------

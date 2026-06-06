@@ -31,6 +31,7 @@ const std = @import("std");
 const input_geom = @import("../input_geom.zig");
 const write_atomic = @import("write_atomic.zig");
 const cs_mod = @import("checksum.zig");
+const byteio = @import("byteio.zig");
 
 const InputGeom = input_geom.InputGeom;
 const ConvexVolume = input_geom.ConvexVolume;
@@ -42,7 +43,6 @@ const Buf = std.array_list.Managed(u8);
 
 const checksum = cs_mod.checksum;
 const ChunkHeader = cs_mod.ChunkHeader;
-const unpackHeader = cs_mod.unpackHeader;
 const readRecord = cs_mod.readRecord;
 const HEADER_LEN = cs_mod.HEADER_LEN;
 
@@ -76,156 +76,60 @@ pub const Error = error{
 // Write helpers — little-endian, append to ArrayList (registry_io pattern)
 // ---------------------------------------------------------------------------
 
-fn putU8(b: *Buf, v: u8) !void {
-    try b.append(v);
-}
-fn putU16(b: *Buf, v: u16) !void {
-    var tmp: [2]u8 = undefined;
-    std.mem.writeInt(u16, &tmp, v, .little);
-    try b.appendSlice(&tmp);
-}
-fn putU32(b: *Buf, v: u32) !void {
-    var tmp: [4]u8 = undefined;
-    std.mem.writeInt(u32, &tmp, v, .little);
-    try b.appendSlice(&tmp);
-}
-fn putI32(b: *Buf, v: i32) !void {
-    try putU32(b, @bitCast(v));
-}
-fn putU64(b: *Buf, v: u64) !void {
-    var tmp: [8]u8 = undefined;
-    std.mem.writeInt(u64, &tmp, v, .little);
-    try b.appendSlice(&tmp);
-}
-fn putF32(b: *Buf, v: f32) !void {
-    try putU32(b, @bitCast(v));
-}
+// LE byte-io shared (byteio.LeWriter). Aliases keep the call-sites terse.
+const putU8 = byteio.LeWriter.putU8;
+const putU16 = byteio.LeWriter.putU16;
+const putU32 = byteio.LeWriter.putU32;
+const putI32 = byteio.LeWriter.putI32;
+const putU64 = byteio.LeWriter.putU64;
+const putF32 = byteio.LeWriter.putF32;
 
-/// Append a length-framed record: [ChunkHeader(magic, TYPE_RECORD, payload)] ++ payload.
-/// The ChunkHeader gives a self-describing boundary (payload_len) so readRecord can
-/// skip a corrupt record independently (graceful per-record degradation).
+// Framing helpers — thin wrappers over the shared checksum.zig primitives that
+// pin the scene_io format versions. (appendRecord/assembleFile/fileBody were
+// duplicated ~5x across registry_io+scene_io; now centralized in checksum.zig.)
+
+/// Append a TYPE_RECORD chunk at FORMAT_VERSION (off-mesh / archive records).
 fn appendRecord(b: *Buf, magic: u32, payload: []const u8) !void {
-    const hdr = ChunkHeader.init(magic, FORMAT_VERSION, TYPE_RECORD, payload).pack();
-    try b.appendSlice(&hdr);
-    try b.appendSlice(payload);
+    try cs_mod.appendRecord(b, magic, FORMAT_VERSION, payload);
 }
 
-/// Like appendRecord but uses the volumes-specific format version.
+/// Append a TYPE_RECORD chunk at VOL_FORMAT_VERSION (volume records).
 fn appendVolumeRecord(b: *Buf, magic: u32, payload: []const u8) !void {
-    const hdr = ChunkHeader.init(magic, VOL_FORMAT_VERSION, TYPE_RECORD, payload).pack();
-    try b.appendSlice(&hdr);
-    try b.appendSlice(payload);
+    try cs_mod.appendRecord(b, magic, VOL_FORMAT_VERSION, payload);
 }
 
-/// Like assembleFile but uses VOL_FORMAT_VERSION for the file header.
-fn assembleVolumeFile(alloc: std.mem.Allocator, magic: u32, body: []const u8) !Buf {
-    var out = Buf.init(alloc);
-    errdefer out.deinit();
-    const hdr_bytes = ChunkHeader.init(magic, VOL_FORMAT_VERSION, TYPE_FILE_HEADER, body).pack();
-    try out.appendSlice(&hdr_bytes);
-    try out.appendSlice(body);
-    return out;
-}
-
-/// Parse a volumes.bin file header. Tries VOL_FORMAT_VERSION (2) first; if the
-/// file was written with the legacy version (1), falls back and returns version=1.
-/// Returns the body slice and the detected file version.
-fn volumeFileBody(data: []const u8) Error!struct { body: []const u8, version: u32 } {
-    // Try new version first.
-    if (unpackHeader(data, VOL_FILE_MAGIC, VOL_FORMAT_VERSION)) |hdr| {
-        const plen = std.math.cast(usize, hdr.payload_len) orelse return error.Truncated;
-        const body_end = std.math.add(usize, HEADER_LEN, plen) catch return error.Truncated;
-        if (body_end > data.len) return error.Truncated;
-        const body = data[HEADER_LEN..body_end];
-        const want = ChunkHeader.computeChecksum(VOL_FILE_MAGIC, VOL_FORMAT_VERSION, hdr.type_flags, body);
-        if (want != hdr.checksum) {
-            std.log.warn("scene_io: volumes.bin file checksum mismatch — attempting per-record recovery", .{});
-        }
-        return .{ .body = body, .version = VOL_FORMAT_VERSION };
-    } else |e1| {
-        if (e1 != error.WrongVersion) return e1;
-        // Legacy: try version 1.
-        const hdr = try unpackHeader(data, VOL_FILE_MAGIC, VOL_FORMAT_VERSION_LEGACY);
-        const plen = std.math.cast(usize, hdr.payload_len) orelse return error.Truncated;
-        const body_end = std.math.add(usize, HEADER_LEN, plen) catch return error.Truncated;
-        if (body_end > data.len) return error.Truncated;
-        const body = data[HEADER_LEN..body_end];
-        const want = ChunkHeader.computeChecksum(VOL_FILE_MAGIC, VOL_FORMAT_VERSION_LEGACY, hdr.type_flags, body);
-        if (want != hdr.checksum) {
-            std.log.warn("scene_io: volumes.bin (legacy v1) file checksum mismatch — attempting per-record recovery", .{});
-        }
-        std.log.info("scene_io: volumes.bin detected legacy format v1 — loading as prism with default bands", .{});
-        return .{ .body = body, .version = VOL_FORMAT_VERSION_LEGACY };
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Read helpers — little-endian cursor into a slice (registry_io pattern)
-// ---------------------------------------------------------------------------
-
-const Reader = struct {
-    data: []const u8,
-    pos: usize = 0,
-
-    fn readU8(self: *Reader) !u8 {
-        if (self.pos + 1 > self.data.len) return error.Truncated;
-        const v = self.data[self.pos];
-        self.pos += 1;
-        return v;
-    }
-    fn readU16(self: *Reader) !u16 {
-        if (self.pos + 2 > self.data.len) return error.Truncated;
-        const v = std.mem.readInt(u16, self.data[self.pos..][0..2], .little);
-        self.pos += 2;
-        return v;
-    }
-    fn readU32(self: *Reader) !u32 {
-        if (self.pos + 4 > self.data.len) return error.Truncated;
-        const v = std.mem.readInt(u32, self.data[self.pos..][0..4], .little);
-        self.pos += 4;
-        return v;
-    }
-    fn readI32(self: *Reader) !i32 {
-        return @bitCast(try self.readU32());
-    }
-    fn readF32(self: *Reader) !f32 {
-        return @bitCast(try self.readU32());
-    }
-    fn readBytes(self: *Reader, n: usize) ![]const u8 {
-        if (self.pos + n > self.data.len) return error.Truncated;
-        const s = self.data[self.pos .. self.pos + n];
-        self.pos += n;
-        return s;
-    }
-    fn skip(self: *Reader, n: usize) !void {
-        if (self.pos + n > self.data.len) return error.Truncated;
-        self.pos += n;
-    }
-};
-
-/// Pack [ChunkHeader(TYPE_FILE_HEADER)] ++ body into an owned buffer.
+/// Assemble a file envelope at FORMAT_VERSION.
 fn assembleFile(alloc: std.mem.Allocator, magic: u32, body: []const u8) !Buf {
-    var out = Buf.init(alloc);
-    errdefer out.deinit();
-    const hdr_bytes = ChunkHeader.init(magic, FORMAT_VERSION, TYPE_FILE_HEADER, body).pack();
-    try out.appendSlice(&hdr_bytes);
-    try out.appendSlice(body);
-    return out;
+    return cs_mod.assembleFile(Buf, alloc, magic, FORMAT_VERSION, body);
 }
+
+/// Assemble a file envelope at VOL_FORMAT_VERSION.
+fn assembleVolumeFile(alloc: std.mem.Allocator, magic: u32, body: []const u8) !Buf {
+    return cs_mod.assembleFile(Buf, alloc, magic, VOL_FORMAT_VERSION, body);
+}
+
+/// Parse a volumes.bin file header. Tries VOL_FORMAT_VERSION (2) first; falls back
+/// to the legacy version (1). Returns the body slice and the detected file version.
+fn volumeFileBody(data: []const u8) Error!struct { body: []const u8, version: u32 } {
+    const fb = try cs_mod.fileBodyAnyVersion(
+        data,
+        VOL_FILE_MAGIC,
+        VOL_FORMAT_VERSION,
+        VOL_FORMAT_VERSION_LEGACY,
+        "volumes.bin",
+        "scene_io: volumes.bin detected legacy format v1 — loading as prism with default bands",
+    );
+    return .{ .body = fb.body, .version = fb.version };
+}
+
+// Read helpers — shared little-endian cursor (byteio.LeReader).
+const Reader = byteio.LeReader;
 
 /// Parse the file header, verify length + checksum (warn-and-continue on
 /// mismatch, mirroring registry_io graceful degradation), return the body slice.
 fn fileBody(data: []const u8, magic: u32, name: []const u8) Error![]const u8 {
-    const hdr = try unpackHeader(data, magic, FORMAT_VERSION);
-    const plen = std.math.cast(usize, hdr.payload_len) orelse return error.Truncated;
-    const body_end = std.math.add(usize, HEADER_LEN, plen) catch return error.Truncated;
-    if (body_end > data.len) return error.Truncated;
-    const body = data[HEADER_LEN..body_end];
-    const want = ChunkHeader.computeChecksum(magic, FORMAT_VERSION, hdr.type_flags, body);
-    if (want != hdr.checksum) {
-        std.log.warn("scene_io: {s} file checksum mismatch — attempting per-record recovery", .{name});
-    }
-    return body;
+    const fb = try cs_mod.fileBody(data, magic, FORMAT_VERSION, name);
+    return fb.body;
 }
 
 // ===========================================================================
@@ -283,28 +187,25 @@ pub fn decodeVolumes(geom: *InputGeom, data: []const u8) Error!void {
     const file_version = fb.version;
 
     geom.volumes.clearRetainingCapacity();
-    var max_id: u32 = 0;
+    var ctx = VolumeCtx{ .geom = geom, .file_version = file_version };
 
-    var r = Reader{ .data = body };
-    const count = try r.readU32();
-    var k: u32 = 0;
-    while (k < count) : (k += 1) {
-        var skip: usize = 0;
-        const rec = readRecord(body[r.pos..], VOL_REC_MAGIC, file_version, &skip) catch |e| {
-            std.log.warn("scene_io: skipping bad volume #{d}: {s}", .{ k, @errorName(e) });
-            if (skip == 0) break; // boundary unknown — cannot resync
-            r.pos += skip;
-            continue;
-        };
-        r.pos += rec.next;
-        decodeOneVolume(geom, rec.payload, file_version, &max_id) catch |e| {
-            std.log.warn("scene_io: volume #{d} dropped: {s}", .{ k, @errorName(e) });
-            continue;
-        };
-    }
+    try cs_mod.forEachRecord(body, VOL_REC_MAGIC, file_version, "volumes.bin", &ctx, VolumeCtx.onRecord);
+
+    const max_id = ctx.max_id;
     geom.next_volume_id = if (max_id == std.math.maxInt(u32)) max_id else max_id + 1;
     if (geom.next_volume_id < 1) geom.next_volume_id = 1;
 }
+
+/// Per-record context for the count-prefixed volumes loop (forEachRecord).
+const VolumeCtx = struct {
+    geom: *InputGeom,
+    file_version: u32,
+    max_id: u32 = 0,
+
+    fn onRecord(self: *VolumeCtx, payload: []const u8) !void {
+        try decodeOneVolume(self.geom, payload, self.file_version, &self.max_id);
+    }
+};
 
 fn decodeOneVolume(geom: *InputGeom, payload: []const u8, file_version: u32, max_id: *u32) !void {
     var r = Reader{ .data = payload };
@@ -379,23 +280,7 @@ pub fn decodeOffMesh(geom: *InputGeom, data: []const u8) Error!void {
     geom.off_flags.clearRetainingCapacity();
     geom.off_id.clearRetainingCapacity();
 
-    var r = Reader{ .data = body };
-    const count = try r.readU32();
-    var k: u32 = 0;
-    while (k < count) : (k += 1) {
-        var skip: usize = 0;
-        const rec = readRecord(body[r.pos..], OFF_REC_MAGIC, FORMAT_VERSION, &skip) catch |e| {
-            std.log.warn("scene_io: skipping bad off-mesh #{d}: {s}", .{ k, @errorName(e) });
-            if (skip == 0) break;
-            r.pos += skip;
-            continue;
-        };
-        r.pos += rec.next;
-        decodeOneOffMesh(geom, rec.payload) catch |e| {
-            std.log.warn("scene_io: off-mesh #{d} dropped: {s}", .{ k, @errorName(e) });
-            continue;
-        };
-    }
+    try cs_mod.forEachRecord(body, OFF_REC_MAGIC, FORMAT_VERSION, "offmesh.bin", geom, decodeOneOffMesh);
 }
 
 fn decodeOneOffMesh(geom: *InputGeom, payload: []const u8) !void {

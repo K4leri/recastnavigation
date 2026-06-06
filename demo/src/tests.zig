@@ -24,6 +24,7 @@ test {
     _ = @import("persist/manifest.zig");
     _ = @import("persist/scene_container.zig");
     _ = @import("persist/offmesh_path_repro_test.zig");
+    _ = @import("persist/byteio.zig");
     _ = @import("persist/bundle.zig");
     _ = @import("persist/bundle_io.zig");
     _ = @import("edit/undo_stack.zig");
