@@ -124,17 +124,8 @@ pub fn draw(scheme: ColorScheme, screen_w: f32, screen_h: f32, lo: f32, hi: f32)
     const dvui = @import("dvui");
     const ui = @import("../ui.zig");
 
-    // Unpack packed 0xAABBGGRR (dbg.rgba layout) -> dvui.Color.
-    const toDvui = struct {
-        fn f(col: u32) dvui.Color {
-            return .{
-                .r = @intCast(col & 0xff),
-                .g = @intCast((col >> 8) & 0xff),
-                .b = @intCast((col >> 16) & 0xff),
-                .a = @intCast((col >> 24) & 0xff),
-            };
-        }
-    }.f;
+    // Unpack packed 0xAABBGGRR (dbg.rgba layout) -> dvui.Color (alpha-preserving).
+    const toDvui = ui.colorFromRgba;
 
     const white = dvui.Color{ .r = 235, .g = 235, .b = 235, .a = 255 };
 

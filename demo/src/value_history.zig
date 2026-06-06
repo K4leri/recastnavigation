@@ -42,14 +42,7 @@ pub const ValueHistory = struct {
     }
 };
 
-fn col(rgba: u32) dvui.Color {
-    return .{
-        .r = @intCast((rgba >> 0) & 0xff),
-        .g = @intCast((rgba >> 8) & 0xff),
-        .b = @intCast((rgba >> 16) & 0xff),
-        .a = @intCast((rgba >> 24) & 0xff),
-    };
-}
+const col = ui.colorFromRgba;
 
 /// Draw one value-history line graph at screen rect (x,y,w,h) physical px (y-down),
 /// mapping [range_min, range_max] to the padded height. Re-implements the (disabled)

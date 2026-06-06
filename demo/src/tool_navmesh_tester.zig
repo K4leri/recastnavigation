@@ -1667,14 +1667,7 @@ fn dist2d(a: [3]f32, b: [3]f32) f32 {
 
 /// Decompose a packed debug `rgba` u32 (R in low byte) into a dvui.Color for the
 /// comparison swatch. Forces full alpha so the swatch reads solid in the panel.
-fn colToDvui(col: u32) dvui.Color {
-    return .{
-        .r = @intCast(col & 0xff),
-        .g = @intCast((col >> 8) & 0xff),
-        .b = @intCast((col >> 16) & 0xff),
-        .a = 255,
-    };
-}
+const colToDvui = ui.colorFromRgbaOpaque;
 
 const SP_END: u8 = 0x02;
 const SP_OFFMESH: u8 = 0x04;

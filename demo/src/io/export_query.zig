@@ -11,6 +11,7 @@
 //! Детерминированный порядок ключей. Не-конечные float → 0 (валидный JSON).
 
 const std = @import("std");
+const json_emit = @import("json_emit.zig");
 
 /// Одна запись результата pathfinding-запроса.
 pub const QueryRecord = struct {
@@ -34,10 +35,7 @@ pub const QueryRecord = struct {
 // ===========================================================================
 
 /// Записать float в детерминированном формате {d}. Не-конечные значения → 0.
-fn writeFloat(w: *std.Io.Writer, v: f32) !void {
-    const safe: f32 = if (std.math.isFinite(v)) v else 0;
-    try w.print("{d}", .{safe});
-}
+const writeFloat = json_emit.writeFloatSafe;
 
 /// CSV-экранирование поля по RFC 4180.
 /// Поле берётся в двойные кавычки если содержит запятую, двойную кавычку или перевод строки.
@@ -64,28 +62,7 @@ fn writeCsvField(w: *std.Io.Writer, s: []const u8) !void {
 }
 
 /// Записать JSON-строку с экранированием спецсимволов по RFC 8259.
-fn writeJsonString(w: *std.Io.Writer, s: []const u8) !void {
-    try w.writeByte('"');
-    for (s) |c| {
-        switch (c) {
-            '"' => try w.writeAll("\\\""),
-            '\\' => try w.writeAll("\\\\"),
-            0x08 => try w.writeAll("\\b"),
-            0x09 => try w.writeAll("\\t"),
-            0x0A => try w.writeAll("\\n"),
-            0x0C => try w.writeAll("\\f"),
-            0x0D => try w.writeAll("\\r"),
-            else => {
-                if (c < 0x20) {
-                    try w.print("\\u{x:0>4}", .{c});
-                } else {
-                    try w.writeByte(c);
-                }
-            },
-        }
-    }
-    try w.writeByte('"');
-}
+const writeJsonString = json_emit.writeJsonString;
 
 // ===========================================================================
 // CSV

@@ -214,6 +214,19 @@ pub const CrowdTool = struct {
         }
     }
 
+    /// Текущая маска update_flags из 5 bool-опций (anticipate/obstacle/separation/
+    /// optimize_vis/optimize_topo). Единый источник для buildParams и applyOptions,
+    /// чтобы они не расходились (раньше маска собиралась двумя одинаковыми копиями).
+    fn currentUpdateFlags(self: *const CrowdTool) u8 {
+        var f: u8 = 0;
+        if (self.anticipate) f |= UF.anticipate_turns;
+        if (self.obstacle_avoid) f |= UF.obstacle_avoid;
+        if (self.separation) f |= UF.separation;
+        if (self.opt_vis) f |= UF.optimize_vis;
+        if (self.opt_topo) f |= UF.optimize_topo;
+        return f;
+    }
+
     fn buildParams(self: *CrowdTool) dc.CrowdAgentParams {
         // 1-в-1 с CrowdToolState::addAgent (Tool_Crowd.cpp): габариты из sample,
         // collisionQueryRange = radius*12, pathOptimizationRange = radius*30.
@@ -224,13 +237,7 @@ pub const CrowdTool = struct {
         p.max_speed = 3.5;
         p.collision_query_range = p.radius * 12.0;
         p.path_optimization_range = p.radius * 30.0;
-        var f: u8 = 0;
-        if (self.anticipate) f |= UF.anticipate_turns;
-        if (self.obstacle_avoid) f |= UF.obstacle_avoid;
-        if (self.separation) f |= UF.separation;
-        if (self.opt_vis) f |= UF.optimize_vis;
-        if (self.opt_topo) f |= UF.optimize_topo;
-        p.update_flags = f;
+        p.update_flags = self.currentUpdateFlags();
         p.obstacle_avoidance_type = @intFromFloat(self.avoidance_quality);
         p.separation_weight = self.separation_weight;
         return p;
@@ -241,12 +248,7 @@ pub const CrowdTool = struct {
     /// любой опции (иначе переключение опции не влияло бы на существующих агентов).
     fn applyOptions(self: *CrowdTool) void {
         const c = if (self.crowd) |*cc| cc else return;
-        var flags: u8 = 0;
-        if (self.anticipate) flags |= UF.anticipate_turns;
-        if (self.obstacle_avoid) flags |= UF.obstacle_avoid;
-        if (self.separation) flags |= UF.separation;
-        if (self.opt_vis) flags |= UF.optimize_vis;
-        if (self.opt_topo) flags |= UF.optimize_topo;
+        const flags = self.currentUpdateFlags();
         const oa_type: u8 = @intFromFloat(self.avoidance_quality);
         for (0..self.agent_count) |i| {
             const ag = c.getAgent(@intCast(i)) orelse continue;

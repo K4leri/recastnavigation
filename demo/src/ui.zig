@@ -84,3 +84,27 @@ pub fn screenTextEx(px: f32, py: f32, text: []const u8, color: dvui.Color, cente
         .background_color = null,
     }) catch {};
 }
+
+/// Распаковать упакованный debug-`rgba` u32 (R в младшем байте, layout 0xAABBGGRR
+/// — как у debug-draw / dbg.rgba) в `dvui.Color`, СОХРАНЯЯ альфу. Каноничный
+/// распаковщик: раньше дублировался в value_history.col и render/legend.toDvui.
+pub fn colorFromRgba(col: u32) dvui.Color {
+    return .{
+        .r = @intCast(col & 0xff),
+        .g = @intCast((col >> 8) & 0xff),
+        .b = @intCast((col >> 16) & 0xff),
+        .a = @intCast((col >> 24) & 0xff),
+    };
+}
+
+/// Как colorFromRgba, но форсирует полную непрозрачность (a=255) — для swatch'ей,
+/// которые должны читаться сплошным цветом независимо от упакованной альфы.
+/// Раньше дублировался в tool_navmesh_tester.colToDvui.
+pub fn colorFromRgbaOpaque(col: u32) dvui.Color {
+    return .{
+        .r = @intCast(col & 0xff),
+        .g = @intCast((col >> 8) & 0xff),
+        .b = @intCast((col >> 16) & 0xff),
+        .a = 255,
+    };
+}

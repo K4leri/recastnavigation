@@ -14,6 +14,7 @@
 //! строго по схеме D3 — это критично для побайтового diff (D6).
 
 const std = @import("std");
+const json_emit = @import("json_emit.zig");
 
 pub const AreaCount = struct {
     id: u8,
@@ -57,67 +58,18 @@ pub const Metrics = struct {
     build_ms: f32,
 };
 
-/// Тонкая обёртка над std.array_list.Managed(u8) с writer-подобным API.
-/// В Zig 0.16 у Managed-листа нет `.writer()`, есть методы append/appendSlice/print
-/// прямо на структуре — оборачиваем их, чтобы helper'ы читались как обычный writer.
-const Buf = struct {
-    list: *std.array_list.Managed(u8),
+/// Записать JSON-строку с экранированием спецсимволов по правилам JSON.
+const writeJsonString = json_emit.writeJsonString;
 
-    fn writeByte(self: Buf, b: u8) !void {
-        try self.list.append(b);
-    }
-    fn writeAll(self: Buf, s: []const u8) !void {
-        try self.list.appendSlice(s);
-    }
-    fn print(self: Buf, comptime fmt: []const u8, args: anytype) !void {
-        try self.list.print(fmt, args);
-    }
-};
-
-/// Записать JSON-строку в writer с экранированием спецсимволов по правилам JSON.
-/// Экранируются: `"`, `\\`, и управляющие символы < 0x20 (включая \n, \r, \t, \b, \f).
-fn writeJsonString(w: Buf, s: []const u8) !void {
-    try w.writeByte('"');
-    for (s) |c| {
-        switch (c) {
-            '"' => try w.writeAll("\\\""),
-            '\\' => try w.writeAll("\\\\"),
-            0x08 => try w.writeAll("\\b"),
-            0x09 => try w.writeAll("\\t"),
-            0x0A => try w.writeAll("\\n"),
-            0x0C => try w.writeAll("\\f"),
-            0x0D => try w.writeAll("\\r"),
-            else => {
-                if (c < 0x20) {
-                    // прочие управляющие символы — \u00XX
-                    try w.print("\\u{x:0>4}", .{c});
-                } else {
-                    try w.writeByte(c);
-                }
-            },
-        }
-    }
-    try w.writeByte('"');
-}
-
-/// Записать значение f32 единым детерминированным форматом `{d}`.
-///
-/// ВАЖНО: Zig печатает `{d}` для не-конечных f32 как `inf`/`-inf`/`nan` —
-/// это НЕВАЛИДНЫЙ JSON (нет таких литералов в RFC 8259), он сломает
-/// std.json.parseFromSlice и весь diff D6. Поэтому не-конечные значения
-/// (inf/-inf/nan) детерминированно заменяем на 0. Конечные значения, включая
-/// -0.0, печатаются как есть.
-fn writeFloat(w: Buf, v: f32) !void {
-    const safe: f32 = if (std.math.isFinite(v)) v else 0;
-    try w.print("{d}", .{safe});
-}
+/// Записать значение f32 единым детерминированным форматом `{d}` (не-конечные → 0).
+const writeFloat = json_emit.writeFloatSafe;
 
 /// Сериализовать Metrics в JSON (owned []u8, caller frees). ДЕТЕРМИНИРОВАННЫЙ
 /// порядок ключей (критично для diff D6). Структура JSON — по схеме спеки D3.
 pub fn toJson(alloc: std.mem.Allocator, m: Metrics) ![]u8 {
-    var buf = std.array_list.Managed(u8).init(alloc);
-    errdefer buf.deinit();
-    const w = Buf{ .list = &buf };
+    var aw = std.Io.Writer.Allocating.init(alloc);
+    errdefer aw.deinit();
+    const w = &aw.writer;
 
     try w.writeByte('{');
 
@@ -214,7 +166,7 @@ pub fn toJson(alloc: std.mem.Allocator, m: Metrics) ![]u8 {
 
     try w.writeByte('}');
 
-    return buf.toOwnedSlice();
+    return aw.toOwnedSlice();
 }
 
 // ===========================================================================
