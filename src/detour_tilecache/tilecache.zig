@@ -180,6 +180,12 @@ pub const TileCache = struct {
 
     // Memory
     allocator: std.mem.Allocator,
+    // Per-tile-build scratch arena, reset at the top of buildNavMeshTile.
+    // Mirrors upstream's dtTileCacheAlloc (the demo LinearAllocator): the
+    // builder temporaries (decompressed layer, regions scratch, contour set,
+    // poly mesh) live only for one tile build, so they come from here and
+    // are reclaimed by a single reset instead of per-call heap traffic.
+    build_arena: std.heap.ArenaAllocator,
 
     const Self = @This();
 
@@ -208,6 +214,7 @@ pub const TileCache = struct {
             .update_queue = undefined,
             .nupdate = 0,
             .allocator = allocator,
+            .build_arena = std.heap.ArenaAllocator.init(allocator),
         };
 
         // Allocate obstacles
@@ -298,6 +305,7 @@ pub const TileCache = struct {
         self.allocator.free(self.obstacles);
         self.allocator.free(self.pos_lookup);
         self.allocator.free(self.tiles);
+        self.build_arena.deinit();
     }
 
     /// Get compressor
@@ -945,8 +953,12 @@ pub const TileCache = struct {
             return Status{ .failure = true, .invalid_param = true };
         }
 
-        // Note: In the original C++ version, temp allocator is reset here
-        // For Zig, we rely on Arena allocator or defer cleanup
+        // Reset the per-build scratch arena — 1:1 with upstream's
+        // `m_talloc->reset()` at the top of dtTileCache::buildNavMeshTile. All
+        // builder temporaries below come from `talloc`; only nav_data (handed
+        // to the navmesh) comes from the long-lived allocator.
+        _ = self.build_arena.reset(.retain_capacity);
+        const talloc = self.build_arena.allocator();
 
         // Decompress tile layer data. Pass the FULL buffer (`tile.data`, header at
         // offset 0 + compressed payload after it) — `decompressTileCacheLayer`
@@ -954,13 +966,13 @@ pub const TileCache = struct {
         // and would make the decompressor read the header from the wrong offset.
         // Matches upstream `dtTileCache::buildNavMeshTile` passing `tile->data`.
         const layer = builder_mod.decompressTileCacheLayer(
-            self.allocator,
+            talloc,
             self.comp.?,
             tile.data,
         ) catch {
             return Status{ .failure = true };
         };
-        defer builder_mod.freeTileCacheLayer(self.allocator, layer);
+        defer builder_mod.freeTileCacheLayer(talloc, layer);
 
         // Rasterize obstacles
         var i: i32 = 0;
@@ -1013,7 +1025,7 @@ pub const TileCache = struct {
         // Build navmesh
         const walkable_climb_vx: i32 = @intFromFloat(self.params.walkable_climb / self.params.ch);
         const status_regions = try builder_mod.buildTileCacheRegions(
-            self.allocator,
+            talloc,
             layer,
             walkable_climb_vx,
         );
@@ -1021,21 +1033,21 @@ pub const TileCache = struct {
             return status_regions;
         }
 
-        const lcset = try builder_mod.allocTileCacheContourSet(self.allocator);
-        defer builder_mod.freeTileCacheContourSet(self.allocator, lcset);
+        const lcset = try builder_mod.allocTileCacheContourSet(talloc);
+        defer builder_mod.freeTileCacheContourSet(talloc, lcset);
 
         lcset.* = try builder_mod.buildTileCacheContours(
-            self.allocator,
+            talloc,
             layer,
             walkable_climb_vx,
             self.params.max_simplification_error,
         );
 
-        const lmesh = try builder_mod.allocTileCachePolyMesh(self.allocator);
-        defer builder_mod.freeTileCachePolyMesh(self.allocator, lmesh);
+        const lmesh = try builder_mod.allocTileCachePolyMesh(talloc);
+        defer builder_mod.freeTileCachePolyMesh(talloc, lmesh);
 
         const status_polymesh = try builder_mod.buildTileCachePolyMesh(
-            self.allocator,
+            talloc,
             &lcset.*,
             lmesh,
         );
