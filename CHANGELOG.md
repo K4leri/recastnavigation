@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Engine / Benchmarking (characterization only — no library or API change)
+
+This entry documents core-engine **performance characterization** work done after
+0.2.1. It does **not** change the shipping library, the public API, or the release
+demo/exe — hence **no version bump**. The optimization experiments themselves live
+on a separate, benchmark-only branch (Tracy-instrumented; see below), not on
+`master`; `master`'s faithful `src/*` core is unchanged since 0.2.1.
+
+- **Two-system benchmark harness vs the C++ recastnavigation reference.**
+  - *System A — per-function micro-bench* (`bench/microbench/`, ReleaseFast):
+    auto-tuned K-iteration batches → per-call min/mean/median/p95 ns. Every
+    function is measured as `orig` plus ≥1 **analog**, and an analog is only
+    counted if it is **bit-identical** to the original over an input sweep (the
+    `check_ok` gate). Establishes that the leaf math/predicates are already at the
+    optimum (analogs TIE or REJECT); the real, adopted wins are at the
+    pipeline-stage level (data-layout / comptime), not algorithm changes.
+  - *System B — Zig-vs-C++ Tracy scenario suite* (`bench/tracy_scenarios.zig`):
+    **29 scenarios** (14 build + 8 query + 7 crowd, plus tilecache) on dense-BVH
+    maps, sharing one deterministic contract (seeded LCG draw order, derived
+    cell-size, matched filters/caps/node-pools). Per-stage Tracy zones are dumped
+    to CSV and joined into a Zig/C++ ratio table.
+- **Fairness invariants pinned** so the comparison measures identical work:
+  identical navmesh (same poly/vert counts), identical `findNearestPoly`
+  half-extents `{8,2000,8}` (the SNAP-FIX), identical LCG draw sequence, and —
+  critically — **C++ built with `/arch:AVX2`** to match Zig's native CPU (MSVC
+  defaults to SSE2 and would otherwise be silently handicapped); both sides keep
+  strict IEEE float (no fast-math).
+- **Headline.** At matched AVX2 the Zig core is **at parity-or-faster** vs the C++
+  reference across the build pipeline, with a small number of known slower zones
+  (e.g. `rcBuildDistanceField`). Full per-zone min-of-runs tables and the
+  geomean-by-layer live in `docs/perf-audit/FULL-RESULTS.md` / `FINAL-REPORT.md`
+  (regenerated from a fresh full run).
+- **Benchmark-only branch published.** A Tracy-instrumented iteration is pushed to
+  GitHub purely for reproducing these measurements. It carries profiling zones and
+  in-progress optimization experiments and is **not** the release library — do not
+  build production navmeshes from it.
+
 ## [0.2.1] - 2026-06-06
 
 ### Added
