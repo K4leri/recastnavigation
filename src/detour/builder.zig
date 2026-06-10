@@ -314,7 +314,6 @@ pub fn createNavMeshData(
         } else {
             off_mesh_con_class = off_mesh_con_class_buf[0 .. params.off_mesh_con_count * 2];
         }
-        defer if (off_mesh_con_class.ptr != &off_mesh_con_class_buf) allocator.free(off_mesh_con_class);
 
         // Find tight height bounds
         var hmin: f32 = std.math.floatMax(f32);
@@ -366,6 +365,13 @@ pub fn createNavMeshData(
             if (off_mesh_con_class[i * 2 + 0] == 0xff) stored_off_mesh_con_count += 1;
         }
     }
+    // FIX (latent use-after-free): this defer used to live INSIDE the classify
+    // block above, so the heap branch (>512 off-mesh connections) was freed at
+    // the end of that block — before the vertex/polygon/connection store loops
+    // below read the classification. Function-scope defer matches the C++
+    // lifetime (freed at the end of dtCreateNavMeshData).
+    defer if (off_mesh_con_class.len > 0 and off_mesh_con_class.ptr != &off_mesh_con_class_buf)
+        allocator.free(off_mesh_con_class);
 
     // Off-mesh connections stored as polygons
     const tot_poly_count = params.poly_count + stored_off_mesh_con_count;
