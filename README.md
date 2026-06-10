@@ -6,6 +6,8 @@ tile cache for dynamic obstacles.
 
 English | [Русский](README.ru.md)
 
+<sub>This is the **Zig** port. A matching **C++** reference (upstream Recast + the same benchmark harness) lives at [recastnavigation-bench](https://github.com/K4leri/recastnavigation-bench) — used for the [benchmarks](#benchmarks) below.</sub>
+
 ![zig-recast demo](docs/recast_demo.png)
 
 The screenshot above is the bundled GUI demo (`zig build run-demo`), a Zig/dvui
@@ -97,9 +99,9 @@ the API — each builds **and runs** in CI (`zig build examples` builds all,
 
 ## Benchmarks
 
-Zig core vs the upstream **C++ recastnavigation** reference, measured fairly:
-identical dense game maps, one shared deterministic input contract, C++ built
-`/arch:AVX2` + strict IEEE float. Each function is timed **K=15 runs/side,
+Zig core vs the upstream [C++ recastnavigation reference](https://github.com/K4leri/recastnavigation-bench),
+measured fairly: identical dense game maps, one shared deterministic input contract,
+C++ built `/arch:AVX2` + strict IEEE float. Each function is timed **K=15 runs/side,
 interleaved**, reported as the **median Zig÷C++ time with a 95 % bootstrap CI**;
 sub-~200 ns zones (below the timer floor) are excluded as quantization noise.
 `ratio < 1.00 = Zig faster`.

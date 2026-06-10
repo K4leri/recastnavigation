@@ -328,8 +328,10 @@ divergence and was judged not worth the parity risk.
 
 ## 7. Fairness — the comparison is not rigged
 
-- C++ reference built **`/arch:AVX2 /O2`, fast-math OFF** (strict IEEE) — NOT the
-  MSVC SSE2 baseline; same arithmetic as Zig ReleaseFast.
+- The C++ reference is **[recastnavigation-bench](https://github.com/K4leri/recastnavigation-bench)**
+  (upstream recastnavigation + the byte-identical Tracy harness), built
+  **`/arch:AVX2 /O2`, fast-math OFF** (strict IEEE) — NOT the MSVC SSE2 baseline;
+  same arithmetic as Zig ReleaseFast.
 - Identical navmesh, identical RNG draw stream, identical snap extents, matched
   filters/caps/warmup/node-pools. Verified by per-zone count-parity every run.
 - The multi-tile navmesh is built **byte-identical** on both sides (same poly/vert
@@ -369,7 +371,7 @@ divergence and was judged not worth the parity risk.
 ```
 # 1. build both runners (Zig with the timing registry; C++ at AVX2 + strict IEEE):
 zig build run-tracy-scenarios -Doptimize=ReleaseFast -Dtracy=true   # Zig runner
-#    (C++ reference is the recastnavigation-bench CMake target, /arch:AVX2)
+#    (C++ reference: github.com/K4leri/recastnavigation-bench — CMake, /arch:AVX2)
 
 # 2. one consolidated statistical campaign (K=15/side, K=7 build) -> ONE scoreboard:
 bash dev/research/_run_stat.sh
