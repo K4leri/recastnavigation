@@ -1,0 +1,397 @@
+module,file,line,visibility,name,class,prerequisites,improvable,signature_head
+recast,src/recast/area.zig,17,priv,insertSort,A,plain value/slice inputs,maybe,fn insertSort(data: []u8) void 
+recast,src/recast/area.zig,33,priv,pointInPoly,A,plain value/slice inputs,maybe,fn pointInPoly(num_verts: usize; verts: []const f32; point: Vec3) bool 
+recast,src/recast/area.zig,65,priv,vsafeNormalize,A,plain value/slice inputs,maybe,fn vsafeNormalize(v: *Vec3) void 
+recast,src/recast/area.zig,79,pub,erodeWalkableArea,B,region-partitioned pipeline state (run prereq chain once),maybe,pub fn erodeWalkableArea(
+recast,src/recast/area.zig,291,pub,medianFilterWalkableArea,B,region-partitioned pipeline state (run prereq chain once),maybe,pub fn medianFilterWalkableArea(
+recast,src/recast/area.zig,365,pub,markBoxArea,B,region-partitioned pipeline state (run prereq chain once),maybe,pub fn markBoxArea(
+recast,src/recast/area.zig,429,pub,markConvexPolyArea,B,region-partitioned pipeline state (run prereq chain once),maybe,pub fn markConvexPolyArea(
+recast,src/recast/area.zig,513,pub,markCylinderArea,B,region-partitioned pipeline state (run prereq chain once),maybe,pub fn markCylinderArea(
+recast,src/recast/area.zig,600,pub,offsetPoly,C,public helper; needs enclosing-stage context,maybe,pub fn offsetPoly(
+recast,src/recast/compact.zig,26,pub,getHeightFieldSpanCount,D,lifecycle/dispatch or allocator-driven state,no,pub fn getHeightFieldSpanCount(ctx: *const Context; heightfield: *const Heightfield) usize
+recast,src/recast/compact.zig,53,pub,buildCompactHeightfield,B,region-partitioned pipeline state (run prereq chain once),maybe,pub fn buildCompactHeightfield(
+recast,src/recast/config.zig,64,pub,calcBounds,B,region-partitioned pipeline state (run prereq chain once),maybe, pub fn calcBounds(verts: []const Vec3; min_bounds: *Vec3; max_bounds: *Vec3) void 
+recast,src/recast/config.zig,76,pub,calcGridSize,B,region-partitioned pipeline state (run prereq chain once),maybe, pub fn calcGridSize(min_bounds: Vec3; max_bounds: Vec3; cell_size: f32; size_x: *i32; siz
+recast,src/recast/contour.zig,25,priv,getCornerHeight,D,lifecycle/dispatch or allocator-driven state,no,fn getCornerHeight(
+recast,src/recast/contour.zig,107,priv,walkContour,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn walkContour(
+recast,src/recast/contour.zig,211,pub,distancePtSeg,A,plain value/slice inputs,maybe,pub fn distancePtSeg(x: i32; z: i32; px: i32; pz: i32; qx: i32; qz: i32) f32 
+recast,src/recast/contour.zig,241,pub,simplifyContour,C,public helper; needs enclosing-stage context,maybe,pub fn simplifyContour(
+recast,src/recast/contour.zig,472,priv,vequal,A,plain value/slice inputs,no,fn vequal(a: []const i32; b: []const i32) bool 
+recast,src/recast/contour.zig,477,priv,removeDegenerateSegments,D,lifecycle/dispatch or allocator-driven state,no,fn removeDegenerateSegments(simplified: *std.array_list.Managed(i32)) void 
+recast,src/recast/contour.zig,501,priv,calcAreaOfPolygon2D,A,plain value/slice inputs,maybe,fn calcAreaOfPolygon2D(verts: []const i32; nverts: usize) i32 
+recast,src/recast/contour.zig,551,priv,intersectProp,A,plain value/slice inputs,maybe,fn intersectProp(a: []const i32; b: []const i32; c: []const i32; d: []const i32) bool 
+recast,src/recast/contour.zig,561,priv,between,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn between(a: []const i32; b: []const i32; c: []const i32) bool 
+recast,src/recast/contour.zig,573,priv,intersect,A,plain value/slice inputs,maybe,fn intersect(a: []const i32; b: []const i32; c: []const i32; d: []const i32) bool 
+recast,src/recast/contour.zig,584,priv,intersectSegContour,A,plain value/slice inputs,maybe,fn intersectSegContour(d0: []const i32; d1: []const i32; i: i32; n: i32; verts: []const i3
+recast,src/recast/contour.zig,608,priv,inCone,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn inCone(i: i32; n: i32; verts: []const i32; pj: []const i32) bool 
+recast,src/recast/contour.zig,626,pub,buildContours,B,region-partitioned pipeline state (run prereq chain once),maybe,pub fn buildContours(
+recast,src/recast/contour.zig,922,priv,findLeftMostVertex,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn findLeftMostVertex(contour: *const Contour) struct 
+recast,src/recast/contour.zig,941,priv,compareHoles,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn compareHoles(_: void; a: ContourHole; b: ContourHole) bool 
+recast,src/recast/contour.zig,949,priv,compareDiagonals,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn compareDiagonals(_: void; a: PotentialDiagonal; b: PotentialDiagonal) bool 
+recast,src/recast/contour.zig,954,priv,mergeContours,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn mergeContours(
+recast,src/recast/contour.zig,989,priv,mergeRegionHoles,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn mergeRegionHoles(
+recast,src/recast/detail.zig,71,priv,circumCircle,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn circumCircle(
+recast,src/recast/detail.zig,103,priv,distPtTri,A,plain value/slice inputs,maybe,fn distPtTri(p: [*]const f32; a: [*]const f32; b: [*]const f32; c: [*]const f32) f32 
+recast,src/recast/detail.zig,127,priv,distancePtSeg,A,plain value/slice inputs,maybe,fn distancePtSeg(x: f32; z: f32; px: f32; pz: f32; qx: f32; qz: f32) f32 
+recast,src/recast/detail.zig,143,priv,distancePtSeg3d,A,plain value/slice inputs,maybe,fn distancePtSeg3d(pt: [*]const f32; p: [*]const f32; q: [*]const f32) f32 
+recast,src/recast/detail.zig,166,priv,distancePtSeg2d,A,plain value/slice inputs,maybe,fn distancePtSeg2d(pt: [*]const f32; p: [*]const f32; q: [*]const f32) f32 
+recast,src/recast/detail.zig,186,priv,distToTriMesh,A,plain value/slice inputs,maybe,fn distToTriMesh(
+recast,src/recast/detail.zig,207,priv,distToPoly,A,plain value/slice inputs,maybe,fn distToPoly(nin: i32; inv: [*]const f32; p: [*]const f32) f32 
+recast,src/recast/detail.zig,229,priv,polyMinExtent,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn polyMinExtent(verts: [*]const f32; nverts: i32) f32 
+recast,src/recast/detail.zig,293,priv,getHeight,D,lifecycle/dispatch or allocator-driven state,no,fn getHeight(
+recast,src/recast/detail.zig,365,priv,findEdge,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn findEdge(edges: []const i32; nedges: i32; s: i32; t: i32) i32 
+recast,src/recast/detail.zig,377,priv,addEdge,D,lifecycle/dispatch or allocator-driven state,no,fn addEdge(
+recast,src/recast/detail.zig,407,priv,updateLeftFace,D,lifecycle/dispatch or allocator-driven state,no,fn updateLeftFace(e: []i32; s: i32; t: i32; f: i32) void 
+recast,src/recast/detail.zig,416,priv,overlapSegSeg2d,A,plain value/slice inputs,maybe,fn overlapSegSeg2d(a: [*]const f32; b: [*]const f32; c: [*]const f32; d: [*]const f32) boo
+recast,src/recast/detail.zig,430,priv,overlapEdges,A,plain value/slice inputs,maybe,fn overlapEdges(pts: [*]const f32; edges: []const i32; nedges: i32; s1: i32; t1: i32) bool
+recast,src/recast/detail.zig,451,priv,completeFacet,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn completeFacet(
+recast,src/recast/detail.zig,539,priv,delaunayHull,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn delaunayHull(
+recast,src/recast/detail.zig,627,priv,onHull,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn onHull(a: i32; b: i32; nhull: i32; hull: []const i32) bool 
+recast,src/recast/detail.zig,644,priv,setTriFlags,D,lifecycle/dispatch or allocator-driven state,no,fn setTriFlags(tris: *std.array_list.Managed(i32); nhull: i32; hull: []const i32) void 
+recast,src/recast/detail.zig,659,priv,triangulateHull,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn triangulateHull(
+recast,src/recast/detail.zig,669,priv,f,C,internal to enclosing stage (drive via stage or reconstruct args),maybe, fn f(i: i32; n: i32) i32 
+recast,src/recast/detail.zig,675,priv,f,C,internal to enclosing stage (drive via stage or reconstruct args),maybe, fn f(i: i32; n: i32) i32 
+recast,src/recast/detail.zig,749,priv,seedArrayWithPolyCenter,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn seedArrayWithPolyCenter(
+recast,src/recast/detail.zig,894,priv,getHeightData,D,lifecycle/dispatch or allocator-driven state,no,fn getHeightData(
+recast,src/recast/detail.zig,1006,priv,buildPolyDetail,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn buildPolyDetail(
+recast,src/recast/detail.zig,1261,pub,buildPolyMeshDetail,B,region-partitioned pipeline state (run prereq chain once),maybe,pub fn buildPolyMeshDetail(
+recast,src/recast/detail.zig,1490,pub,mergePolyMeshDetails,C,public helper; needs enclosing-stage context,maybe,pub fn mergePolyMeshDetails(
+recast,src/recast/filter.zig,17,pub,filterLowHangingWalkableObstacles,B,region-partitioned pipeline state (run prereq chain once),maybe,pub fn filterLowHangingWalkableObstacles(
+recast,src/recast/filter.zig,65,pub,filterLedgeSpans,B,region-partitioned pipeline state (run prereq chain once),maybe,pub fn filterLedgeSpans(
+recast,src/recast/filter.zig,176,pub,filterWalkableLowHeightSpans,B,region-partitioned pipeline state (run prereq chain once),maybe,pub fn filterWalkableLowHeightSpans(
+recast,src/recast/filter.zig,211,pub,markWalkableTriangles,B,region-partitioned pipeline state (run prereq chain once),maybe,pub fn markWalkableTriangles(
+recast,src/recast/filter.zig,248,pub,clearUnwalkableTriangles,C,public helper; needs enclosing-stage context,maybe,pub fn clearUnwalkableTriangles(
+recast,src/recast/heightfield.zig,14,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init(smin: u16; smax: u16; area: u8) Span 
+recast,src/recast/heightfield.zig,29,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init() SpanPool 
+recast,src/recast/heightfield.zig,52,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init(
+recast,src/recast/heightfield.zig,79,pub,deinit,D,lifecycle/dispatch or allocator-driven state,no, pub fn deinit(self: *Self) void 
+recast,src/recast/heightfield.zig,92,pub,allocSpan,D,lifecycle/dispatch or allocator-driven state,no, pub fn allocSpan(self: *Self) !*Span 
+recast,src/recast/heightfield.zig,114,pub,freeSpan,D,lifecycle/dispatch or allocator-driven state,no, pub fn freeSpan(self: *Self; span: *Span) void 
+recast,src/recast/heightfield.zig,119,pub,getSpanCount,D,lifecycle/dispatch or allocator-driven state,no, pub fn getSpanCount(self: *const Self) usize 
+recast,src/recast/heightfield.zig,143,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init(index: u32; count: u8) CompactCell 
+recast,src/recast/heightfield.zig,163,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init() CompactSpan 
+recast,src/recast/heightfield.zig,173,pub,setCon,D,lifecycle/dispatch or allocator-driven state,no, pub fn setCon(self: *CompactSpan; direction: u2; neighbor_idx: u8) void 
+recast,src/recast/heightfield.zig,180,pub,getCon,D,lifecycle/dispatch or allocator-driven state,no, pub fn getCon(self: *const CompactSpan; direction: u2) u8 
+recast,src/recast/heightfield.zig,208,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init(
+recast,src/recast/heightfield.zig,255,pub,deinit,D,lifecycle/dispatch or allocator-driven state,no, pub fn deinit(self: *Self) void 
+recast,src/recast/heightfield.zig,265,pub,getDirOffsetX,D,lifecycle/dispatch or allocator-driven state,no,pub fn getDirOffsetX(direction: u2) i32 
+recast,src/recast/heightfield.zig,270,pub,getDirOffsetY,D,lifecycle/dispatch or allocator-driven state,no,pub fn getDirOffsetY(direction: u2) i32 
+recast,src/recast/heightfield.zig,275,pub,getDirForOffset,D,lifecycle/dispatch or allocator-driven state,no,pub fn getDirForOffset(offset_x: i32; offset_z: i32) u2 
+recast,src/recast/layers.zig,46,priv,contains,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn contains(a: []const u8; v: u8) bool 
+recast,src/recast/layers.zig,54,priv,addUnique,D,lifecycle/dispatch or allocator-driven state,no,fn addUnique(a: []u8; an: *u8; an_max: usize; v: u8) bool 
+recast,src/recast/layers.zig,90,pub,buildHeightfieldLayers,B,region-partitioned pipeline state (run prereq chain once),maybe,pub fn buildHeightfieldLayers(
+recast,src/recast/mesh.zig,54,priv,intersectProp,A,plain value/slice inputs,maybe,fn intersectProp(a: []const i32; b: []const i32; c: []const i32; d: []const i32) bool 
+recast,src/recast/mesh.zig,66,priv,between,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn between(a: []const i32; b: []const i32; c: []const i32) bool 
+recast,src/recast/mesh.zig,80,priv,intersect,A,plain value/slice inputs,maybe,fn intersect(a: []const i32; b: []const i32; c: []const i32; d: []const i32) bool 
+recast,src/recast/mesh.zig,90,priv,vequal,A,plain value/slice inputs,no,fn vequal(a: []const i32; b: []const i32) bool 
+recast,src/recast/mesh.zig,95,priv,diagonalie,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn diagonalie(i: usize; j: usize; n: usize; verts: []const i32; indices: []const i32) bool
+recast,src/recast/mesh.zig,124,priv,inCone,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn inCone(i: usize; j: usize; n: usize; verts: []const i32; indices: []const i32) bool 
+recast,src/recast/mesh.zig,140,priv,diagonal,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn diagonal(i: usize; j: usize; n: usize; verts: []const i32; indices: []const i32) bool 
+recast,src/recast/mesh.zig,145,priv,diagonalieLoose,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn diagonalieLoose(i: usize; j: usize; n: usize; verts: []const i32; indices: []const i32)
+recast,src/recast/mesh.zig,173,priv,inConeLoose,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn inConeLoose(i: usize; j: usize; n: usize; verts: []const i32; indices: []const i32) boo
+recast,src/recast/mesh.zig,187,priv,diagonalLoose,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn diagonalLoose(i: usize; j: usize; n: usize; verts: []const i32; indices: []const i32) b
+recast,src/recast/mesh.zig,193,priv,triangulate,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn triangulate(n_in: usize; verts: []const i32; indices: []i32; tris: []i32) i32 
+recast,src/recast/mesh.zig,305,priv,computeVertexHash,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn computeVertexHash(x: i32; y: i32; z: i32) usize 
+recast,src/recast/mesh.zig,319,priv,addVertex,D,lifecycle/dispatch or allocator-driven state,no,fn addVertex(
+recast,src/recast/mesh.zig,353,pub,buildMeshAdjacency,B,region-partitioned pipeline state (run prereq chain once),maybe,pub fn buildMeshAdjacency(
+recast,src/recast/mesh.zig,433,pub,countPolyVerts,C,public helper; needs enclosing-stage context,maybe,pub fn countPolyVerts(p: []const u16; nvp: usize) usize 
+recast,src/recast/mesh.zig,455,pub,getPolyMergeValue,D,lifecycle/dispatch or allocator-driven state,no,pub fn getPolyMergeValue(
+recast,src/recast/mesh.zig,534,pub,mergePolyVerts,C,public helper; needs enclosing-stage context,maybe,pub fn mergePolyVerts(
+recast,src/recast/mesh.zig,566,pub,canRemoveVertex,C,public helper; needs enclosing-stage context,maybe,pub fn canRemoveVertex(
+recast,src/recast/mesh.zig,684,priv,removeVertex,D,lifecycle/dispatch or allocator-driven state,no,fn removeVertex(
+recast,src/recast/mesh.zig,993,pub,buildPolyMesh,B,region-partitioned pipeline state (run prereq chain once),maybe,pub fn buildPolyMesh(
+recast,src/recast/mesh.zig,1256,pub,mergePolyMeshes,B,region-partitioned pipeline state (run prereq chain once),maybe,pub fn mergePolyMeshes(
+recast,src/recast/mesh.zig,1385,pub,copyPolyMesh,C,public helper; needs enclosing-stage context,maybe,pub fn copyPolyMesh(
+recast,src/recast/polymesh.zig,17,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init(allocator: std.mem.Allocator) Self 
+recast,src/recast/polymesh.zig,29,pub,deinit,D,lifecycle/dispatch or allocator-driven state,no, pub fn deinit(self: *Self) void 
+recast,src/recast/polymesh.zig,52,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init(allocator: std.mem.Allocator) Self 
+recast,src/recast/polymesh.zig,68,pub,deinit,D,lifecycle/dispatch or allocator-driven state,no, pub fn deinit(self: *Self) void 
+recast,src/recast/polymesh.zig,98,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init(allocator: std.mem.Allocator) Self 
+recast,src/recast/polymesh.zig,119,pub,deinit,D,lifecycle/dispatch or allocator-driven state,no, pub fn deinit(self: *Self) void 
+recast,src/recast/polymesh.zig,129,pub,vertCount,A,plain value/slice inputs,maybe, pub fn vertCount(self: *const Self) usize 
+recast,src/recast/polymesh.zig,132,pub,polyCount,C,public helper; needs enclosing-stage context,maybe, pub fn polyCount(self: *const Self) usize 
+recast,src/recast/polymesh.zig,149,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init(allocator: std.mem.Allocator) Self 
+recast,src/recast/polymesh.zig,161,pub,deinit,D,lifecycle/dispatch or allocator-driven state,no, pub fn deinit(self: *Self) void 
+recast,src/recast/polymesh.zig,168,pub,vertCount,A,plain value/slice inputs,maybe, pub fn vertCount(self: *const Self) usize 
+recast,src/recast/polymesh.zig,171,pub,triCount,A,plain value/slice inputs,maybe, pub fn triCount(self: *const Self) usize 
+recast,src/recast/polymesh.zig,197,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init(allocator: std.mem.Allocator) Self 
+recast,src/recast/polymesh.zig,218,pub,deinit,D,lifecycle/dispatch or allocator-driven state,no, pub fn deinit(self: *Self) void 
+recast,src/recast/polymesh.zig,234,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init(allocator: std.mem.Allocator) Self 
+recast,src/recast/polymesh.zig,242,pub,deinit,D,lifecycle/dispatch or allocator-driven state,no, pub fn deinit(self: *Self) void 
+recast,src/recast/polymesh.zig,251,pub,layerCount,C,public helper; needs enclosing-stage context,maybe, pub fn layerCount(self: *const Self) usize 
+recast,src/recast/rasterization.zig,20,priv,overlapBounds,A,plain value/slice inputs,maybe,fn overlapBounds(amin: Vec3; amax: Vec3; bmin: Vec3; bmax: Vec3) bool 
+recast,src/recast/rasterization.zig,33,pub,rcAddSpan,C,public helper; needs enclosing-stage context,maybe,pub fn rcAddSpan(
+recast,src/recast/rasterization.zig,53,priv,addSpan,D,lifecycle/dispatch or allocator-driven state,no,fn addSpan(
+recast,src/recast/rasterization.zig,126,pub,dividePoly,C,public helper; needs enclosing-stage context,maybe,pub fn dividePoly(
+recast,src/recast/rasterization.zig,200,priv,rasterizeTri,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn rasterizeTri(
+recast,src/recast/rasterization.zig,370,pub,rasterizeTriangle,B,region-partitioned pipeline state (run prereq chain once),maybe,pub fn rasterizeTriangle(
+recast,src/recast/rasterization.zig,404,pub,rasterizeTriangles,B,region-partitioned pipeline state (run prereq chain once),maybe,pub fn rasterizeTriangles(
+recast,src/recast/rasterization.zig,454,pub,rasterizeTrianglesU16,B,region-partitioned pipeline state (run prereq chain once),maybe,pub fn rasterizeTrianglesU16(
+recast,src/recast/rasterization.zig,500,pub,rasterizeTrianglesFlat,B,region-partitioned pipeline state (run prereq chain once),maybe,pub fn rasterizeTrianglesFlat(
+recast,src/recast/region.zig,31,priv,paintRectRegion,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn paintRectRegion(
+recast,src/recast/region.zig,62,priv,calculateDistanceField,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn calculateDistanceField(
+recast,src/recast/region.zig,246,priv,boxBlur,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn boxBlur(
+recast,src/recast/region.zig,311,priv,floodRegion,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn floodRegion(
+recast,src/recast/region.zig,409,priv,expandRegions,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn expandRegions(
+recast,src/recast/region.zig,520,priv,sortCellsByLevel,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn sortCellsByLevel(
+recast,src/recast/region.zig,569,priv,appendStacks,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn appendStacks(
+recast,src/recast/region.zig,590,pub,buildDistanceField,B,region-partitioned pipeline state (run prereq chain once),maybe,pub fn buildDistanceField(
+recast,src/recast/region.zig,630,priv,removeAdjacentNeighbours,D,lifecycle/dispatch or allocator-driven state,no,fn removeAdjacentNeighbours(reg: *Region) void 
+recast,src/recast/region.zig,644,priv,replaceNeighbour,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn replaceNeighbour(reg: *Region; old_id: u16; new_id: u16) void 
+recast,src/recast/region.zig,663,priv,canMergeWithRegion,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn canMergeWithRegion(reg_a: *const Region; reg_b: *const Region) bool 
+recast,src/recast/region.zig,679,priv,mergeRegions,D,lifecycle/dispatch or allocator-driven state,no,fn mergeRegions(reg_a: *Region; reg_b: *Region; allocator: std.mem.Allocator) !bool 
+recast,src/recast/region.zig,738,priv,isRegionConnectedToBorder,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn isRegionConnectedToBorder(reg: *const Region) bool 
+recast,src/recast/region.zig,746,priv,isSolidEdge,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn isSolidEdge(
+recast,src/recast/region.zig,766,priv,walkContour,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn walkContour(
+recast,src/recast/region.zig,850,priv,mergeAndFilterRegions,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn mergeAndFilterRegions(
+recast,src/recast/region.zig,1088,pub,buildRegions,B,region-partitioned pipeline state (run prereq chain once),maybe,pub fn buildRegions(
+recast,src/recast/region.zig,1240,pub,buildRegionsMonotone,B,region-partitioned pipeline state (run prereq chain once),maybe,pub fn buildRegionsMonotone(
+recast,src/recast/region.zig,1403,priv,init,D,lifecycle/dispatch or allocator-driven state,no, fn init(allocator: std.mem.Allocator; region_id: u16) !Region 
+recast,src/recast/region.zig,1419,priv,deinit,D,lifecycle/dispatch or allocator-driven state,no, fn deinit(self: *Region) void 
+recast,src/recast/region.zig,1428,priv,addUniqueConnection,D,lifecycle/dispatch or allocator-driven state,no,fn addUniqueConnection(reg: *Region; n: i32) !void 
+recast,src/recast/region.zig,1436,priv,addUniqueFloorRegion,D,lifecycle/dispatch or allocator-driven state,no,fn addUniqueFloorRegion(reg: *Region; n: i32) !void 
+recast,src/recast/region.zig,1444,priv,mergeAndFilterLayerRegions,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn mergeAndFilterLayerRegions(
+recast,src/recast/region.zig,1644,pub,buildLayerRegions,B,region-partitioned pipeline state (run prereq chain once),maybe,pub fn buildLayerRegions(
+detour,src/detour/builder.zig,92,priv,compareItemX,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn compareItemX(_: void; a: BVItem; b: BVItem) bool 
+detour,src/detour/builder.zig,97,priv,compareItemY,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn compareItemY(_: void; a: BVItem; b: BVItem) bool 
+detour,src/detour/builder.zig,102,priv,compareItemZ,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn compareItemZ(_: void; a: BVItem; b: BVItem) bool 
+detour,src/detour/builder.zig,107,priv,calcExtends,A,plain value/slice inputs,maybe,fn calcExtends(items: []const BVItem; imin: usize; imax: usize; bmin: *[3]u16; bmax: *[3]u
+detour,src/detour/builder.zig,137,priv,subdivide,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn subdivide(items: []BVItem; imin: usize; imax: usize; cur_node: *usize; nodes: []BVNode)
+detour,src/detour/builder.zig,180,priv,createBVTree,D,lifecycle/dispatch or allocator-driven state,no,fn createBVTree(params: *const NavMeshCreateParams; nodes: []BVNode; items: []BVItem) usiz
+detour,src/detour/builder.zig,260,priv,classifyOffMeshPoint,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn classifyOffMeshPoint(pt: *const [3]f32; bmin: *const [3]f32; bmax: *const [3]f32) u8 
+detour,src/detour/builder.zig,295,pub,createNavMeshData,D,lifecycle/dispatch or allocator-driven state,no,pub fn createNavMeshData(
+detour,src/detour/builder.zig,863,pub,navMeshHeaderSwapEndian,C,public helper; needs enclosing-stage context,maybe,pub fn navMeshHeaderSwapEndian(data: []u8) bool 
+detour,src/detour/builder.zig,911,pub,navMeshDataSwapEndian,C,public helper; needs enclosing-stage context,maybe,pub fn navMeshDataSwapEndian(data: []u8) bool 
+detour,src/detour/builder.zig,917,priv,f,C,internal to enclosing stage (drive via stage or reconstruct args),maybe, fn f(n: usize) usize 
+detour,src/detour/common.zig,28,pub,isSuccess,C,public helper; needs enclosing-stage context,maybe, pub fn isSuccess(self: Status) bool 
+detour,src/detour/common.zig,32,pub,isFailure,C,public helper; needs enclosing-stage context,maybe, pub fn isFailure(self: Status) bool 
+detour,src/detour/common.zig,36,pub,isInProgress,C,public helper; needs enclosing-stage context,maybe, pub fn isInProgress(self: Status) bool 
+detour,src/detour/common.zig,40,pub,ok,C,public helper; needs enclosing-stage context,maybe, pub fn ok() Status 
+detour,src/detour/common.zig,44,pub,fail,C,public helper; needs enclosing-stage context,maybe, pub fn fail() Status 
+detour,src/detour/common.zig,118,priv,triArea2D,A,plain value/slice inputs,maybe,fn triArea2D(a: *const [3]f32; b: *const [3]f32; c: *const [3]f32) f32 
+detour,src/detour/common.zig,133,pub,randomPointInConvexPoly,C,public helper; needs enclosing-stage context,maybe,pub fn randomPointInConvexPoly(pts: []const f32; npts: i32; areas: []f32; s: f32; t: f32; 
+detour,src/detour/navmesh.zig,31,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init() Poly 
+detour,src/detour/navmesh.zig,42,pub,setArea,D,lifecycle/dispatch or allocator-driven state,no, pub fn setArea(self: *Poly; area: u8) void 
+detour,src/detour/navmesh.zig,46,pub,setType,D,lifecycle/dispatch or allocator-driven state,no, pub fn setType(self: *Poly; poly_type: common.PolyType) void 
+detour,src/detour/navmesh.zig,51,pub,getArea,D,lifecycle/dispatch or allocator-driven state,no, pub fn getArea(self: *const Poly) u8 
+detour,src/detour/navmesh.zig,55,pub,getType,D,lifecycle/dispatch or allocator-driven state,no, pub fn getType(self: *const Poly) common.PolyType 
+detour,src/detour/navmesh.zig,67,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init() PolyDetail 
+detour,src/detour/navmesh.zig,86,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init() Link 
+detour,src/detour/navmesh.zig,104,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init() BVNode 
+detour,src/detour/navmesh.zig,122,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init() OffMeshConnection 
+detour,src/detour/navmesh.zig,158,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init() MeshHeader 
+detour,src/detour/navmesh.zig,204,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init(allocator: std.mem.Allocator) MeshTile 
+detour,src/detour/navmesh.zig,225,pub,deinit,D,lifecycle/dispatch or allocator-driven state,no, pub fn deinit(self: *MeshTile) void 
+detour,src/detour/navmesh.zig,241,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init() NavMeshParams 
+detour,src/detour/navmesh.zig,289,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init(allocator: std.mem.Allocator; params: NavMeshParams) !Self 
+detour,src/detour/navmesh.zig,331,pub,deinit,D,lifecycle/dispatch or allocator-driven state,no, pub fn deinit(self: *Self) void 
+detour,src/detour/navmesh.zig,340,pub,encodePolyId,C,public helper; needs enclosing-stage context,maybe, pub fn encodePolyId(self: *const Self; salt: u32; it: u32; ip: u32) PolyRef 
+detour,src/detour/navmesh.zig,347,pub,decodePolyId,C,public helper; needs enclosing-stage context,maybe, pub fn decodePolyId(self: *const Self; ref: PolyRef) struct 
+detour,src/detour/navmesh.zig,365,pub,calcTileLoc,A,plain value/slice inputs,maybe, pub fn calcTileLoc(self: *const Self; pos: Vec3) struct 
+detour,src/detour/navmesh.zig,396,priv,calcSlabEndPoints,A,plain value/slice inputs,maybe, fn calcSlabEndPoints(va: *const [3]f32; vb: *const [3]f32; bmin: *[2]f32; bmax: *[2]f32; 
+detour,src/detour/navmesh.zig,456,pub,getPolyRefBase,D,lifecycle/dispatch or allocator-driven state,no, pub fn getPolyRefBase(self: *const Self; tile: *const MeshTile) PolyRef 
+detour,src/detour/navmesh.zig,463,priv,getTileIndex,D,lifecycle/dispatch or allocator-driven state,no, fn getTileIndex(self: *const Self; tile: *const MeshTile) usize 
+detour,src/detour/navmesh.zig,470,pub,getTileRef,D,lifecycle/dispatch or allocator-driven state,no, pub fn getTileRef(self: *const Self; tile: *const MeshTile) TileRef 
+detour,src/detour/navmesh.zig,477,priv,allocLink,D,lifecycle/dispatch or allocator-driven state,no, fn allocLink(_: *Self; tile: *MeshTile) u32 
+detour,src/detour/navmesh.zig,487,priv,freeLink,D,lifecycle/dispatch or allocator-driven state,no, fn freeLink(self: *Self; tile: *MeshTile; link_idx: u32) void 
+detour,src/detour/navmesh.zig,494,priv,connectIntLinks,C,internal to enclosing stage (drive via stage or reconstruct args),maybe, fn connectIntLinks(self: *Self; tile: *MeshTile) void 
+detour,src/detour/navmesh.zig,529,pub,getTileAt,D,lifecycle/dispatch or allocator-driven state,no, pub fn getTileAt(self: *const Self; x: i32; y: i32; layer: i32) ?*MeshTile 
+detour,src/detour/navmesh.zig,544,pub,getTilesAt,D,lifecycle/dispatch or allocator-driven state,no, pub fn getTilesAt(self: *const Self; x: i32; y: i32; tiles: []*MeshTile; max_tiles: usize
+detour,src/detour/navmesh.zig,562,pub,getNeighbourTilesAt,D,lifecycle/dispatch or allocator-driven state,no, pub fn getNeighbourTilesAt(self: *const Self; x: i32; y: i32; side: i32; tiles: []*MeshTi
+detour,src/detour/navmesh.zig,592,priv,findConnectingPolys,C,internal to enclosing stage (drive via stage or reconstruct args),maybe, fn findConnectingPolys(
+detour,src/detour/navmesh.zig,653,pub,getTileAndPolyByRefUnsafe,D,lifecycle/dispatch or allocator-driven state,no, pub fn getTileAndPolyByRefUnsafe(
+detour,src/detour/navmesh.zig,664,pub,getTileAndPolyByRef,D,lifecycle/dispatch or allocator-driven state,no, pub fn getTileAndPolyByRef(
+detour,src/detour/navmesh.zig,684,pub,isValidPolyRef,C,public helper; needs enclosing-stage context,maybe, pub fn isValidPolyRef(self: *const Self; ref: PolyRef) bool 
+detour,src/detour/navmesh.zig,693,pub,getOffMeshConnectionByRef,D,lifecycle/dispatch or allocator-driven state,no, pub fn getOffMeshConnectionByRef(self: *const Self; ref: PolyRef) ?*const OffMeshConnecti
+detour,src/detour/navmesh.zig,710,pub,setPolyFlags,D,lifecycle/dispatch or allocator-driven state,no, pub fn setPolyFlags(self: *Self; ref: PolyRef; flags: u16) !void 
+detour,src/detour/navmesh.zig,716,pub,getPolyFlags,D,lifecycle/dispatch or allocator-driven state,no, pub fn getPolyFlags(self: *const Self; ref: PolyRef) !u16 
+detour,src/detour/navmesh.zig,722,pub,setPolyArea,D,lifecycle/dispatch or allocator-driven state,no, pub fn setPolyArea(self: *Self; ref: PolyRef; area: u8) !void 
+detour,src/detour/navmesh.zig,728,pub,getPolyArea,D,lifecycle/dispatch or allocator-driven state,no, pub fn getPolyArea(self: *const Self; ref: PolyRef) !u8 
+detour,src/detour/navmesh.zig,735,priv,queryPolygonsInTile,C,internal to enclosing stage (drive via stage or reconstruct args),maybe, fn queryPolygonsInTile(
+detour,src/detour/navmesh.zig,842,priv,findNearestPolyInTile,C,internal to enclosing stage (drive via stage or reconstruct args),maybe, fn findNearestPolyInTile(
+detour,src/detour/navmesh.zig,904,priv,findNearestPolyInDirection,C,internal to enclosing stage (drive via stage or reconstruct args),maybe, fn findNearestPolyInDirection(
+detour,src/detour/navmesh.zig,984,priv,connectExtLinks,C,internal to enclosing stage (drive via stage or reconstruct args),maybe, fn connectExtLinks(self: *Self; tile: *MeshTile; target: ?*MeshTile; side: i32) void 
+detour,src/detour/navmesh.zig,1050,priv,unconnectLinks,C,internal to enclosing stage (drive via stage or reconstruct args),maybe, fn unconnectLinks(self: *Self; tile: *MeshTile; target: *MeshTile) void 
+detour,src/detour/navmesh.zig,1080,pub,addTile,D,lifecycle/dispatch or allocator-driven state,no, pub fn addTile(
+detour,src/detour/navmesh.zig,1255,priv,baseOffMeshLinks,C,internal to enclosing stage (drive via stage or reconstruct args),maybe, fn baseOffMeshLinks(self: *Self; tile: *MeshTile) void 
+detour,src/detour/navmesh.zig,1340,priv,connectExtOffMeshLinks,C,internal to enclosing stage (drive via stage or reconstruct args),maybe, fn connectExtOffMeshLinks(self: *Self; tile: *MeshTile; target: *MeshTile; side: i32) voi
+detour,src/detour/navmesh.zig,1422,pub,removeTile,D,lifecycle/dispatch or allocator-driven state,no, pub fn removeTile(self: *Self; ref: TileRef) !struct 
+detour,src/detour/navmesh.zig,1578,priv,getPolyHeightInternal,D,lifecycle/dispatch or allocator-driven state,no, fn getPolyHeightInternal(
+detour,src/detour/navmesh.zig,1648,pub,getPolyHeight,D,lifecycle/dispatch or allocator-driven state,no, pub fn getPolyHeight(
+detour,src/detour/navmesh.zig,1669,pub,closestPointOnPoly,A,plain value/slice inputs,maybe, pub fn closestPointOnPoly(
+detour,src/detour/navmesh.zig,1713,pub,closestPointOnPolyBoundary,A,plain value/slice inputs,maybe, pub fn closestPointOnPolyBoundary(
+detour,src/detour/navmesh.zig,1763,pub,getPortalPoints,D,lifecycle/dispatch or allocator-driven state,no, pub fn getPortalPoints(
+detour,src/detour/navmesh.zig,1845,pub,getEdgeMidPoint,D,lifecycle/dispatch or allocator-driven state,no, pub fn getEdgeMidPoint(
+detour,src/detour/navmesh.zig,1868,pub,getOffMeshConnectionPolyEndPoints,D,lifecycle/dispatch or allocator-driven state,no, pub fn getOffMeshConnectionPolyEndPoints(
+detour,src/detour/navmesh.zig,1923,pub,getTileStateSize,D,lifecycle/dispatch or allocator-driven state,no, pub fn getTileStateSize(self: *const Self; tile: *const MeshTile) usize 
+detour,src/detour/navmesh.zig,1936,pub,storeTileState,C,public helper; needs enclosing-stage context,maybe, pub fn storeTileState(self: *const Self; tile: *const MeshTile; data: []u8) !void 
+detour,src/detour/navmesh.zig,1975,pub,restoreTileState,C,public helper; needs enclosing-stage context,maybe, pub fn restoreTileState(self: *const Self; tile: *MeshTile; data: []const u8) !void 
+detour,src/detour/query.zig,22,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init() QueryFilter 
+detour,src/detour/query.zig,36,pub,passFilter,C,public helper; needs enclosing-stage context,maybe, pub fn passFilter(self: *const QueryFilter; ref: PolyRef; tile: *const MeshTile; poly: *c
+detour,src/detour/query.zig,50,pub,getCost,D,lifecycle/dispatch or allocator-driven state,no, pub fn getCost(
+detour,src/detour/query.zig,124,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init(path_buffer: []PolyRef) RaycastHit 
+detour,src/detour/query.zig,178,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init() Node 
+detour,src/detour/query.zig,203,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init(allocator: std.mem.Allocator; max_nodes: usize; hash_size: usize) !*Self 
+detour,src/detour/query.zig,230,pub,deinit,D,lifecycle/dispatch or allocator-driven state,no, pub fn deinit(self: *Self) void 
+detour,src/detour/query.zig,237,pub,clear,C,public helper; needs enclosing-stage context,maybe, pub fn clear(self: *Self) void 
+detour,src/detour/query.zig,243,pub,getNode,D,lifecycle/dispatch or allocator-driven state,no, pub fn getNode(self: *Self; id: PolyRef; state: u8) ?*Node 
+detour,src/detour/query.zig,273,pub,findNode,C,public helper; needs enclosing-stage context,maybe, pub fn findNode(self: *Self; id: PolyRef; state: u8) ?*Node 
+detour,src/detour/query.zig,287,pub,findNodes,C,public helper; needs enclosing-stage context,maybe, pub fn findNodes(self: *Self; id: PolyRef; nodes: []*Node; max_nodes: usize) usize 
+detour,src/detour/query.zig,303,pub,getNodeIdx,D,lifecycle/dispatch or allocator-driven state,no, pub fn getNodeIdx(self: *const Self; node: ?*const Node) u32 
+detour,src/detour/query.zig,310,pub,getNodeAtIdx,D,lifecycle/dispatch or allocator-driven state,no, pub fn getNodeAtIdx(self: *Self; idx: u32) ?*Node 
+detour,src/detour/query.zig,316,pub,getNodeAtIdxConst,D,lifecycle/dispatch or allocator-driven state,no, pub fn getNodeAtIdxConst(self: *const Self; idx: u32) ?*const Node 
+detour,src/detour/query.zig,322,pub,getNodeCount,D,lifecycle/dispatch or allocator-driven state,no, pub fn getNodeCount(self: *const Self) usize 
+detour,src/detour/query.zig,327,pub,getMaxNodes,D,lifecycle/dispatch or allocator-driven state,no, pub fn getMaxNodes(self: *const Self) usize 
+detour,src/detour/query.zig,332,pub,getHashSize,D,lifecycle/dispatch or allocator-driven state,no, pub fn getHashSize(self: *const Self) usize 
+detour,src/detour/query.zig,352,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init(allocator: std.mem.Allocator; capacity: usize) !*Self 
+detour,src/detour/query.zig,369,pub,deinit,D,lifecycle/dispatch or allocator-driven state,no, pub fn deinit(self: *Self) void 
+detour,src/detour/query.zig,374,pub,clear,C,public helper; needs enclosing-stage context,maybe, pub fn clear(self: *Self) void 
+detour,src/detour/query.zig,378,pub,empty,C,public helper; needs enclosing-stage context,maybe, pub fn empty(self: *const Self) bool 
+detour,src/detour/query.zig,382,pub,top,C,public helper; needs enclosing-stage context,maybe, pub fn top(self: *const Self) ?*Node 
+detour,src/detour/query.zig,387,pub,pop,C,public helper; needs enclosing-stage context,maybe, pub fn pop(self: *Self) ?*Node 
+detour,src/detour/query.zig,398,pub,push,C,public helper; needs enclosing-stage context,maybe, pub fn push(self: *Self; node: *Node) void 
+detour,src/detour/query.zig,403,pub,modify,C,public helper; needs enclosing-stage context,maybe, pub fn modify(self: *Self; node: *Node) void 
+detour,src/detour/query.zig,412,pub,getCapacity,D,lifecycle/dispatch or allocator-driven state,no, pub fn getCapacity(self: *const Self) usize 
+detour,src/detour/query.zig,416,priv,bubbleUp,C,internal to enclosing stage (drive via stage or reconstruct args),maybe, fn bubbleUp(self: *Self; i_input: usize; node: *Node) void 
+detour,src/detour/query.zig,432,priv,trickleDown,C,internal to enclosing stage (drive via stage or reconstruct args),maybe, fn trickleDown(self: *Self; i_input: usize; node: *Node) void 
+detour,src/detour/query.zig,473,priv,init,D,lifecycle/dispatch or allocator-driven state,no, fn init() QueryData 
+detour,src/detour/query.zig,500,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init(allocator: std.mem.Allocator) !*Self 
+detour,src/detour/query.zig,513,pub,deinit,D,lifecycle/dispatch or allocator-driven state,no, pub fn deinit(self: *Self) void 
+detour,src/detour/query.zig,521,pub,initQuery,D,lifecycle/dispatch or allocator-driven state,no, pub fn initQuery(self: *Self; nav: *const NavMesh; max_nodes: usize) !void 
+detour,src/detour/query.zig,563,pub,getAttachedNavMesh,D,lifecycle/dispatch or allocator-driven state,no, pub fn getAttachedNavMesh(self: *const Self) ?*const NavMesh 
+detour,src/detour/query.zig,568,pub,getNodePool,D,lifecycle/dispatch or allocator-driven state,no, pub fn getNodePool(self: *const Self) ?*NodePool 
+detour,src/detour/query.zig,573,pub,isValidPolyRef,C,public helper; needs enclosing-stage context,maybe, pub fn isValidPolyRef(self: *const Self; ref: PolyRef; filter: *const QueryFilter) bool 
+detour,src/detour/query.zig,585,pub,isInClosedList,C,public helper; needs enclosing-stage context,maybe, pub fn isInClosedList(self: *const Self; ref: PolyRef) bool 
+detour,src/detour/query.zig,599,pub,queryPolygons,C,public helper; needs enclosing-stage context,maybe, pub fn queryPolygons(
+detour,src/detour/query.zig,644,priv,queryPolygonsInTile,C,internal to enclosing stage (drive via stage or reconstruct args),maybe, fn queryPolygonsInTile(
+detour,src/detour/query.zig,773,pub,findPath,C,public helper; needs enclosing-stage context,maybe, pub fn findPath(
+detour,src/detour/query.zig,995,priv,getPathToNode,D,lifecycle/dispatch or allocator-driven state,no, fn getPathToNode(
+detour,src/detour/query.zig,1041,pub,findNearestPoly,C,public helper; needs enclosing-stage context,maybe, pub fn findNearestPoly(
+detour,src/detour/query.zig,1106,pub,getPortalPoints,D,lifecycle/dispatch or allocator-driven state,no, pub fn getPortalPoints(
+detour,src/detour/query.zig,1134,pub,findStraightPath,C,public helper; needs enclosing-stage context,maybe, pub fn findStraightPath(
+detour,src/detour/query.zig,1350,pub,moveAlongSurface,C,public helper; needs enclosing-stage context,maybe, pub fn moveAlongSurface(
+detour,src/detour/query.zig,1552,pub,raycast,C,public helper; needs enclosing-stage context,maybe, pub fn raycast(
+detour,src/detour/query.zig,1821,pub,findDistanceToWall,C,public helper; needs enclosing-stage context,maybe, pub fn findDistanceToWall(
+detour,src/detour/query.zig,2038,pub,findLocalNeighbourhood,C,public helper; needs enclosing-stage context,maybe, pub fn findLocalNeighbourhood(
+detour,src/detour/query.zig,2236,pub,getPolyHeight,D,lifecycle/dispatch or allocator-driven state,no, pub fn getPolyHeight(
+detour,src/detour/query.zig,2290,pub,findRandomPoint,C,public helper; needs enclosing-stage context,maybe, pub fn findRandomPoint(
+detour,src/detour/query.zig,2371,pub,findRandomPointAroundCircle,C,public helper; needs enclosing-stage context,maybe, pub fn findRandomPointAroundCircle(
+detour,src/detour/query.zig,2531,pub,closestPointOnPoly,A,plain value/slice inputs,maybe, pub fn closestPointOnPoly(
+detour,src/detour/query.zig,2561,pub,closestPointOnPolyBoundary,A,plain value/slice inputs,maybe, pub fn closestPointOnPolyBoundary(
+detour,src/detour/query.zig,2602,pub,findPolysAroundCircle,C,public helper; needs enclosing-stage context,maybe, pub fn findPolysAroundCircle(
+detour,src/detour/query.zig,2779,pub,findPolysAroundShape,C,public helper; needs enclosing-stage context,maybe, pub fn findPolysAroundShape(
+detour,src/detour/query.zig,2959,pub,initSlicedFindPath,D,lifecycle/dispatch or allocator-driven state,no, pub fn initSlicedFindPath(
+detour,src/detour/query.zig,3034,pub,updateSlicedFindPath,D,lifecycle/dispatch or allocator-driven state,no, pub fn updateSlicedFindPath(self: *Self; max_iter: u32; done_iters: ?*u32) common.Status 
+detour,src/detour/query.zig,3226,pub,finalizeSlicedFindPath,C,public helper; needs enclosing-stage context,maybe, pub fn finalizeSlicedFindPath(
+detour,src/detour/query.zig,3300,pub,finalizeSlicedFindPathPartial,C,public helper; needs enclosing-stage context,maybe, pub fn finalizeSlicedFindPathPartial(
+detour,src/detour/query.zig,3393,priv,appendVertex,C,internal to enclosing stage (drive via stage or reconstruct args),maybe, fn appendVertex(
+detour,src/detour/query.zig,3442,priv,appendPortals,C,internal to enclosing stage (drive via stage or reconstruct args),maybe, fn appendPortals(
+detour,src/detour/query.zig,3572,priv,insertInterval,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn insertInterval(ints: []SegInterval; nints: *usize; tmin: i16; tmax: i16; ref: PolyRef) 
+detour,src/detour/query.zig,3599,pub,getPolyWallSegments,D,lifecycle/dispatch or allocator-driven state,no,pub fn getPolyWallSegments(
+detour_crowd,src/detour_crowd/crowd.zig,74,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init() CrowdAgentParams 
+detour_crowd,src/detour_crowd/crowd.zig,125,priv,tween,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn tween(t: f32; t0: f32; t1: f32) f32 
+detour_crowd,src/detour_crowd/crowd.zig,130,priv,integrate,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn integrate(ag: *CrowdAgent; dt: f32) void 
+detour_crowd,src/detour_crowd/crowd.zig,150,priv,calcSmoothSteerDirection,A,plain value/slice inputs,maybe,fn calcSmoothSteerDirection(ag: *const CrowdAgent; dir: *[3]f32) void 
+detour_crowd,src/detour_crowd/crowd.zig,185,priv,calcStraightSteerDirection,A,plain value/slice inputs,maybe,fn calcStraightSteerDirection(ag: *const CrowdAgent; dir: *[3]f32) void 
+detour_crowd,src/detour_crowd/crowd.zig,197,priv,getDistanceToGoal,D,lifecycle/dispatch or allocator-driven state,no,fn getDistanceToGoal(ag: *const CrowdAgent; range: f32) f32 
+detour_crowd,src/detour_crowd/crowd.zig,217,priv,addNeighbour,D,lifecycle/dispatch or allocator-driven state,no,fn addNeighbour(idx: i32; dist: f32; neis: []CrowdNeighbour; nneis: usize) usize 
+detour_crowd,src/detour_crowd/crowd.zig,244,priv,overOffmeshConnection,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn overOffmeshConnection(ag: *const CrowdAgent; radius: f32) bool 
+detour_crowd,src/detour_crowd/crowd.zig,309,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init(
+detour_crowd,src/detour_crowd/crowd.zig,428,pub,deinit,D,lifecycle/dispatch or allocator-driven state,no, pub fn deinit(self: *Self) void 
+detour_crowd,src/detour_crowd/crowd.zig,443,pub,addAgent,D,lifecycle/dispatch or allocator-driven state,no, pub fn addAgent(self: *Self; pos: *const [3]f32; params: *const CrowdAgentParams) !i32 
+detour_crowd,src/detour_crowd/crowd.zig,505,pub,removeAgent,D,lifecycle/dispatch or allocator-driven state,no, pub fn removeAgent(self: *Self; idx: i32) void 
+detour_crowd,src/detour_crowd/crowd.zig,512,pub,requestMoveTarget,C,public helper; needs enclosing-stage context,maybe, pub fn requestMoveTarget(
+detour_crowd,src/detour_crowd/crowd.zig,538,pub,requestMoveVelocity,C,public helper; needs enclosing-stage context,maybe, pub fn requestMoveVelocity(self: *Self; idx: i32; vel: *const [3]f32) bool 
+detour_crowd,src/detour_crowd/crowd.zig,553,pub,resetMoveTarget,D,lifecycle/dispatch or allocator-driven state,no, pub fn resetMoveTarget(self: *Self; idx: i32) bool 
+detour_crowd,src/detour_crowd/crowd.zig,569,pub,getActiveAgents,D,lifecycle/dispatch or allocator-driven state,no, pub fn getActiveAgents(self: *Self; agents: []*CrowdAgent; max_agents: usize) usize 
+detour_crowd,src/detour_crowd/crowd.zig,582,pub,update,D,lifecycle/dispatch or allocator-driven state,no, pub fn update(self: *Self; dt: f32) !void 
+detour_crowd,src/detour_crowd/crowd.zig,586,pub,updateDebug,D,lifecycle/dispatch or allocator-driven state,no, pub fn updateDebug(self: *Self; dt: f32; debug: ?*CrowdAgentDebugInfo) !void 
+detour_crowd,src/detour_crowd/crowd.zig,1017,pub,getAgent,D,lifecycle/dispatch or allocator-driven state,no, pub fn getAgent(self: *const Self; idx: i32) ?*const CrowdAgent 
+detour_crowd,src/detour_crowd/crowd.zig,1023,pub,getEditableAgent,D,lifecycle/dispatch or allocator-driven state,no, pub fn getEditableAgent(self: *Self; idx: i32) ?*CrowdAgent 
+detour_crowd,src/detour_crowd/crowd.zig,1030,pub,updateAgentParameters,D,lifecycle/dispatch or allocator-driven state,no, pub fn updateAgentParameters(self: *Self; idx: i32; params: *const CrowdAgentParams) void
+detour_crowd,src/detour_crowd/crowd.zig,1036,pub,getAgentCount,D,lifecycle/dispatch or allocator-driven state,no, pub fn getAgentCount(self: *const Self) usize 
+detour_crowd,src/detour_crowd/crowd.zig,1041,pub,setObstacleAvoidanceParams,D,lifecycle/dispatch or allocator-driven state,no, pub fn setObstacleAvoidanceParams(
+detour_crowd,src/detour_crowd/crowd.zig,1052,pub,getObstacleAvoidanceParams,D,lifecycle/dispatch or allocator-driven state,no, pub fn getObstacleAvoidanceParams(self: *const Self; idx: usize) ?*const ObstacleAvoidanc
+detour_crowd,src/detour_crowd/crowd.zig,1060,pub,getFilter,D,lifecycle/dispatch or allocator-driven state,no, pub fn getFilter(self: *const Self; idx: usize) ?*const QueryFilter 
+detour_crowd,src/detour_crowd/crowd.zig,1068,pub,getPathQueueNavQuery,D,lifecycle/dispatch or allocator-driven state,no, pub fn getPathQueueNavQuery(self: *const Self) *const NavMeshQuery 
+detour_crowd,src/detour_crowd/crowd.zig,1073,pub,getEditableFilter,D,lifecycle/dispatch or allocator-driven state,no, pub fn getEditableFilter(self: *Self; idx: usize) ?*QueryFilter 
+detour_crowd,src/detour_crowd/crowd.zig,1081,pub,getQueryHalfExtents,D,lifecycle/dispatch or allocator-driven state,no, pub fn getQueryHalfExtents(self: *const Self) *const [3]f32 
+detour_crowd,src/detour_crowd/crowd.zig,1086,pub,getVelocitySampleCount,D,lifecycle/dispatch or allocator-driven state,no, pub fn getVelocitySampleCount(self: *const Self) usize 
+detour_crowd,src/detour_crowd/crowd.zig,1091,pub,getGrid,D,lifecycle/dispatch or allocator-driven state,no, pub fn getGrid(self: *const Self) *const ProximityGrid 
+detour_crowd,src/detour_crowd/crowd.zig,1096,pub,getPathQueue,D,lifecycle/dispatch or allocator-driven state,no, pub fn getPathQueue(self: *const Self) *const PathQueue 
+detour_crowd,src/detour_crowd/crowd.zig,1101,pub,getNavMeshQuery,D,lifecycle/dispatch or allocator-driven state,no, pub fn getNavMeshQuery(self: *const Self) *const NavMeshQuery 
+detour_crowd,src/detour_crowd/crowd.zig,1110,priv,getAgentIndex,D,lifecycle/dispatch or allocator-driven state,no, fn getAgentIndex(self: *const Self; agent: *const CrowdAgent) i32 
+detour_crowd,src/detour_crowd/crowd.zig,1119,priv,addToPathQueue,D,lifecycle/dispatch or allocator-driven state,no, fn addToPathQueue(
+detour_crowd,src/detour_crowd/crowd.zig,1153,priv,addToOptQueue,D,lifecycle/dispatch or allocator-driven state,no, fn addToOptQueue(
+detour_crowd,src/detour_crowd/crowd.zig,1187,priv,requestMoveTargetReplan,C,internal to enclosing stage (drive via stage or reconstruct args),maybe, fn requestMoveTargetReplan(self: *Self; idx: i32; ref: PolyRef; pos: *const [3]f32) bool 
+detour_crowd,src/detour_crowd/crowd.zig,1206,priv,checkPathValidity,C,internal to enclosing stage (drive via stage or reconstruct args),maybe, fn checkPathValidity(self: *Self; agents: []*CrowdAgent; dt: f32) !void 
+detour_crowd,src/detour_crowd/crowd.zig,1311,priv,updateMoveRequest,D,lifecycle/dispatch or allocator-driven state,no, fn updateMoveRequest(self: *Self; _: f32) void 
+detour_crowd,src/detour_crowd/crowd.zig,1481,priv,updateTopologyOptimization,D,lifecycle/dispatch or allocator-driven state,no, fn updateTopologyOptimization(self: *Self; agents: []*CrowdAgent; dt: f32) void 
+detour_crowd,src/detour_crowd/local_boundary.zig,30,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init() Self 
+detour_crowd,src/detour_crowd/local_boundary.zig,41,pub,reset,D,lifecycle/dispatch or allocator-driven state,no, pub fn reset(self: *Self) void 
+detour_crowd,src/detour_crowd/local_boundary.zig,48,pub,getCenter,D,lifecycle/dispatch or allocator-driven state,no, pub fn getCenter(self: *const Self) *const [3]f32 
+detour_crowd,src/detour_crowd/local_boundary.zig,53,pub,getSegmentCount,D,lifecycle/dispatch or allocator-driven state,no, pub fn getSegmentCount(self: *const Self) usize 
+detour_crowd,src/detour_crowd/local_boundary.zig,58,pub,getSegment,D,lifecycle/dispatch or allocator-driven state,no, pub fn getSegment(self: *const Self; i: usize) *const [6]f32 
+detour_crowd,src/detour_crowd/local_boundary.zig,63,priv,addSegment,D,lifecycle/dispatch or allocator-driven state,no, fn addSegment(self: *Self; dist: f32; s: *const [6]f32) void 
+detour_crowd,src/detour_crowd/local_boundary.zig,103,pub,update,D,lifecycle/dispatch or allocator-driven state,no, pub fn update(
+detour_crowd,src/detour_crowd/local_boundary.zig,184,pub,isValid,C,public helper; needs enclosing-stage context,maybe, pub fn isValid(self: *const Self; navquery: *const NavMeshQuery; filter: *const QueryFilt
+detour_crowd,src/detour_crowd/obstacle_avoidance.zig,40,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init() ObstacleAvoidanceParams 
+detour_crowd,src/detour_crowd/obstacle_avoidance.zig,70,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init(allocator: std.mem.Allocator; max_samples: usize) !ObstacleAvoidanceDebugData
+detour_crowd,src/detour_crowd/obstacle_avoidance.zig,85,pub,deinit,D,lifecycle/dispatch or allocator-driven state,no, pub fn deinit(self: *ObstacleAvoidanceDebugData) void 
+detour_crowd,src/detour_crowd/obstacle_avoidance.zig,95,pub,reset,D,lifecycle/dispatch or allocator-driven state,no, pub fn reset(self: *ObstacleAvoidanceDebugData) void 
+detour_crowd,src/detour_crowd/obstacle_avoidance.zig,100,pub,normalizeSamples,A,plain value/slice inputs,maybe, pub fn normalizeSamples(self: *ObstacleAvoidanceDebugData) void 
+detour_crowd,src/detour_crowd/obstacle_avoidance.zig,109,priv,normalizeArray,A,plain value/slice inputs,maybe,fn normalizeArray(arr: []f32; n: usize) void 
+detour_crowd,src/detour_crowd/obstacle_avoidance.zig,122,priv,sweepCircleCircle,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn sweepCircleCircle(
+detour_crowd,src/detour_crowd/obstacle_avoidance.zig,150,priv,isectRaySeg,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn isectRaySeg(
+detour_crowd,src/detour_crowd/obstacle_avoidance.zig,172,priv,normalize2D,A,plain value/slice inputs,maybe,fn normalize2D(v: *[3]f32) void 
+detour_crowd,src/detour_crowd/obstacle_avoidance.zig,181,priv,rotate2D,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn rotate2D(dest: *[3]f32; v: *const [3]f32; ang: f32) void 
+detour_crowd,src/detour_crowd/obstacle_avoidance.zig,209,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init(allocator: std.mem.Allocator; max_circles: usize; max_segments: usize) !Self 
+detour_crowd,src/detour_crowd/obstacle_avoidance.zig,232,pub,deinit,D,lifecycle/dispatch or allocator-driven state,no, pub fn deinit(self: *Self) void 
+detour_crowd,src/detour_crowd/obstacle_avoidance.zig,238,pub,reset,D,lifecycle/dispatch or allocator-driven state,no, pub fn reset(self: *Self) void 
+detour_crowd,src/detour_crowd/obstacle_avoidance.zig,244,pub,addCircle,D,lifecycle/dispatch or allocator-driven state,no, pub fn addCircle(
+detour_crowd,src/detour_crowd/obstacle_avoidance.zig,263,pub,addSegment,D,lifecycle/dispatch or allocator-driven state,no, pub fn addSegment(self: *Self; p: *const [3]f32; q: *const [3]f32) void 
+detour_crowd,src/detour_crowd/obstacle_avoidance.zig,275,pub,getObstacleCircleCount,D,lifecycle/dispatch or allocator-driven state,no, pub fn getObstacleCircleCount(self: *const Self) usize 
+detour_crowd,src/detour_crowd/obstacle_avoidance.zig,280,pub,getObstacleCircle,D,lifecycle/dispatch or allocator-driven state,no, pub fn getObstacleCircle(self: *const Self; i: usize) ?*const ObstacleCircle 
+detour_crowd,src/detour_crowd/obstacle_avoidance.zig,286,pub,getObstacleSegmentCount,D,lifecycle/dispatch or allocator-driven state,no, pub fn getObstacleSegmentCount(self: *const Self) usize 
+detour_crowd,src/detour_crowd/obstacle_avoidance.zig,291,pub,getObstacleSegment,D,lifecycle/dispatch or allocator-driven state,no, pub fn getObstacleSegment(self: *const Self; i: usize) ?*const ObstacleSegment 
+detour_crowd,src/detour_crowd/obstacle_avoidance.zig,297,priv,prepare,C,internal to enclosing stage (drive via stage or reconstruct args),maybe, fn prepare(self: *Self; pos: *const [3]f32; dvel: *const [3]f32) void 
+detour_crowd,src/detour_crowd/obstacle_avoidance.zig,334,priv,processSample,C,internal to enclosing stage (drive via stage or reconstruct args),maybe, fn processSample(
+detour_crowd,src/detour_crowd/obstacle_avoidance.zig,468,pub,sampleVelocityGrid,C,public helper; needs enclosing-stage context,maybe, pub fn sampleVelocityGrid(
+detour_crowd,src/detour_crowd/obstacle_avoidance.zig,529,pub,sampleVelocityAdaptive,C,public helper; needs enclosing-stage context,maybe, pub fn sampleVelocityAdaptive(
+detour_crowd,src/detour_crowd/path_corridor.zig,24,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init(allocator: std.mem.Allocator; max_path: usize) !Self 
+detour_crowd,src/detour_crowd/path_corridor.zig,41,pub,deinit,D,lifecycle/dispatch or allocator-driven state,no, pub fn deinit(self: *Self) void 
+detour_crowd,src/detour_crowd/path_corridor.zig,46,pub,reset,D,lifecycle/dispatch or allocator-driven state,no, pub fn reset(self: *Self; ref: PolyRef; pos: *const [3]f32) void 
+detour_crowd,src/detour_crowd/path_corridor.zig,54,pub,getPos,D,lifecycle/dispatch or allocator-driven state,no, pub fn getPos(self: *const Self) *const [3]f32 
+detour_crowd,src/detour_crowd/path_corridor.zig,59,pub,getTarget,D,lifecycle/dispatch or allocator-driven state,no, pub fn getTarget(self: *const Self) *const [3]f32 
+detour_crowd,src/detour_crowd/path_corridor.zig,64,pub,getFirstPoly,D,lifecycle/dispatch or allocator-driven state,no, pub fn getFirstPoly(self: *const Self) PolyRef 
+detour_crowd,src/detour_crowd/path_corridor.zig,69,pub,getLastPoly,D,lifecycle/dispatch or allocator-driven state,no, pub fn getLastPoly(self: *const Self) PolyRef 
+detour_crowd,src/detour_crowd/path_corridor.zig,74,pub,getPath,D,lifecycle/dispatch or allocator-driven state,no, pub fn getPath(self: *const Self) []const PolyRef 
+detour_crowd,src/detour_crowd/path_corridor.zig,79,pub,getPathCount,D,lifecycle/dispatch or allocator-driven state,no, pub fn getPathCount(self: *const Self) usize 
+detour_crowd,src/detour_crowd/path_corridor.zig,84,pub,setCorridor,D,lifecycle/dispatch or allocator-driven state,no, pub fn setCorridor(self: *Self; target: *const [3]f32; polys: []const PolyRef) void 
+detour_crowd,src/detour_crowd/path_corridor.zig,93,pub,findCorners,C,public helper; needs enclosing-stage context,maybe, pub fn findCorners(
+detour_crowd,src/detour_crowd/path_corridor.zig,204,pub,isValid,C,public helper; needs enclosing-stage context,maybe, pub fn isValid(
+detour_crowd,src/detour_crowd/path_corridor.zig,220,pub,movePosition,C,public helper; needs enclosing-stage context,maybe, pub fn movePosition(
+detour_crowd,src/detour_crowd/path_corridor.zig,262,pub,moveTargetPosition,C,public helper; needs enclosing-stage context,maybe, pub fn moveTargetPosition(
+detour_crowd,src/detour_crowd/path_corridor.zig,298,pub,optimizePathVisibility,C,public helper; needs enclosing-stage context,maybe, pub fn optimizePathVisibility(
+detour_crowd,src/detour_crowd/path_corridor.zig,348,pub,optimizePathTopology,C,public helper; needs enclosing-stage context,maybe, pub fn optimizePathTopology(
+detour_crowd,src/detour_crowd/path_corridor.zig,395,pub,fixPathStart,C,public helper; needs enclosing-stage context,maybe, pub fn fixPathStart(self: *Self; safe_ref: PolyRef; safe_pos: *const [3]f32) bool 
+detour_crowd,src/detour_crowd/path_corridor.zig,410,pub,trimInvalidPath,C,public helper; needs enclosing-stage context,maybe, pub fn trimInvalidPath(
+detour_crowd,src/detour_crowd/path_corridor.zig,444,pub,moveOverOffmeshConnection,C,public helper; needs enclosing-stage context,maybe, pub fn moveOverOffmeshConnection(
+detour_crowd,src/detour_crowd/path_corridor.zig,491,pub,mergeCorridorStartMoved,C,public helper; needs enclosing-stage context,maybe,pub fn mergeCorridorStartMoved(path: []PolyRef; npath: usize; max_path: usize; visited: []
+detour_crowd,src/detour_crowd/path_corridor.zig,551,priv,mergeCorridorEndMoved,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn mergeCorridorEndMoved(path: []PolyRef; npath: usize; max_path: usize; visited: []const 
+detour_crowd,src/detour_crowd/path_corridor.zig,589,priv,mergeCorridorStartShortcut,C,internal to enclosing stage (drive via stage or reconstruct args),maybe,fn mergeCorridorStartShortcut(path: []PolyRef; npath: usize; max_path: usize; visited: []c
+detour_crowd,src/detour_crowd/path_queue.zig,45,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init(
+detour_crowd,src/detour_crowd/path_queue.zig,83,pub,deinit,D,lifecycle/dispatch or allocator-driven state,no, pub fn deinit(self: *Self) void 
+detour_crowd,src/detour_crowd/path_queue.zig,93,pub,update,D,lifecycle/dispatch or allocator-driven state,no, pub fn update(self: *Self; max_iters: usize) void 
+detour_crowd,src/detour_crowd/path_queue.zig,150,pub,request,C,public helper; needs enclosing-stage context,maybe, pub fn request(
+detour_crowd,src/detour_crowd/path_queue.zig,194,pub,getRequestStatus,D,lifecycle/dispatch or allocator-driven state,no, pub fn getRequestStatus(self: *const Self; ref: PathQueueRef) Status 
+detour_crowd,src/detour_crowd/path_queue.zig,204,pub,getPathResult,D,lifecycle/dispatch or allocator-driven state,no, pub fn getPathResult(
+detour_crowd,src/detour_crowd/path_queue.zig,230,pub,getNavQuery,D,lifecycle/dispatch or allocator-driven state,no, pub fn getNavQuery(self: *const Self) *const NavMeshQuery 
+detour_crowd,src/detour_crowd/proximity_grid.zig,28,pub,init,D,lifecycle/dispatch or allocator-driven state,no, pub fn init(allocator: std.mem.Allocator; pool_size: usize; cell_size: f32) !Self 
+detour_crowd,src/detour_crowd/proximity_grid.zig,57,pub,deinit,D,lifecycle/dispatch or allocator-driven state,no, pub fn deinit(self: *Self) void 
+detour_crowd,src/detour_crowd/proximity_grid.zig,63,pub,clear,C,public helper; needs enclosing-stage context,maybe, pub fn clear(self: *Self) void 
+detour_crowd,src/detour_crowd/proximity_grid.zig,73,pub,addItem,D,lifecycle/dispatch or allocator-driven state,no, pub fn addItem(self: *Self; id: u16; minx: f32; miny: f32; maxx: f32; maxy: f32) void 
+detour_crowd,src/detour_crowd/proximity_grid.zig,104,pub,queryItems,C,public helper; needs enclosing-stage context,maybe, pub fn queryItems(
+detour_crowd,src/detour_crowd/proximity_grid.zig,156,pub,getItemCountAt,D,lifecycle/dispatch or allocator-driven state,no, pub fn getItemCountAt(self: *const Self; x: i32; y: i32) usize 
+detour_crowd,src/detour_crowd/proximity_grid.zig,174,pub,getBounds,D,lifecycle/dispatch or allocator-driven state,no, pub fn getBounds(self: *const Self) *const [4]i32 
+detour_crowd,src/detour_crowd/proximity_grid.zig,179,pub,getCellSize,D,lifecycle/dispatch or allocator-driven state,no, pub fn getCellSize(self: *const Self) f32 

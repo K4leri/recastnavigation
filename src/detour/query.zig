@@ -1,0 +1,3877 @@
+// Detour NavMesh Query - Pathfinding and navigation queries
+const std = @import("std");
+const tracy = @import("../tracy.zig");
+const common = @import("common.zig");
+const navmesh = @import("navmesh.zig");
+const math = @import("../math.zig");
+
+const Vec3 = math.Vec3;
+const NavMesh = navmesh.NavMesh;
+const MeshTile = navmesh.MeshTile;
+const Poly = navmesh.Poly;
+const PolyRef = common.PolyRef;
+const Status = common.Status;
+const Error = common.Error;
+
+/// Polygon filtering and traversal costs for navigation mesh query operations
+pub const QueryFilter = struct {
+    area_cost: [common.MAX_AREAS]f32,
+    include_flags: u16,
+    exclude_flags: u16,
+
+    pub fn init() QueryFilter {
+        var filter = QueryFilter{
+            .area_cost = undefined,
+            .include_flags = 0xffff,
+            .exclude_flags = 0,
+        };
+        // Initialize all area costs to 1.0
+        for (0..common.MAX_AREAS) |i| {
+            filter.area_cost[i] = 1.0;
+        }
+        return filter;
+    }
+
+    /// Returns true if the polygon can be visited (is traversable)
+    pub fn passFilter(self: *const QueryFilter, ref: PolyRef, tile: *const MeshTile, poly: *const Poly) bool {
+        _ = ref; // unused
+        _ = tile; // unused
+
+        // Check if polygon has any of the include flags
+        if ((poly.flags & self.include_flags) == 0) return false;
+
+        // Check if polygon has any of the exclude flags
+        if ((poly.flags & self.exclude_flags) != 0) return false;
+
+        return true;
+    }
+
+    /// Returns cost to move from the beginning to the end of a line segment
+    pub fn getCost(
+        self: *const QueryFilter,
+        pa: *const [3]f32,
+        pb: *const [3]f32,
+        prev_ref: PolyRef,
+        prev_tile: ?*const MeshTile,
+        prev_poly: ?*const Poly,
+        cur_ref: PolyRef,
+        cur_tile: *const MeshTile,
+        cur_poly: *const Poly,
+        next_ref: PolyRef,
+        next_tile: ?*const MeshTile,
+        next_poly: ?*const Poly,
+    ) f32 {
+        _ = prev_ref;
+        _ = prev_tile;
+        _ = prev_poly;
+        _ = cur_ref;
+        _ = cur_tile;
+        _ = next_ref;
+        _ = next_tile;
+        _ = next_poly;
+
+        // Calculate Euclidean distance
+        const dx = pb[0] - pa[0];
+        const dy = pb[1] - pa[1];
+        const dz = pb[2] - pa[2];
+        const dist = @sqrt(dx * dx + dy * dy + dz * dz);
+
+        // Apply area cost
+        return dist * self.area_cost[cur_poly.getArea()];
+    }
+
+    /// Get traversal cost of an area
+    pub inline fn getAreaCost(self: *const QueryFilter, area: usize) f32 {
+        return self.area_cost[area];
+    }
+
+    /// Set traversal cost of an area
+    pub inline fn setAreaCost(self: *QueryFilter, area: usize, cost: f32) void {
+        self.area_cost[area] = cost;
+    }
+
+    /// Get include flags
+    pub inline fn getIncludeFlags(self: *const QueryFilter) u16 {
+        return self.include_flags;
+    }
+
+    /// Set include flags
+    pub inline fn setIncludeFlags(self: *QueryFilter, flags: u16) void {
+        self.include_flags = flags;
+    }
+
+    /// Get exclude flags
+    pub inline fn getExcludeFlags(self: *const QueryFilter) u16 {
+        return self.exclude_flags;
+    }
+
+    /// Set exclude flags
+    pub inline fn setExcludeFlags(self: *QueryFilter, flags: u16) void {
+        self.exclude_flags = flags;
+    }
+};
+
+/// Raycast hit information
+pub const RaycastHit = struct {
+    t: f32, // Hit parameter (FLT_MAX if no wall hit)
+    hit_normal: [3]f32, // Normal of the nearest wall hit
+    hit_edge_index: i32, // Index of the edge on the final polygon
+    path: []PolyRef, // Reference ids of visited polygons
+    path_count: usize, // Number of visited polygons
+    max_path: usize, // Maximum number of polygons the path array can hold
+    path_cost: f32, // Cost of the path until hit
+
+    pub fn init(path_buffer: []PolyRef) RaycastHit {
+        return .{
+            .t = std.math.floatMax(f32),
+            .hit_normal = .{ 0, 0, 0 },
+            .hit_edge_index = -1,
+            .path = path_buffer,
+            .path_count = 0,
+            .max_path = path_buffer.len,
+            .path_cost = 0,
+        };
+    }
+};
+
+test "QueryFilter initialization" {
+    const filter = QueryFilter.init();
+
+    try std.testing.expectEqual(@as(u16, 0xffff), filter.include_flags);
+    try std.testing.expectEqual(@as(u16, 0), filter.exclude_flags);
+    try std.testing.expectEqual(@as(f32, 1.0), filter.area_cost[0]);
+}
+
+test "RaycastHit initialization" {
+    var path_buffer: [128]PolyRef = undefined;
+    const hit = RaycastHit.init(&path_buffer);
+
+    try std.testing.expectEqual(std.math.floatMax(f32), hit.t);
+    try std.testing.expectEqual(@as(usize, 0), hit.path_count);
+    try std.testing.expectEqual(@as(usize, 128), hit.max_path);
+}
+
+/// Node flags for A* pathfinding
+pub const NodeFlags = packed struct(u3) {
+    open: bool = false,
+    closed: bool = false,
+    parent_detached: bool = false, // Parent is not adjacent, found using raycast
+};
+
+pub const NodeIndex = u16;
+pub const NULL_IDX: NodeIndex = std.math.maxInt(NodeIndex);
+
+const NODE_PARENT_BITS = 24;
+const NODE_STATE_BITS = 2;
+pub const MAX_STATES_PER_NODE = 1 << NODE_STATE_BITS;
+
+/// A* pathfinding node
+pub const Node = struct {
+    pos: [3]f32, // Position of the node
+    cost: f32, // Cost from previous node to current node
+    total: f32, // Total cost from start to this node
+    pidx: u24, // Index to parent node (24 bits)
+    state: u2, // Extra state information (2 bits)
+    flags: NodeFlags, // Node flags (3 bits)
+    id: PolyRef, // Polygon ref the node corresponds to
+
+    pub fn init() Node {
+        return .{
+            .pos = .{ 0, 0, 0 },
+            .cost = 0,
+            .total = 0,
+            .pidx = 0,
+            .state = 0,
+            .flags = .{},
+            .id = 0,
+        };
+    }
+};
+
+/// Node pool for A* pathfinding
+pub const NodePool = struct {
+    allocator: std.mem.Allocator,
+    nodes: []Node,
+    first: []NodeIndex, // Hash table buckets
+    next: []NodeIndex, // Next node in the same bucket
+    touched_buckets: []NodeIndex, // Buckets touched since the last clear
+    max_nodes: usize,
+    hash_size: usize,
+    node_count: usize,
+    touched_count: usize,
+
+    const Self = @This();
+
+    pub fn init(allocator: std.mem.Allocator, max_nodes: usize, hash_size: usize) !*Self {
+        const pool = try allocator.create(Self);
+        errdefer allocator.destroy(pool);
+
+        const nodes = try allocator.alloc(Node, max_nodes);
+        errdefer allocator.free(nodes);
+
+        const first = try allocator.alloc(NodeIndex, hash_size);
+        errdefer allocator.free(first);
+
+        const next = try allocator.alloc(NodeIndex, max_nodes);
+        errdefer allocator.free(next);
+
+        const touched_buckets = try allocator.alloc(NodeIndex, max_nodes);
+        errdefer allocator.free(touched_buckets);
+
+        pool.* = .{
+            .allocator = allocator,
+            .nodes = nodes,
+            .first = first,
+            .next = next,
+            .touched_buckets = touched_buckets,
+            .max_nodes = max_nodes,
+            .hash_size = hash_size,
+            .node_count = 0,
+            .touched_count = 0,
+        };
+
+        @memset(pool.first, NULL_IDX);
+        pool.clear();
+        return pool;
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.allocator.free(self.touched_buckets);
+        self.allocator.free(self.next);
+        self.allocator.free(self.first);
+        self.allocator.free(self.nodes);
+        self.allocator.destroy(self);
+    }
+
+    pub fn clear(self: *Self) void {
+        for (self.touched_buckets[0..self.touched_count]) |bucket| {
+            self.first[bucket] = NULL_IDX;
+        }
+        self.touched_count = 0;
+        self.node_count = 0;
+    }
+
+    /// Get or allocate a node for the given poly ref and state
+    pub fn getNode(self: *Self, id: PolyRef, state: u8) ?*Node {
+        const bucket = self.hashFunc(id);
+        var i = self.first[bucket];
+
+        // Search for existing node
+        while (i != NULL_IDX) : (i = self.next[i]) {
+            if (self.nodes[i].id == id and self.nodes[i].state == state) {
+                return &self.nodes[i];
+            }
+        }
+
+        // Allocate new node if not found
+        if (self.node_count >= self.max_nodes) return null;
+
+        i = @intCast(self.node_count);
+        self.node_count += 1;
+
+        // Match upstream dtNodePool::getNode(): pos is intentionally left
+        // untouched and is written by the caller before use.
+        self.nodes[i].pidx = 0;
+        self.nodes[i].cost = 0;
+        self.nodes[i].total = 0;
+        self.nodes[i].id = id;
+        self.nodes[i].state = @intCast(state);
+        self.nodes[i].flags = .{};
+
+        // Add to hash table
+        if (self.first[bucket] == NULL_IDX) {
+            self.touched_buckets[self.touched_count] = @intCast(bucket);
+            self.touched_count += 1;
+        }
+        self.next[i] = self.first[bucket];
+        self.first[bucket] = i;
+
+        return &self.nodes[i];
+    }
+
+    /// Find an existing node (don't allocate)
+    pub fn findNode(self: *Self, id: PolyRef, state: u8) ?*Node {
+        const bucket = self.hashFunc(id);
+        var i = self.first[bucket];
+
+        while (i != NULL_IDX) : (i = self.next[i]) {
+            if (self.nodes[i].id == id and self.nodes[i].state == state) {
+                return &self.nodes[i];
+            }
+        }
+
+        return null;
+    }
+
+    /// Find all nodes with the given id
+    pub fn findNodes(self: *Self, id: PolyRef, nodes: []*Node, max_nodes: usize) usize {
+        var n: usize = 0;
+        const bucket = self.hashFunc(id);
+        var i = self.first[bucket];
+
+        while (i != NULL_IDX and n < max_nodes) : (i = self.next[i]) {
+            if (self.nodes[i].id == id) {
+                nodes[n] = &self.nodes[i];
+                n += 1;
+            }
+        }
+
+        return n;
+    }
+
+    /// Get node index from node pointer
+    pub fn getNodeIdx(self: *const Self, node: ?*const Node) u32 {
+        if (node == null) return 0;
+        const idx = (@intFromPtr(node.?) - @intFromPtr(self.nodes.ptr)) / @sizeOf(Node);
+        return @intCast(idx + 1);
+    }
+
+    /// Get node at index
+    pub fn getNodeAtIdx(self: *Self, idx: u32) ?*Node {
+        if (idx == 0) return null;
+        return &self.nodes[idx - 1];
+    }
+
+    /// Get node at index (const version)
+    pub fn getNodeAtIdxConst(self: *const Self, idx: u32) ?*const Node {
+        if (idx == 0) return null;
+        return &self.nodes[idx - 1];
+    }
+
+    /// Get number of nodes in use
+    pub fn getNodeCount(self: *const Self) usize {
+        return self.node_count;
+    }
+
+    /// Get maximum number of nodes
+    pub fn getMaxNodes(self: *const Self) usize {
+        return self.max_nodes;
+    }
+
+    /// Get hash table size
+    pub fn getHashSize(self: *const Self) usize {
+        return self.hash_size;
+    }
+
+    /// Hash function for poly ref
+    inline fn hashFunc(self: *const Self, id: PolyRef) usize {
+        if (common.polyref64) {
+            var a = id;
+            a = (~a) +% (a << 18);
+            a = a ^ (a >> 31);
+            a *%= 21;
+            a = a ^ (a >> 11);
+            a +%= (a << 6);
+            a = a ^ (a >> 22);
+            return @intCast(a & @as(PolyRef, @intCast(self.hash_size - 1)));
+        } else {
+            var a: u32 = @intCast(id);
+            a +%= ~(a << 15);
+            a ^= (a >> 10);
+            a +%= (a << 3);
+            a ^= (a >> 6);
+            a +%= ~(a << 11);
+            a ^= (a >> 16);
+            return @intCast(a & @as(u32, @intCast(self.hash_size - 1)));
+        }
+    }
+};
+
+/// Priority queue for A* open list (min-heap based on total cost)
+pub const NodeQueue = struct {
+    allocator: std.mem.Allocator,
+    heap: []*Node,
+    capacity: usize,
+    size: usize,
+
+    const Self = @This();
+
+    pub fn init(allocator: std.mem.Allocator, capacity: usize) !*Self {
+        const queue = try allocator.create(Self);
+        errdefer allocator.destroy(queue);
+
+        const heap = try allocator.alloc(*Node, capacity);
+        errdefer allocator.free(heap);
+
+        queue.* = .{
+            .allocator = allocator,
+            .heap = heap,
+            .capacity = capacity,
+            .size = 0,
+        };
+
+        return queue;
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.allocator.free(self.heap);
+        self.allocator.destroy(self);
+    }
+
+    pub fn clear(self: *Self) void {
+        self.size = 0;
+    }
+
+    pub fn empty(self: *const Self) bool {
+        return self.size == 0;
+    }
+
+    pub fn top(self: *const Self) ?*Node {
+        if (self.size == 0) return null;
+        return self.heap[0];
+    }
+
+    pub fn pop(self: *Self) ?*Node {
+        if (self.size == 0) return null;
+        return self.popAssumeNotEmpty();
+    }
+
+    pub fn popAssumeNotEmpty(self: *Self) *Node {
+        const result = self.heap[0];
+        self.size -= 1;
+        if (self.size > 0) {
+            self.trickleDown(0, self.heap[self.size]);
+        }
+        return result;
+    }
+
+    pub fn push(self: *Self, node: *Node) void {
+        self.size += 1;
+        self.bubbleUp(self.size - 1, node);
+    }
+
+    pub fn modify(self: *Self, node: *Node) void {
+        for (0..self.size) |i| {
+            if (self.heap[i] == node) {
+                self.bubbleUp(i, node);
+                return;
+            }
+        }
+    }
+
+    pub fn getCapacity(self: *const Self) usize {
+        return self.capacity;
+    }
+
+    fn bubbleUp(self: *Self, i_input: usize, node: *Node) void {
+        var i = i_input;
+
+        // While not at root and node is better than parent
+        while (i > 0) {
+            const parent_i = (i - 1) / 2;
+            const parent = self.heap[parent_i];
+            if (node.total >= parent.total) break;
+
+            self.heap[i] = parent;
+            i = parent_i;
+        }
+
+        self.heap[i] = node;
+    }
+
+    fn trickleDown(self: *Self, i_input: usize, node: *Node) void {
+        var i = i_input;
+
+        while (true) {
+            const child1 = 2 * i + 1;
+            if (child1 >= self.size) break;
+
+            const child2 = child1 + 1;
+
+            // Find the child with minimum total cost
+            var min_child = child1;
+            if (child2 < self.size) {
+                if (self.heap[child2].total < self.heap[child1].total) {
+                    min_child = child2;
+                }
+            }
+
+            // If node is better than best child, we're done
+            if (node.total <= self.heap[min_child].total) break;
+
+            self.heap[i] = self.heap[min_child];
+            i = min_child;
+        }
+
+        self.heap[i] = node;
+    }
+};
+
+/// Query data for sliced pathfinding
+const QueryData = struct {
+    status: Status,
+    last_best_node: ?*Node,
+    last_best_node_cost: f32,
+    start_ref: PolyRef,
+    end_ref: PolyRef,
+    start_pos: [3]f32,
+    end_pos: [3]f32,
+    filter: ?*const QueryFilter,
+    options: u32,
+    raycast_limit_sqr: f32,
+
+    fn init() QueryData {
+        return .{
+            .status = .{},
+            .last_best_node = null,
+            .last_best_node_cost = 0,
+            .start_ref = 0,
+            .end_ref = 0,
+            .start_pos = .{ 0, 0, 0 },
+            .end_pos = .{ 0, 0, 0 },
+            .filter = null,
+            .options = 0,
+            .raycast_limit_sqr = 0,
+        };
+    }
+};
+
+/// Navigation mesh query object for pathfinding and spatial queries
+pub const NavMeshQuery = struct {
+    allocator: std.mem.Allocator,
+    nav: ?*const NavMesh,
+    node_pool: ?*NodePool,
+    tiny_node_pool: ?*NodePool,
+    open_list: ?*NodeQueue,
+    query: QueryData,
+
+    const Self = @This();
+
+    pub fn init(allocator: std.mem.Allocator) !*Self {
+        const query = try allocator.create(Self);
+        query.* = .{
+            .allocator = allocator,
+            .nav = null,
+            .node_pool = null,
+            .tiny_node_pool = null,
+            .open_list = null,
+            .query = QueryData.init(),
+        };
+        return query;
+    }
+
+    pub fn deinit(self: *Self) void {
+        if (self.open_list) |ol| ol.deinit();
+        if (self.tiny_node_pool) |tnp| tnp.deinit();
+        if (self.node_pool) |np| np.deinit();
+        self.allocator.destroy(self);
+    }
+
+    /// Initialize the query object with a navmesh and maximum node count
+    pub fn initQuery(self: *Self, nav: *const NavMesh, max_nodes: usize) !void {
+        // Validate max_nodes
+        if (max_nodes > NULL_IDX or max_nodes > ((1 << NODE_PARENT_BITS) - 1)) {
+            return error.InvalidParam;
+        }
+
+        self.nav = nav;
+
+        // Create or resize main node pool
+        const hash_size = math.nextPow2(@as(u32, @intCast(max_nodes / 4)));
+        if (self.node_pool) |np| {
+            if (np.getMaxNodes() < max_nodes) {
+                np.deinit();
+                self.node_pool = try NodePool.init(self.allocator, max_nodes, hash_size);
+            } else {
+                np.clear();
+            }
+        } else {
+            self.node_pool = try NodePool.init(self.allocator, max_nodes, hash_size);
+        }
+
+        // Create or clear tiny node pool (64 nodes, hash size 32)
+        if (self.tiny_node_pool) |tnp| {
+            tnp.clear();
+        } else {
+            self.tiny_node_pool = try NodePool.init(self.allocator, 64, 32);
+        }
+
+        // Create or resize open list
+        if (self.open_list) |ol| {
+            if (ol.getCapacity() < max_nodes) {
+                ol.deinit();
+                self.open_list = try NodeQueue.init(self.allocator, max_nodes);
+            } else {
+                ol.clear();
+            }
+        } else {
+            self.open_list = try NodeQueue.init(self.allocator, max_nodes);
+        }
+    }
+
+    /// Get the attached navmesh
+    pub fn getAttachedNavMesh(self: *const Self) ?*const NavMesh {
+        return self.nav;
+    }
+
+    /// Get the node pool
+    pub fn getNodePool(self: *const Self) ?*NodePool {
+        return self.node_pool;
+    }
+
+    /// Check if a polygon reference is valid
+    pub fn isValidPolyRef(self: *const Self, ref: PolyRef, filter: *const QueryFilter) bool {
+        var _z = tracy.zone(@src(), "dtIsValidPolyRef");
+        defer _z.end();
+
+        const nav = self.nav orelse return false;
+
+        const result = nav.getTileAndPolyByRef(ref) catch return false;
+        const tile = result.tile;
+        const poly = result.poly;
+
+        // Check filter
+        return filter.passFilter(ref, tile, poly);
+    }
+
+    /// Check if a polygon is in the closed list
+    pub fn isInClosedList(self: *const Self, ref: PolyRef) bool {
+        const node_pool = self.node_pool orelse return false;
+
+        var nodes: [MAX_STATES_PER_NODE]*Node = undefined;
+        const n = node_pool.findNodes(ref, &nodes, MAX_STATES_PER_NODE);
+
+        for (0..n) |i| {
+            if (nodes[i].flags.closed) return true;
+        }
+
+        return false;
+    }
+
+    /// Query polygons within a bounding box
+    pub fn queryPolygons(
+        self: *const Self,
+        center: *const [3]f32,
+        half_extents: *const [3]f32,
+        filter: *const QueryFilter,
+        polys: []PolyRef,
+        poly_count: *usize,
+    ) !void {
+        const nav = self.nav orelse return error.NoNavMesh;
+
+        // Calculate bounding box
+        var bmin: [3]f32 = undefined;
+        var bmax: [3]f32 = undefined;
+        for (0..3) |i| {
+            bmin[i] = center[i] - half_extents[i];
+            bmax[i] = center[i] + half_extents[i];
+        }
+
+        // Find tiles the query touches
+        const min_loc = nav.calcTileLoc(Vec3.fromArray(&bmin));
+        const max_loc = nav.calcTileLoc(Vec3.fromArray(&bmax));
+
+        const MAX_NEIS = 32;
+        var n: usize = 0;
+
+        var y = min_loc.y;
+        while (y <= max_loc.y) : (y += 1) {
+            var x = min_loc.x;
+            while (x <= max_loc.x) : (x += 1) {
+                // Get tiles at this location
+                var temp_tiles: [MAX_NEIS]*MeshTile = undefined;
+                const nneis = nav.getTilesAt(x, y, &temp_tiles, MAX_NEIS);
+
+                for (0..nneis) |j| {
+                    // Query polygons in this tile
+                    const tile = @as(*const MeshTile, @ptrCast(temp_tiles[j]));
+                    n = try self.queryPolygonsInTile(tile, &bmin, &bmax, filter, polys, n);
+                }
+            }
+        }
+
+        poly_count.* = n;
+    }
+
+    /// Query polygons within a single tile using BVH tree or linear search
+    fn queryPolygonsInTile(
+        self: *const Self,
+        tile: *const MeshTile,
+        qmin: *const [3]f32,
+        qmax: *const [3]f32,
+        filter: *const QueryFilter,
+        polys: []PolyRef,
+        start_n: usize,
+    ) !usize {
+        const nav = self.nav orelse return error.NoNavMesh;
+        var n = start_n;
+
+        if (tile.bv_tree.len > 0) {
+            // Use BVH tree for efficient spatial query
+            const header = tile.header.?;
+            const base = nav.getPolyRefBase(tile);
+            const qfac = header.bv_quant_factor;
+
+            // Calculate quantized box
+            var qbmin: [3]u16 = undefined;
+            var qbmax: [3]u16 = undefined;
+
+            // Clamp query box to tile bounds
+            const minx = std.math.clamp(qmin[0], header.bmin.x, header.bmax.x) - header.bmin.x;
+            const miny = std.math.clamp(qmin[1], header.bmin.y, header.bmax.y) - header.bmin.y;
+            const minz = std.math.clamp(qmin[2], header.bmin.z, header.bmax.z) - header.bmin.z;
+            const maxx = std.math.clamp(qmax[0], header.bmin.x, header.bmax.x) - header.bmin.x;
+            const maxy = std.math.clamp(qmax[1], header.bmin.y, header.bmax.y) - header.bmin.y;
+            const maxz = std.math.clamp(qmax[2], header.bmin.z, header.bmax.z) - header.bmin.z;
+
+            // Quantize
+            qbmin[0] = @as(u16, @intFromFloat(qfac * minx)) & 0xfffe;
+            qbmin[1] = @as(u16, @intFromFloat(qfac * miny)) & 0xfffe;
+            qbmin[2] = @as(u16, @intFromFloat(qfac * minz)) & 0xfffe;
+            qbmax[0] = (@as(u16, @intFromFloat(qfac * maxx)) + 1) | 1;
+            qbmax[1] = (@as(u16, @intFromFloat(qfac * maxy)) + 1) | 1;
+            qbmax[2] = (@as(u16, @intFromFloat(qfac * maxz)) + 1) | 1;
+
+            // Traverse BVH tree
+            var node_idx: usize = 0;
+            const end_idx = tile.bv_tree.len;
+
+            while (node_idx < end_idx) {
+                const node = &tile.bv_tree[node_idx];
+                const overlap = overlapQuantBounds(&qbmin, &qbmax, &node.bmin, &node.bmax);
+                const is_leaf_node = node.i >= 0;
+
+                if (is_leaf_node and overlap) {
+                    const poly_idx = @as(usize, @intCast(node.i));
+                    const ref = base | @as(PolyRef, @intCast(poly_idx));
+
+                    const passes = filter.passFilter(ref, tile, &tile.polys[poly_idx]);
+
+                    if (passes) {
+                        if (n < polys.len) {
+                            polys[n] = ref;
+                            n += 1;
+                        }
+                    }
+                }
+
+                if (overlap or is_leaf_node) {
+                    node_idx += 1;
+                } else {
+                    const escape_index = @as(usize, @intCast(-node.i));
+                    node_idx += escape_index;
+                }
+            }
+        } else {
+            // Fallback to linear search
+            const base = nav.getPolyRefBase(tile);
+
+            for (0..@as(usize, @intCast(tile.header.?.poly_count))) |i| {
+                const poly = &tile.polys[i];
+
+                // Check if poly passes filter
+                const ref = base | @as(PolyRef, @intCast(i));
+                if (!filter.passFilter(ref, tile, poly)) continue;
+
+                // Calculate poly bounding box
+                var poly_bmin = [3]f32{ std.math.floatMax(f32), std.math.floatMax(f32), std.math.floatMax(f32) };
+                var poly_bmax = [3]f32{ -std.math.floatMax(f32), -std.math.floatMax(f32), -std.math.floatMax(f32) };
+
+                for (0..poly.vert_count) |v| {
+                    const idx = @as(usize, poly.verts[v]) * 3;
+                    poly_bmin[0] = @min(poly_bmin[0], tile.verts[idx + 0]);
+                    poly_bmin[1] = @min(poly_bmin[1], tile.verts[idx + 1]);
+                    poly_bmin[2] = @min(poly_bmin[2], tile.verts[idx + 2]);
+                    poly_bmax[0] = @max(poly_bmax[0], tile.verts[idx + 0]);
+                    poly_bmax[1] = @max(poly_bmax[1], tile.verts[idx + 1]);
+                    poly_bmax[2] = @max(poly_bmax[2], tile.verts[idx + 2]);
+                }
+
+                // Check if poly bbox overlaps query bbox
+                var overlap = true;
+                for (0..3) |axis| {
+                    if (poly_bmin[axis] > qmax[axis] or poly_bmax[axis] < qmin[axis]) {
+                        overlap = false;
+                        break;
+                    }
+                }
+
+                if (overlap) {
+                    if (n < polys.len) {
+                        polys[n] = ref;
+                        n += 1;
+                    }
+                }
+            }
+        }
+
+        return n;
+    }
+
+    /// Check if two quantized bounding boxes overlap
+    inline fn overlapQuantBounds(
+        amin: *const [3]u16,
+        amax: *const [3]u16,
+        bmin: *const [3]u16,
+        bmax: *const [3]u16,
+    ) bool {
+        var overlap = true;
+        overlap = if (amin[0] > bmax[0] or amax[0] < bmin[0]) false else overlap;
+        overlap = if (amin[1] > bmax[1] or amax[1] < bmin[1]) false else overlap;
+        overlap = if (amin[2] > bmax[2] or amax[2] < bmin[2]) false else overlap;
+        return overlap;
+    }
+
+    /// A* pathfinding: find polygon path from start to end
+    pub fn findPath(
+        self: *Self,
+        start_ref: PolyRef,
+        end_ref: PolyRef,
+        start_pos: *const [3]f32,
+        end_pos: *const [3]f32,
+        filter: *const QueryFilter,
+        path: []PolyRef,
+        path_count: *usize,
+    ) !void {
+        var _z = tracy.zone(@src(), "dtFindPath");
+        defer _z.end();
+        const nav = self.nav orelse return error.NoNavMesh;
+        const node_pool = self.node_pool orelse return error.NoNodePool;
+        const open_list = self.open_list orelse return error.NoOpenList;
+
+        path_count.* = 0;
+
+        // Validate input. Upstream uses NAV-level isValidPolyRef for start/end (no
+        // filter) — endpoints are not filter-checked here; the filter applies during
+        // expansion. Match C++ 1:1 (DetourNavMeshQuery.cpp:995 m_nav->isValidPolyRef).
+        if (!nav.isValidPolyRef(start_ref) or !nav.isValidPolyRef(end_ref)) {
+            return error.InvalidParam;
+        }
+
+        // Special case: start == end
+        if (start_ref == end_ref) {
+            path[0] = start_ref;
+            path_count.* = 1;
+            return;
+        }
+
+        // Clear pools
+        node_pool.clear();
+        open_list.clear();
+
+        const H_SCALE = 0.999; // Heuristic scale
+
+        // Initialize start node
+        var start_node = node_pool.getNode(start_ref, 0) orelse return error.OutOfNodes;
+        math.vcopy(&start_node.pos, start_pos);
+        start_node.pidx = 0;
+        start_node.cost = 0;
+
+        // Calculate heuristic distance
+        const dx = end_pos[0] - start_pos[0];
+        const dy = end_pos[1] - start_pos[1];
+        const dz = end_pos[2] - start_pos[2];
+        start_node.total = @sqrt(dx * dx + dy * dy + dz * dz) * H_SCALE;
+        start_node.id = start_ref;
+        start_node.flags.open = true;
+        open_list.push(start_node);
+
+        var last_best_node = start_node;
+        var last_best_node_cost = start_node.total;
+
+        // A* main loop
+        while (!open_list.empty()) {
+            // Get node with lowest f-cost
+            var best_node = open_list.popAssumeNotEmpty();
+            best_node.flags.open = false;
+            best_node.flags.closed = true;
+
+            // Reached the goal
+            if (best_node.id == end_ref) {
+                last_best_node = best_node;
+                break;
+            }
+
+            // Get current poly and tile
+            const best_ref = best_node.id;
+            var best_tile: ?*const MeshTile = null;
+            var best_poly: ?*const Poly = null;
+            nav.getTileAndPolyByRefUnsafe(best_ref, &best_tile, &best_poly);
+
+            // Get parent poly
+            var parent_ref: PolyRef = 0;
+            var parent_tile: ?*const MeshTile = null;
+            var parent_poly: ?*const Poly = null;
+            if (best_node.pidx != 0) {
+                const parent_node = node_pool.getNodeAtIdx(best_node.pidx);
+                if (parent_node) |pn| {
+                    parent_ref = pn.id;
+                    nav.getTileAndPolyByRefUnsafe(parent_ref, &parent_tile, &parent_poly);
+                }
+            }
+
+            // Expand neighbors
+            var _ze = tracy.zoneDeep(@src(), "dtFindPath.expand");
+            defer _ze.end();
+            var i = best_poly.?.first_link;
+            while (i != common.NULL_LINK) : (i = best_tile.?.links[i].next) {
+                const neighbour_ref = best_tile.?.links[i].ref;
+
+                // Skip invalid and parent
+                if (neighbour_ref == 0 or neighbour_ref == parent_ref) continue;
+
+                // Get neighbour poly and tile
+                var neighbour_tile: ?*const MeshTile = null;
+                var neighbour_poly: ?*const Poly = null;
+                nav.getTileAndPolyByRefUnsafe(neighbour_ref, &neighbour_tile, &neighbour_poly);
+
+                // Check filter
+                if (!filter.passFilter(neighbour_ref, neighbour_tile.?, neighbour_poly.?)) continue;
+
+                // Handle tile boundaries
+                var cross_side: u8 = 0;
+                if (best_tile.?.links[i].side != 0xff) {
+                    cross_side = best_tile.?.links[i].side >> 1;
+                }
+
+                // Get or create neighbour node
+                var neighbour_node = node_pool.getNode(neighbour_ref, cross_side) orelse {
+                    continue; // Out of nodes
+                };
+
+                // Calculate node position if visited first time
+                if (neighbour_node.flags.open == false and neighbour_node.flags.closed == false) {
+                    nav.getEdgeMidPoint(
+                        best_ref,
+                        best_poly.?,
+                        best_tile.?,
+                        neighbour_ref,
+                        neighbour_poly.?,
+                        neighbour_tile.?,
+                        &neighbour_node.pos,
+                    ) catch continue;
+                }
+
+                // Calculate cost and heuristic
+                var cost: f32 = 0;
+                var heuristic: f32 = 0;
+
+                if (neighbour_ref == end_ref) {
+                    // Special case for end node
+                    const cur_cost = filter.getCost(
+                        &best_node.pos,
+                        &neighbour_node.pos,
+                        parent_ref,
+                        parent_tile,
+                        parent_poly,
+                        best_ref,
+                        best_tile.?,
+                        best_poly.?,
+                        neighbour_ref,
+                        neighbour_tile,
+                        neighbour_poly,
+                    );
+
+                    const end_cost = filter.getCost(
+                        &neighbour_node.pos,
+                        end_pos,
+                        best_ref,
+                        best_tile.?,
+                        best_poly.?,
+                        neighbour_ref,
+                        neighbour_tile.?,
+                        neighbour_poly.?,
+                        0,
+                        null,
+                        null,
+                    );
+
+                    cost = best_node.cost + cur_cost + end_cost;
+                    heuristic = 0;
+                } else {
+                    // Regular node
+                    const cur_cost = filter.getCost(
+                        &best_node.pos,
+                        &neighbour_node.pos,
+                        parent_ref,
+                        parent_tile,
+                        parent_poly,
+                        best_ref,
+                        best_tile.?,
+                        best_poly.?,
+                        neighbour_ref,
+                        neighbour_tile.?,
+                        neighbour_poly.?,
+                    );
+
+                    cost = best_node.cost + cur_cost;
+
+                    const ndx = neighbour_node.pos[0] - end_pos[0];
+                    const ndy = neighbour_node.pos[1] - end_pos[1];
+                    const ndz = neighbour_node.pos[2] - end_pos[2];
+                    heuristic = @sqrt(ndx * ndx + ndy * ndy + ndz * ndz) * H_SCALE;
+                }
+
+                const total = cost + heuristic;
+
+                // Skip if worse than existing
+                if (neighbour_node.flags.open and total >= neighbour_node.total) continue;
+                if (neighbour_node.flags.closed and total >= neighbour_node.total) continue;
+
+                // Update node
+                neighbour_node.pidx = @intCast(node_pool.getNodeIdx(best_node));
+                neighbour_node.id = neighbour_ref;
+                neighbour_node.flags.closed = false;
+                neighbour_node.cost = cost;
+                neighbour_node.total = total;
+
+                if (neighbour_node.flags.open) {
+                    // Already in open list, update position
+                    open_list.modify(neighbour_node);
+                } else {
+                    // Add to open list
+                    neighbour_node.flags.open = true;
+                    open_list.push(neighbour_node);
+                }
+
+                // Update nearest node to target
+                if (heuristic < last_best_node_cost) {
+                    last_best_node_cost = heuristic;
+                    last_best_node = neighbour_node;
+                }
+            }
+        }
+
+        // Extract path
+        try self.getPathToNode(last_best_node, path, path_count);
+    }
+
+    /// Extract path from A* node tree
+    fn getPathToNode(
+        self: *const Self,
+        end_node: *Node,
+        path: []PolyRef,
+        path_count: *usize,
+    ) !void {
+        const node_pool = self.node_pool orelse return error.NoNodePool;
+
+        // Find the length of the entire path
+        var cur_node: ?*Node = end_node;
+        var length: usize = 0;
+        while (cur_node != null) {
+            length += 1;
+            const pidx = cur_node.?.pidx;
+            if (pidx == 0) break;
+            cur_node = node_pool.getNodeAtIdx(pidx);
+        }
+
+        // If the path cannot be fully stored, advance to last node we can store
+        cur_node = end_node;
+        var write_count = length;
+        while (write_count > path.len) : (write_count -= 1) {
+            const pidx = cur_node.?.pidx;
+            if (pidx == 0) break;
+            cur_node = node_pool.getNodeAtIdx(pidx);
+        }
+
+        // Write path in reverse order
+        var i: usize = write_count;
+        while (i > 0) {
+            i -= 1;
+            if (cur_node) |node| {
+                path[i] = node.id;
+                const pidx = node.pidx;
+                if (pidx == 0) {
+                    cur_node = null;
+                } else {
+                    cur_node = node_pool.getNodeAtIdx(pidx);
+                }
+            }
+        }
+
+        path_count.* = @min(length, path.len);
+    }
+
+    /// Find the nearest polygon to a point
+    pub fn findNearestPoly(
+        self: *const Self,
+        center: *const [3]f32,
+        half_extents: *const [3]f32,
+        filter: *const QueryFilter,
+        nearest_ref: *PolyRef,
+        nearest_pt: ?*[3]f32,
+    ) !void {
+        var _z = tracy.zone(@src(), "dtFindNearestPoly");
+        defer _z.end();
+        const nav = self.nav orelse return error.NoNavMesh;
+
+        // Query nearby polygons
+        var polys: [128]PolyRef = undefined;
+        var poly_count: usize = 0;
+        try self.queryPolygons(center, half_extents, filter, &polys, &poly_count);
+
+        // Find nearest among the candidates
+        var nearest: PolyRef = 0;
+        var nearest_dist_sqr: f32 = std.math.floatMax(f32);
+        var temp_nearest_pt: [3]f32 = undefined;
+
+        for (0..poly_count) |i| {
+            const ref = polys[i];
+            var tile_opt: ?*const MeshTile = null;
+            var poly_opt: ?*const Poly = null;
+            nav.getTileAndPolyByRefUnsafe(ref, &tile_opt, &poly_opt);
+            const tile = tile_opt.?; // valid by BV-tree construction
+            const poly = poly_opt.?;
+
+            var closest_pt: [3]f32 = undefined;
+            var pos_over_poly: bool = false;
+
+            NavMesh.closestPointOnPolyResolved(tile, poly, center, &closest_pt, &pos_over_poly);
+
+            // Calculate distance
+            var diff: [3]f32 = undefined;
+            for (0..3) |j| {
+                diff[j] = center[j] - closest_pt[j];
+            }
+
+            var d: f32 = undefined;
+            if (pos_over_poly) {
+                // Point is over polygon - use vertical distance with climb height adjustment
+                const climb = tile.header.?.walkable_climb;
+                d = @abs(diff[1]) - climb;
+                d = if (d > 0) d * d else 0;
+            } else {
+                // Use Euclidean distance
+                d = diff[0] * diff[0] + diff[1] * diff[1] + diff[2] * diff[2];
+            }
+
+            // Changed from < to <= for consistency with C++ (keeps first found poly at equal distance)
+            if (d < nearest_dist_sqr) {
+                temp_nearest_pt = closest_pt;
+                nearest_dist_sqr = d;
+                nearest = ref;
+            }
+        }
+
+        nearest_ref.* = nearest;
+        if (nearest_pt) |npt| {
+            if (nearest != 0) {
+                npt.* = temp_nearest_pt;
+            }
+        }
+    }
+
+    /// Get portal points between two polygons with poly type information
+    pub fn getPortalPoints(
+        self: *const Self,
+        from: PolyRef,
+        to: PolyRef,
+        left: *[3]f32,
+        right: *[3]f32,
+        from_type: *u8,
+        to_type: *u8,
+    ) !void {
+        var _z = tracy.zoneDeep(@src(), "getPortalPoints");
+        defer _z.end();
+        const nav = self.nav orelse return error.NoNavMesh;
+
+        const from_result = try nav.getTileAndPolyByRef(from);
+        const from_tile = from_result.tile;
+        const from_poly = from_result.poly;
+        from_type.* = @intFromEnum(from_poly.getType());
+
+        const to_result = try nav.getTileAndPolyByRef(to);
+        const to_tile = to_result.tile;
+        const to_poly = to_result.poly;
+        to_type.* = @intFromEnum(to_poly.getType());
+
+        try nav.getPortalPoints(from, from_poly, from_tile, to, to_poly, to_tile, left, right);
+    }
+
+    /// getPortalPoints with pre-resolved tile/poly pointers (no re-resolution).
+    /// Caller guarantees the pointers correspond to the refs and are valid.
+    pub fn getPortalPointsResolved(
+        self: *const Self,
+        from_ref: PolyRef,
+        from_poly: *const Poly,
+        from_tile: *const MeshTile,
+        to_ref: PolyRef,
+        to_poly: *const Poly,
+        to_tile: *const MeshTile,
+        left: *[3]f32,
+        right: *[3]f32,
+    ) !void {
+        const nav = self.nav orelse return error.NoNavMesh;
+        try nav.getPortalPoints(from_ref, from_poly, from_tile, to_ref, to_poly, to_tile, left, right);
+    }
+
+    /// Find the straight path from start to end position using string pulling
+    /// This performs 'string pulling' to create a sequence of waypoints from a polygon path
+    pub fn findStraightPath(
+        self: *const Self,
+        start_pos: *const [3]f32,
+        end_pos: *const [3]f32,
+        path: []const PolyRef,
+        straight_path: []f32,
+        straight_path_flags: ?[]u8,
+        straight_path_refs: ?[]PolyRef,
+        straight_path_count: *usize,
+        options: u32,
+    ) !common.Status {
+        @setRuntimeSafety(false);
+        var _z = tracy.zone(@src(), "dtFindStraightPath");
+        defer _z.end();
+        const nav = self.nav orelse return error.NoNavMesh;
+
+        straight_path_count.* = 0;
+
+        if (!math.visFinite(start_pos) or
+            !math.visFinite(end_pos) or
+            path.len == 0 or
+            path[0] == 0 or
+            straight_path.len < 3)
+        {
+            return common.Status{ .failure = true, .invalid_param = true };
+        }
+
+        const max_straight_path = straight_path.len / 3;
+
+        // Clamp start position to first polygon
+        var closest_start_pos: [3]f32 = undefined;
+        try nav.closestPointOnPolyBoundary(path[0], start_pos, &closest_start_pos);
+
+        // Clamp end position to last polygon
+        var closest_end_pos: [3]f32 = undefined;
+        try nav.closestPointOnPolyBoundary(path[path.len - 1], end_pos, &closest_end_pos);
+
+        // Add start point
+        var stat = appendVertex(&closest_start_pos, common.STRAIGHTPATH_START, path[0], straight_path, straight_path_flags, straight_path_refs, straight_path_count, max_straight_path);
+        if (!stat.isInProgress()) {
+            return stat;
+        }
+
+        if (path.len > 1) {
+            var portal_apex: [3]f32 = undefined;
+            var portal_left: [3]f32 = undefined;
+            var portal_right: [3]f32 = undefined;
+
+            math.vcopy(&portal_apex, &closest_start_pos);
+            math.vcopy(&portal_left, &portal_apex);
+            math.vcopy(&portal_right, &portal_apex);
+
+            var apex_index: usize = 0;
+            var left_index: usize = 0;
+            var right_index: usize = 0;
+
+            var left_poly_type: u8 = 0;
+            var right_poly_type: u8 = 0;
+
+            var left_poly_ref: PolyRef = path[0];
+            var right_poly_ref: PolyRef = path[0];
+
+            var i: usize = 0;
+            while (i < path.len) : (i += 1) {
+                var left: [3]f32 = undefined;
+                var right: [3]f32 = undefined;
+                var to_type: u8 = 0;
+
+                if (i + 1 < path.len) {
+                    var from_type: u8 = undefined;
+                    // Next portal
+                    self.getPortalPoints(path[i], path[i + 1], &left, &right, &from_type, &to_type) catch {
+                        // Failed to get portal - clamp end and return partial path
+                        nav.closestPointOnPolyBoundary(path[i], end_pos, &closest_end_pos) catch {
+                            return common.Status{ .failure = true, .invalid_param = true };
+                        };
+
+                        // Append portals along current segment
+                        if ((options & (common.STRAIGHTPATH_AREA_CROSSINGS | common.STRAIGHTPATH_ALL_CROSSINGS)) != 0) {
+                            _ = try self.appendPortals(apex_index, i, &closest_end_pos, path, straight_path, straight_path_flags, straight_path_refs, straight_path_count, max_straight_path, options);
+                        }
+
+                        _ = appendVertex(&closest_end_pos, 0, path[i], straight_path, straight_path_flags, straight_path_refs, straight_path_count, max_straight_path);
+
+                        const result = if (straight_path_count.* >= max_straight_path)
+                            common.Status{ .success = true, .partial_result = true, .buffer_too_small = true }
+                        else
+                            common.Status{ .success = true, .partial_result = true };
+                        return result;
+                    };
+
+                    // Skip if very close to the portal
+                    if (i == 0) {
+                        var t: f32 = undefined;
+                        if (math.distancePtSegSqr2D(&portal_apex, &left, &right, &t) < math.sqr(f32, 0.001)) {
+                            continue;
+                        }
+                    }
+                } else {
+                    // End of path
+                    math.vcopy(&left, &closest_end_pos);
+                    math.vcopy(&right, &closest_end_pos);
+                    to_type = @intFromEnum(common.PolyType.ground);
+                }
+
+                // Right vertex
+                if (math.triArea2DArray(&portal_apex, &portal_right, &right) <= 0.0) {
+                    if (math.vequal(&portal_apex, &portal_right) or
+                        math.triArea2DArray(&portal_apex, &portal_left, &right) > 0.0)
+                    {
+                        math.vcopy(&portal_right, &right);
+                        right_poly_ref = if (i + 1 < path.len) path[i + 1] else 0;
+                        right_poly_type = to_type;
+                        right_index = i;
+                    } else {
+                        // Append portals along current segment
+                        if ((options & (common.STRAIGHTPATH_AREA_CROSSINGS | common.STRAIGHTPATH_ALL_CROSSINGS)) != 0) {
+                            stat = try self.appendPortals(apex_index, left_index, &portal_left, path, straight_path, straight_path_flags, straight_path_refs, straight_path_count, max_straight_path, options);
+                            if (!stat.isInProgress()) {
+                                return stat;
+                            }
+                        }
+
+                        math.vcopy(&portal_apex, &portal_left);
+                        apex_index = left_index;
+
+                        var flags: u8 = 0;
+                        if (left_poly_ref == 0) {
+                            flags = common.STRAIGHTPATH_END;
+                        } else if (left_poly_type == @intFromEnum(common.PolyType.offmesh_connection)) {
+                            flags = common.STRAIGHTPATH_OFFMESH_CONNECTION;
+                        }
+                        const ref = left_poly_ref;
+
+                        stat = appendVertex(&portal_apex, flags, ref, straight_path, straight_path_flags, straight_path_refs, straight_path_count, max_straight_path);
+                        if (!stat.isInProgress()) {
+                            return stat;
+                        }
+
+                        math.vcopy(&portal_left, &portal_apex);
+                        math.vcopy(&portal_right, &portal_apex);
+                        left_index = apex_index;
+                        right_index = apex_index;
+
+                        // Restart
+                        i = apex_index;
+                        continue;
+                    }
+                }
+
+                // Left vertex
+                if (math.triArea2DArray(&portal_apex, &portal_left, &left) >= 0.0) {
+                    if (math.vequal(&portal_apex, &portal_left) or
+                        math.triArea2DArray(&portal_apex, &portal_right, &left) < 0.0)
+                    {
+                        math.vcopy(&portal_left, &left);
+                        left_poly_ref = if (i + 1 < path.len) path[i + 1] else 0;
+                        left_poly_type = to_type;
+                        left_index = i;
+                    } else {
+                        // Append portals along current segment
+                        if ((options & (common.STRAIGHTPATH_AREA_CROSSINGS | common.STRAIGHTPATH_ALL_CROSSINGS)) != 0) {
+                            stat = try self.appendPortals(apex_index, right_index, &portal_right, path, straight_path, straight_path_flags, straight_path_refs, straight_path_count, max_straight_path, options);
+                            if (!stat.isInProgress()) {
+                                return stat;
+                            }
+                        }
+
+                        math.vcopy(&portal_apex, &portal_right);
+                        apex_index = right_index;
+
+                        var flags: u8 = 0;
+                        if (right_poly_ref == 0) {
+                            flags = common.STRAIGHTPATH_END;
+                        } else if (right_poly_type == @intFromEnum(common.PolyType.offmesh_connection)) {
+                            flags = common.STRAIGHTPATH_OFFMESH_CONNECTION;
+                        }
+                        const ref = right_poly_ref;
+
+                        stat = appendVertex(&portal_apex, flags, ref, straight_path, straight_path_flags, straight_path_refs, straight_path_count, max_straight_path);
+                        if (!stat.isInProgress()) {
+                            return stat;
+                        }
+
+                        math.vcopy(&portal_left, &portal_apex);
+                        math.vcopy(&portal_right, &portal_apex);
+                        left_index = apex_index;
+                        right_index = apex_index;
+
+                        // Restart
+                        i = apex_index;
+                        continue;
+                    }
+                }
+            }
+
+            // Append portals along final segment
+            if ((options & (common.STRAIGHTPATH_AREA_CROSSINGS | common.STRAIGHTPATH_ALL_CROSSINGS)) != 0) {
+                stat = try self.appendPortals(apex_index, path.len - 1, &closest_end_pos, path, straight_path, straight_path_flags, straight_path_refs, straight_path_count, max_straight_path, options);
+                if (!stat.isInProgress()) {
+                    return stat;
+                }
+            }
+        }
+
+        // Always append end point
+        _ = appendVertex(&closest_end_pos, common.STRAIGHTPATH_END, 0, straight_path, straight_path_flags, straight_path_refs, straight_path_count, max_straight_path);
+
+        return if (straight_path_count.* >= max_straight_path)
+            common.Status{ .success = true, .buffer_too_small = true }
+        else
+            common.Status.ok();
+    }
+
+    /// Move along the surface from start to end position
+    /// This method is optimized for small delta movement and a small number of polygons
+    pub fn moveAlongSurface(
+        self: *const Self,
+        start_ref: PolyRef,
+        start_pos: *const [3]f32,
+        end_pos: *const [3]f32,
+        filter: *const QueryFilter,
+        result_pos: *[3]f32,
+        visited: []PolyRef,
+        visited_count: *usize,
+    ) !common.Status {
+        var _z = tracy.zone(@src(), "dtMoveAlongSurface");
+        defer _z.end();
+        const nav = self.nav orelse return error.NoNavMesh;
+        const tiny_pool = self.tiny_node_pool orelse return error.NoNodePool;
+
+        visited_count.* = 0;
+
+        // Upstream validates the start with the NAV-level isValidPolyRef (decode +
+        // validity, NO filter) — the start poly is not filter-checked; the filter is
+        // applied to NEIGHBOURS during the walk. The query-level isValidPolyRef here
+        // added a redundant getTileAndPolyByRef + passFilter on the hot path. Match
+        // C++ 1:1 (dtNavMeshQuery::moveAlongSurface uses m_nav->isValidPolyRef).
+        if (!nav.isValidPolyRef(start_ref) or
+            !math.Vec3.fromArray(start_pos).isFinite() or
+            !math.Vec3.fromArray(end_pos).isFinite() or
+            visited.len == 0)
+        {
+            return common.Status{ .failure = true, .invalid_param = true };
+        }
+
+        var status = common.Status.ok();
+
+        const MAX_STACK = 48;
+        var stack: [MAX_STACK]?*Node = undefined;
+        var nstack: usize = 0;
+
+        tiny_pool.clear();
+
+        // Initialize with start polygon
+        var start_node = tiny_pool.getNode(start_ref, 0) orelse return error.OutOfNodes;
+        start_node.pidx = 0;
+        start_node.cost = 0;
+        start_node.total = 0;
+        start_node.id = start_ref;
+        start_node.flags.closed = true;
+        stack[nstack] = start_node;
+        nstack += 1;
+
+        var best_pos: [3]f32 = undefined;
+        var best_dist: f32 = std.math.floatMax(f32);
+        var best_node: ?*Node = null;
+        math.vcopy(&best_pos, start_pos);
+
+        // Search constraints
+        var search_pos: [3]f32 = undefined;
+        math.vlerp(&search_pos, start_pos, end_pos, 0.5);
+        const half_dist = math.Vec3.fromArray(start_pos).dist(math.Vec3.fromArray(end_pos)) / 2.0 + 0.001;
+        const search_rad_sqr = half_dist * half_dist;
+
+        var verts: [common.VERTS_PER_POLYGON * 3]f32 = undefined;
+
+        while (nstack > 0) {
+            // Pop front (FIFO)
+            const cur_node = stack[0].?;
+            var i: usize = 0;
+            while (i < nstack - 1) : (i += 1) {
+                stack[i] = stack[i + 1];
+            }
+            nstack -= 1;
+
+            // Get poly and tile
+            const cur_ref = cur_node.id;
+            var cur_tile: ?*const MeshTile = null;
+            var cur_poly: ?*const Poly = null;
+            nav.getTileAndPolyByRefUnsafe(cur_ref, &cur_tile, &cur_poly);
+
+            // Collect vertices
+            const nverts = cur_poly.?.vert_count;
+            for (0..nverts) |vi| {
+                const v_idx = @as(usize, cur_poly.?.verts[vi]) * 3;
+                math.vcopy(verts[vi * 3 .. vi * 3 + 3][0..3], cur_tile.?.verts[v_idx .. v_idx + 3][0..3]);
+            }
+
+            // If target is inside the poly, stop search
+            const vert_slice = verts[0 .. nverts * 3];
+            var vert_vec3s: [common.VERTS_PER_POLYGON]math.Vec3 = undefined;
+            for (0..nverts) |vi| {
+                vert_vec3s[vi] = math.Vec3.fromArray(vert_slice[vi * 3 .. vi * 3 + 3][0..3]);
+            }
+            if (math.pointInPolygon(math.Vec3.fromArray(end_pos), vert_vec3s[0..nverts])) {
+                best_node = cur_node;
+                math.vcopy(&best_pos, end_pos);
+                break;
+            }
+
+            // Find wall edges and find nearest point inside the walls
+            var j: usize = nverts - 1;
+            i = 0;
+            while (i < nverts) : ({
+                j = i;
+                i += 1;
+            }) {
+                // Find links to neighbours
+                const MAX_NEIS = 8;
+                var nneis: usize = 0;
+                var neis: [MAX_NEIS]PolyRef = undefined;
+
+                if ((cur_poly.?.neis[j] & common.EXT_LINK) != 0) {
+                    // Tile border
+                    var k = cur_poly.?.first_link;
+                    while (k != common.NULL_LINK) : (k = cur_tile.?.links[k].next) {
+                        const link = &cur_tile.?.links[k];
+                        if (link.edge == j) {
+                            if (link.ref != 0) {
+                                var nei_tile: ?*const MeshTile = null;
+                                var nei_poly: ?*const Poly = null;
+                                nav.getTileAndPolyByRefUnsafe(link.ref, &nei_tile, &nei_poly);
+                                if (filter.passFilter(link.ref, nei_tile.?, nei_poly.?)) {
+                                    if (nneis < MAX_NEIS) {
+                                        neis[nneis] = link.ref;
+                                        nneis += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if (cur_poly.?.neis[j] != 0) {
+                    const idx = cur_poly.?.neis[j] - 1;
+                    const ref = nav.getPolyRefBase(cur_tile.?) | idx;
+                    if (filter.passFilter(ref, cur_tile.?, &cur_tile.?.polys[idx])) {
+                        neis[nneis] = ref;
+                        nneis += 1;
+                    }
+                }
+
+                if (nneis == 0) {
+                    // Wall edge, calc distance
+                    const vj = verts[j * 3 .. j * 3 + 3][0..3];
+                    const vi = verts[i * 3 .. i * 3 + 3][0..3];
+                    var tseg: f32 = undefined;
+                    const dist_sqr = math.distancePtSegSqr2D(end_pos, vj, vi, &tseg);
+                    if (dist_sqr < best_dist) {
+                        math.vlerp(&best_pos, vj, vi, tseg);
+                        best_dist = dist_sqr;
+                        best_node = cur_node;
+                    }
+                } else {
+                    for (0..nneis) |ki| {
+                        // Skip if no node can be allocated
+                        var neighbour_node = tiny_pool.getNode(neis[ki], 0) orelse continue;
+                        // Skip if already visited
+                        if (neighbour_node.flags.closed) continue;
+
+                        // Skip the link if too far from search constraint
+                        const vj = verts[j * 3 .. j * 3 + 3][0..3];
+                        const vi = verts[i * 3 .. i * 3 + 3][0..3];
+                        var tseg: f32 = undefined;
+                        const dist_sqr = math.distancePtSegSqr2D(&search_pos, vj, vi, &tseg);
+                        if (dist_sqr > search_rad_sqr) continue;
+
+                        // Mark as visited and push to queue
+                        if (nstack < MAX_STACK) {
+                            neighbour_node.pidx = @intCast(tiny_pool.getNodeIdx(cur_node));
+                            neighbour_node.flags.closed = true;
+                            stack[nstack] = neighbour_node;
+                            nstack += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Build result path
+        var n: usize = 0;
+        if (best_node) |node| {
+            // Reverse the path
+            var prev: ?*Node = null;
+            var cur: ?*Node = node;
+            while (cur) |current| {
+                const next = if (current.pidx != 0) tiny_pool.getNodeAtIdx(current.pidx) else null;
+                current.pidx = @intCast(tiny_pool.getNodeIdx(prev));
+                prev = current;
+                cur = next;
+            }
+
+            // Store result
+            cur = prev;
+            while (cur) |current| {
+                if (n < visited.len) {
+                    visited[n] = current.id;
+                    n += 1;
+                } else {
+                    status.buffer_too_small = true;
+                    break;
+                }
+                cur = if (current.pidx != 0) tiny_pool.getNodeAtIdx(current.pidx) else null;
+            }
+        }
+
+        math.vcopy(result_pos, &best_pos);
+        visited_count.* = n;
+
+        return status;
+    }
+
+    /// Cast a ray from start to end position
+    /// This method is optimized for short distance line-of-sight checks
+    pub fn raycast(
+        self: *const Self,
+        start_ref: PolyRef,
+        start_pos: *const [3]f32,
+        end_pos: *const [3]f32,
+        filter: *const QueryFilter,
+        options: u32,
+        hit: *RaycastHit,
+        prev_ref: PolyRef,
+    ) !common.Status {
+        var _z = tracy.zone(@src(), "dtRaycast");
+        defer _z.end();
+        const nav = self.nav orelse return error.NoNavMesh;
+
+        hit.t = 0;
+        hit.path_count = 0;
+        hit.path_cost = 0;
+
+        // Validate input. Upstream uses NAV-level isValidPolyRef (no filter) for
+        // start/prev — match C++ 1:1 (DetourNavMeshQuery.cpp:2495/2499).
+        const valid_start = nav.isValidPolyRef(start_ref);
+        const finite_start = math.Vec3.fromArray(start_pos).isFinite();
+        const finite_end = math.Vec3.fromArray(end_pos).isFinite();
+        const valid_prev = (prev_ref == 0 or nav.isValidPolyRef(prev_ref));
+
+        if (!valid_start or !finite_start or !finite_end or !valid_prev) {
+            return common.Status{ .failure = true, .invalid_param = true };
+        }
+
+        var dir: [3]f32 = undefined;
+        var cur_pos: [3]f32 = undefined;
+        var last_pos: [3]f32 = undefined;
+        var verts: [common.VERTS_PER_POLYGON * 3 + 3]f32 = undefined;
+        var n: usize = 0;
+
+        math.vcopy(&cur_pos, start_pos);
+        dir[0] = end_pos[0] - start_pos[0];
+        dir[1] = end_pos[1] - start_pos[1];
+        dir[2] = end_pos[2] - start_pos[2];
+        hit.hit_normal = .{ 0, 0, 0 };
+
+        var status = common.Status.ok();
+
+        var prev_tile: ?*const MeshTile = null;
+        var prev_poly: ?*const Poly = null;
+        var tile: ?*const MeshTile = null;
+        var poly: ?*const Poly = null;
+        var next_tile: ?*const MeshTile = null;
+        var next_poly: ?*const Poly = null;
+
+        var prev_ref_mut = prev_ref;
+        var cur_ref = start_ref;
+        nav.getTileAndPolyByRefUnsafe(cur_ref, &tile, &poly);
+        next_tile = tile;
+        next_poly = poly;
+        prev_tile = tile;
+        prev_poly = poly;
+
+        if (prev_ref != 0) {
+            nav.getTileAndPolyByRefUnsafe(prev_ref, &prev_tile, &prev_poly);
+        }
+
+        while (cur_ref != 0) {
+            // Cast ray against current polygon
+            // Collect vertices
+            var nv: usize = 0;
+            for (0..poly.?.vert_count) |i| {
+                const v_idx = @as(usize, poly.?.verts[i]) * 3;
+                math.vcopy(verts[nv * 3 .. nv * 3 + 3][0..3], tile.?.verts[v_idx .. v_idx + 3][0..3]);
+                nv += 1;
+            }
+
+            var tmin: f32 = undefined;
+            var tmax: f32 = undefined;
+            var seg_min: i32 = undefined;
+            var seg_max: i32 = undefined;
+
+            const intersect = math.intersectSegmentPoly2D(start_pos, end_pos, verts[0 .. nv * 3], nv, &tmin, &tmax, &seg_min, &seg_max);
+
+            if (!intersect) {
+                // Could not hit the polygon, keep the old t and report hit
+                hit.path_count = n;
+                return status;
+            }
+
+            hit.hit_edge_index = @intCast(seg_max);
+
+            // Keep track of furthest t so far
+            if (tmax > hit.t) {
+                hit.t = tmax;
+            }
+
+            // Store visited polygons
+            if (n < hit.path.len) {
+                hit.path[n] = cur_ref;
+                n += 1;
+            } else {
+                status.buffer_too_small = true;
+            }
+
+            // Ray end is completely inside the polygon
+            if (seg_max == -1) {
+                hit.t = std.math.floatMax(f32);
+                hit.path_count = n;
+
+                // Add the cost
+                if ((options & common.RAYCAST_USE_COSTS) != 0) {
+                    hit.path_cost += filter.getCost(&cur_pos, end_pos, prev_ref_mut, prev_tile.?, prev_poly.?, cur_ref, tile.?, poly.?, cur_ref, tile.?, poly.?);
+                }
+                return status;
+            }
+
+            // Follow neighbours
+            var next_ref: PolyRef = 0;
+
+            var i = poly.?.first_link;
+            while (i != common.NULL_LINK) : (i = tile.?.links[i].next) {
+                const link = &tile.?.links[i];
+
+                // Find link which contains this edge
+                if (@as(i32, @intCast(link.edge)) != seg_max) {
+                    continue;
+                }
+
+                // Get pointer to the next polygon
+                nav.getTileAndPolyByRefUnsafe(link.ref, &next_tile, &next_poly);
+
+                // Skip off-mesh connections
+                if (next_poly.?.getType() == .offmesh_connection) {
+                    continue;
+                }
+
+                // Skip links based on filter
+                if (!filter.passFilter(link.ref, next_tile.?, next_poly.?)) {
+                    continue;
+                }
+
+                // If the link is internal, just return the ref
+                if (link.side == 0xff) {
+                    next_ref = link.ref;
+                    break;
+                }
+
+                // If the link is at tile boundary
+                // Check if the link spans the whole edge, and accept
+                if (link.bmin == 0 and link.bmax == 255) {
+                    next_ref = link.ref;
+                    break;
+                }
+
+                // Check for partial edge links
+                const v0 = poly.?.verts[link.edge];
+                const v1 = poly.?.verts[@mod(link.edge + 1, poly.?.vert_count)];
+                const left = tile.?.verts[v0 * 3 .. v0 * 3 + 3][0..3];
+                const right = tile.?.verts[v1 * 3 .. v1 * 3 + 3][0..3];
+
+                // Check that the intersection lies inside the link portal
+                if (link.side == 0 or link.side == 4) {
+                    // Calculate link size
+                    const s = 1.0 / 255.0;
+                    var lmin = left[2] + (right[2] - left[2]) * (@as(f32, @floatFromInt(link.bmin)) * s);
+                    var lmax = left[2] + (right[2] - left[2]) * (@as(f32, @floatFromInt(link.bmax)) * s);
+                    if (lmin > lmax) {
+                        const tmp = lmin;
+                        lmin = lmax;
+                        lmax = tmp;
+                    }
+
+                    // Find Z intersection
+                    const z = start_pos[2] + (end_pos[2] - start_pos[2]) * tmax;
+                    if (z >= lmin and z <= lmax) {
+                        next_ref = link.ref;
+                        break;
+                    }
+                } else if (link.side == 2 or link.side == 6) {
+                    // Calculate link size
+                    const s = 1.0 / 255.0;
+                    var lmin = left[0] + (right[0] - left[0]) * (@as(f32, @floatFromInt(link.bmin)) * s);
+                    var lmax = left[0] + (right[0] - left[0]) * (@as(f32, @floatFromInt(link.bmax)) * s);
+                    if (lmin > lmax) {
+                        const tmp = lmin;
+                        lmin = lmax;
+                        lmax = tmp;
+                    }
+
+                    // Find X intersection
+                    const x = start_pos[0] + (end_pos[0] - start_pos[0]) * tmax;
+                    if (x >= lmin and x <= lmax) {
+                        next_ref = link.ref;
+                        break;
+                    }
+                }
+            }
+
+            // Add the cost
+            if ((options & common.RAYCAST_USE_COSTS) != 0) {
+                // Compute the intersection point at the furthest end of the polygon
+                // and correct the height (since the raycast moves in 2D)
+                math.vcopy(&last_pos, &cur_pos);
+                cur_pos[0] = start_pos[0] + dir[0] * hit.t;
+                cur_pos[1] = start_pos[1] + dir[1] * hit.t;
+                cur_pos[2] = start_pos[2] + dir[2] * hit.t;
+
+                const e1 = verts[@as(usize, @intCast(seg_max)) * 3 .. @as(usize, @intCast(seg_max)) * 3 + 3][0..3];
+                const e2 = verts[(@mod(@as(usize, @intCast(seg_max)) + 1, nv)) * 3 .. (@mod(@as(usize, @intCast(seg_max)) + 1, nv)) * 3 + 3][0..3];
+
+                var e_dir: [3]f32 = undefined;
+                e_dir[0] = e2[0] - e1[0];
+                e_dir[1] = e2[1] - e1[1];
+                e_dir[2] = e2[2] - e1[2];
+
+                var diff: [3]f32 = undefined;
+                diff[0] = cur_pos[0] - e1[0];
+                diff[1] = cur_pos[1] - e1[1];
+                diff[2] = cur_pos[2] - e1[2];
+
+                const s = if (math.sqr(f32, e_dir[0]) > math.sqr(f32, e_dir[2]))
+                    diff[0] / e_dir[0]
+                else
+                    diff[2] / e_dir[2];
+
+                cur_pos[1] = e1[1] + e_dir[1] * s;
+
+                hit.path_cost += filter.getCost(&last_pos, &cur_pos, prev_ref_mut, prev_tile.?, prev_poly.?, cur_ref, tile.?, poly.?, next_ref, next_tile.?, next_poly.?);
+            }
+
+            if (next_ref == 0) {
+                // No neighbour, we hit a wall
+                // Calculate hit normal
+                const a = @as(usize, @intCast(seg_max));
+                const b = if (seg_max + 1 < @as(i32, @intCast(nv))) @as(usize, @intCast(seg_max + 1)) else 0;
+                const va = verts[a * 3 .. a * 3 + 3][0..3];
+                const vb = verts[b * 3 .. b * 3 + 3][0..3];
+                const dx = vb[0] - va[0];
+                const dz = vb[2] - va[2];
+                hit.hit_normal[0] = dz;
+                hit.hit_normal[1] = 0;
+                hit.hit_normal[2] = -dx;
+
+                // Normalize
+                const len = @sqrt(hit.hit_normal[0] * hit.hit_normal[0] + hit.hit_normal[2] * hit.hit_normal[2]);
+                if (len > 0) {
+                    hit.hit_normal[0] /= len;
+                    hit.hit_normal[2] /= len;
+                }
+
+                hit.path_count = n;
+                return status;
+            }
+
+            // No hit, advance to neighbour polygon
+            prev_ref_mut = cur_ref;
+            cur_ref = next_ref;
+            prev_tile = tile;
+            tile = next_tile;
+            prev_poly = poly;
+            poly = next_poly;
+
+            if (status.buffer_too_small) {
+                status.partial_result = true;
+                break;
+            }
+        }
+
+        hit.path_count = n;
+        return status;
+    }
+
+    /// Find the distance from the specified position to the nearest polygon wall
+    /// Uses Dijkstra search within maxRadius to find walls
+    pub fn findDistanceToWall(
+        self: *const Self,
+        start_ref: PolyRef,
+        center_pos: *const [3]f32,
+        max_radius: f32,
+        filter: *const QueryFilter,
+        hit_dist: *f32,
+        hit_pos: *[3]f32,
+        hit_normal: *[3]f32,
+    ) !common.Status {
+        var _z = tracy.zone(@src(), "dtFindDistanceToWall");
+        defer _z.end();
+
+        const nav = self.nav orelse return error.NoNavMesh;
+        const node_pool = self.node_pool orelse return error.NoNodePool;
+        const open_list = self.open_list orelse return error.NoOpenList;
+
+        // Validate input. Upstream uses NAV-level isValidPolyRef (no filter) — match
+        // C++ 1:1 (DetourNavMeshQuery.cpp findDistanceToWall m_nav->isValidPolyRef).
+        if (!nav.isValidPolyRef(start_ref) or
+            !math.Vec3.fromArray(center_pos).isFinite() or
+            max_radius < 0 or !std.math.isFinite(max_radius))
+        {
+            return common.Status{ .failure = true, .invalid_param = true };
+        }
+
+        node_pool.clear();
+        open_list.clear();
+
+        var start_node = node_pool.getNode(start_ref, 0) orelse return error.OutOfNodes;
+        math.vcopy(&start_node.pos, center_pos);
+        start_node.pidx = 0;
+        start_node.cost = 0;
+        start_node.total = 0;
+        start_node.id = start_ref;
+        start_node.flags.open = true;
+        open_list.push(start_node);
+
+        var radius_sqr = max_radius * max_radius;
+        var status = common.Status.ok();
+
+        while (!open_list.empty()) {
+            var best_node = open_list.popAssumeNotEmpty();
+            best_node.flags.open = false;
+            best_node.flags.closed = true;
+
+            // Get poly and tile
+            const best_ref = best_node.id;
+            var best_tile: ?*const MeshTile = null;
+            var best_poly: ?*const Poly = null;
+            nav.getTileAndPolyByRefUnsafe(best_ref, &best_tile, &best_poly);
+
+            // Get parent poly and tile
+            var parent_ref: PolyRef = 0;
+            var parent_tile: ?*const MeshTile = null;
+            var parent_poly: ?*const Poly = null;
+            if (best_node.pidx != 0) {
+                const parent_node = node_pool.getNodeAtIdx(best_node.pidx) orelse null;
+                if (parent_node) |pn| {
+                    parent_ref = pn.id;
+                }
+            }
+            if (parent_ref != 0) {
+                nav.getTileAndPolyByRefUnsafe(parent_ref, &parent_tile, &parent_poly);
+            }
+
+            // Hit test walls
+            var j: usize = best_poly.?.vert_count - 1;
+            var i: usize = 0;
+            while (i < best_poly.?.vert_count) : ({
+                j = i;
+                i += 1;
+            }) {
+                // Skip non-solid edges
+                if ((best_poly.?.neis[j] & common.EXT_LINK) != 0) {
+                    // Tile border
+                    var solid = true;
+                    var k = best_poly.?.first_link;
+                    while (k != common.NULL_LINK) : (k = best_tile.?.links[k].next) {
+                        const link = &best_tile.?.links[k];
+                        if (link.edge == j) {
+                            if (link.ref != 0) {
+                                var nei_tile: ?*const MeshTile = null;
+                                var nei_poly: ?*const Poly = null;
+                                nav.getTileAndPolyByRefUnsafe(link.ref, &nei_tile, &nei_poly);
+                                if (filter.passFilter(link.ref, nei_tile.?, nei_poly.?)) {
+                                    solid = false;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                    if (!solid) continue;
+                } else if (best_poly.?.neis[j] != 0) {
+                    // Internal edge
+                    const idx = best_poly.?.neis[j] - 1;
+                    const ref = nav.getPolyRefBase(best_tile.?) | idx;
+                    if (filter.passFilter(ref, best_tile.?, &best_tile.?.polys[idx])) {
+                        continue;
+                    }
+                }
+
+                // Calc distance to the edge
+                const vj_idx = @as(usize, best_poly.?.verts[j]) * 3;
+                const vi_idx = @as(usize, best_poly.?.verts[i]) * 3;
+                const vj = best_tile.?.verts[vj_idx .. vj_idx + 3][0..3];
+                const vi = best_tile.?.verts[vi_idx .. vi_idx + 3][0..3];
+                var tseg: f32 = undefined;
+                const dist_sqr = math.distancePtSegSqr2D(center_pos, vj, vi, &tseg);
+
+                // Edge is too far, skip
+                if (dist_sqr > radius_sqr) {
+                    continue;
+                }
+
+                // Hit wall, update radius
+                radius_sqr = dist_sqr;
+                // Calculate hit pos
+                hit_pos[0] = vj[0] + (vi[0] - vj[0]) * tseg;
+                hit_pos[1] = vj[1] + (vi[1] - vj[1]) * tseg;
+                hit_pos[2] = vj[2] + (vi[2] - vj[2]) * tseg;
+            }
+
+            // Expand to neighbours
+            var link_idx = best_poly.?.first_link;
+            while (link_idx != common.NULL_LINK) : (link_idx = best_tile.?.links[link_idx].next) {
+                const link = &best_tile.?.links[link_idx];
+                const neighbour_ref = link.ref;
+
+                // Skip invalid neighbours and do not follow back to parent
+                if (neighbour_ref == 0 or neighbour_ref == parent_ref) {
+                    continue;
+                }
+
+                // Expand to neighbour
+                var neighbour_tile: ?*const MeshTile = null;
+                var neighbour_poly: ?*const Poly = null;
+                nav.getTileAndPolyByRefUnsafe(neighbour_ref, &neighbour_tile, &neighbour_poly);
+
+                // Skip off-mesh connections
+                if (neighbour_poly.?.getType() == .offmesh_connection) {
+                    continue;
+                }
+
+                // Calc distance to the edge
+                const va_idx = @as(usize, best_poly.?.verts[link.edge]) * 3;
+                const vb_idx = @as(usize, best_poly.?.verts[@mod(link.edge + 1, best_poly.?.vert_count)]) * 3;
+                const va = best_tile.?.verts[va_idx .. va_idx + 3][0..3];
+                const vb = best_tile.?.verts[vb_idx .. vb_idx + 3][0..3];
+                var tseg: f32 = undefined;
+                const dist_sqr = math.distancePtSegSqr2D(center_pos, va, vb, &tseg);
+
+                // If the circle is not touching the next polygon, skip it
+                if (dist_sqr > radius_sqr) {
+                    continue;
+                }
+
+                if (!filter.passFilter(neighbour_ref, neighbour_tile.?, neighbour_poly.?)) {
+                    continue;
+                }
+
+                var neighbour_node = node_pool.getNode(neighbour_ref, 0) orelse {
+                    status.out_of_nodes = true;
+                    continue;
+                };
+
+                if (neighbour_node.flags.closed) {
+                    continue;
+                }
+
+                // Cost
+                if (@as(u3, @bitCast(neighbour_node.flags)) == 0) {
+                    try nav.getEdgeMidPoint(best_ref, best_poly.?, best_tile.?, neighbour_ref, neighbour_poly.?, neighbour_tile.?, &neighbour_node.pos);
+                }
+
+                const total = best_node.total + math.Vec3.fromArray(&best_node.pos).dist(math.Vec3.fromArray(&neighbour_node.pos));
+
+                // The node is already in open list and the new result is worse, skip
+                if (neighbour_node.flags.open and total >= neighbour_node.total) {
+                    continue;
+                }
+
+                neighbour_node.id = neighbour_ref;
+                neighbour_node.flags.closed = false;
+                neighbour_node.pidx = @intCast(node_pool.getNodeIdx(best_node));
+                neighbour_node.total = total;
+
+                if (neighbour_node.flags.open) {
+                    open_list.modify(neighbour_node);
+                } else {
+                    neighbour_node.flags.open = true;
+                    open_list.push(neighbour_node);
+                }
+            }
+        }
+
+        // Calc hit normal
+        hit_normal[0] = center_pos[0] - hit_pos[0];
+        hit_normal[1] = center_pos[1] - hit_pos[1];
+        hit_normal[2] = center_pos[2] - hit_pos[2];
+
+        const len = @sqrt(hit_normal[0] * hit_normal[0] + hit_normal[1] * hit_normal[1] + hit_normal[2] * hit_normal[2]);
+        if (len > 0) {
+            hit_normal[0] /= len;
+            hit_normal[1] /= len;
+            hit_normal[2] /= len;
+        }
+
+        hit_dist.* = @sqrt(radius_sqr);
+
+        return status;
+    }
+
+    /// Finds polygons within a radius that don't overlap with each other
+    /// Useful for finding a local cluster of polygons around a point
+    ///
+    /// @param start_ref Reference to starting polygon
+    /// @param center_pos Center position of search circle [x,y,z]
+    /// @param radius Search radius
+    /// @param filter Polygon filter
+    /// @param result_ref Output array for polygon references
+    /// @param result_parent Output array for parent polygon references (optional, can be null)
+    /// @param result_count Output count of found polygons
+    /// @param max_result Maximum number of polygons to return
+    /// @return Status with success/failure and buffer_too_small if needed
+    pub fn findLocalNeighbourhood(
+        self: *const Self,
+        start_ref: PolyRef,
+        center_pos: *const [3]f32,
+        radius: f32,
+        filter: *const QueryFilter,
+        result_ref: []PolyRef,
+        result_parent: ?[]PolyRef,
+        result_count: *usize,
+    ) !common.Status {
+        var _z = tracy.zone(@src(), "dtFindLocalNeighbourhood");
+        defer _z.end();
+
+        const nav = self.nav orelse return error.NoNavMesh;
+        const tiny_pool = self.tiny_node_pool orelse return error.NoNodePool;
+
+        result_count.* = 0;
+
+        // Validate input. Upstream uses NAV-level isValidPolyRef (no filter) — the
+        // start is not filter-checked; the filter applies to neighbours during the
+        // walk. Match C++ 1:1 (DetourNavMeshQuery.cpp:3128 m_nav->isValidPolyRef).
+        if (!nav.isValidPolyRef(start_ref) or
+            !math.visfinite(center_pos) or
+            radius < 0 or !math.isfinite(radius))
+        {
+            return common.Status{ .failure = true, .invalid_param = true };
+        }
+
+        const max_result = result_ref.len;
+        if (max_result <= 0) {
+            return common.Status{ .failure = true, .invalid_param = true };
+        }
+
+        const MAX_STACK = 48;
+        var stack: [MAX_STACK]?*Node = undefined;
+        var nstack: usize = 0;
+
+        tiny_pool.clear();
+
+        var start_node = tiny_pool.getNode(start_ref, 0) orelse return common.Status{ .failure = true, .out_of_nodes = true };
+        start_node.pidx = 0;
+        start_node.id = start_ref;
+        start_node.flags.closed = true;
+        stack[nstack] = start_node;
+        nstack += 1;
+
+        const radius_sqr = radius * radius;
+
+        var pa: [common.VERTS_PER_POLYGON * 3]f32 = undefined;
+        var pb: [common.VERTS_PER_POLYGON * 3]f32 = undefined;
+
+        var status = common.Status.ok();
+
+        var n: usize = 0;
+        if (n < max_result) {
+            result_ref[n] = start_node.id;
+            if (result_parent) |parents| {
+                parents[n] = 0;
+            }
+            n += 1;
+        } else {
+            status.buffer_too_small = true;
+        }
+
+        while (nstack > 0) {
+            // Pop front (FIFO)
+            const cur_node = stack[0].?;
+            var i: usize = 0;
+            while (i < nstack - 1) : (i += 1) {
+                stack[i] = stack[i + 1];
+            }
+            nstack -= 1;
+
+            // Get poly and tile
+            const cur_ref = cur_node.id;
+            var cur_tile: ?*const MeshTile = null;
+            var cur_poly: ?*const Poly = null;
+            nav.getTileAndPolyByRefUnsafe(cur_ref, &cur_tile, &cur_poly);
+
+            // Iterate through neighbours
+            var link_idx = cur_poly.?.first_link;
+            while (link_idx != common.NULL_LINK) {
+                const link = &cur_tile.?.links[link_idx];
+                const neighbour_ref = link.ref;
+                link_idx = link.next;
+
+                // Skip invalid neighbours
+                if (neighbour_ref == 0) continue;
+
+                // Skip if cannot allocate more nodes
+                const neighbour_node = tiny_pool.getNode(neighbour_ref, 0) orelse continue;
+
+                // Skip visited
+                if (neighbour_node.flags.closed) continue;
+
+                // Expand to neighbour
+                var neighbour_tile: ?*const MeshTile = null;
+                var neighbour_poly: ?*const Poly = null;
+                nav.getTileAndPolyByRefUnsafe(neighbour_ref, &neighbour_tile, &neighbour_poly);
+
+                // Skip off-mesh connections
+                if (neighbour_poly.?.getType() == .offmesh_connection) continue;
+
+                // Do not advance if the polygon is excluded by the filter
+                if (!filter.passFilter(neighbour_ref, neighbour_tile.?, neighbour_poly.?)) continue;
+
+                // Find edge and calc distance to the edge
+                var va: [3]f32 = undefined;
+                var vb: [3]f32 = undefined;
+                var from_type: u8 = undefined;
+                var to_type: u8 = undefined;
+                self.getPortalPoints(cur_ref, neighbour_ref, &va, &vb, &from_type, &to_type) catch continue;
+
+                // If the circle is not touching the next polygon, skip it
+                var tseg: f32 = undefined;
+                const dist_sqr = math.distancePtSegSqr2D(center_pos, &va, &vb, &tseg);
+                if (dist_sqr > radius_sqr) continue;
+
+                // Mark node visited, this is done before the overlap test so that
+                // we will not visit the poly again if the test fails
+                neighbour_node.flags.closed = true;
+                neighbour_node.pidx = @intCast(tiny_pool.getNodeIdx(cur_node));
+
+                // Check that the polygon does not collide with existing polygons
+
+                // Collect vertices of the neighbour poly
+                const npa = neighbour_poly.?.vert_count;
+                for (0..npa) |k| {
+                    const vert_idx = neighbour_poly.?.verts[k];
+                    const src_verts = neighbour_tile.?.verts[vert_idx * 3 .. vert_idx * 3 + 3];
+                    pa[k * 3 + 0] = src_verts[0];
+                    pa[k * 3 + 1] = src_verts[1];
+                    pa[k * 3 + 2] = src_verts[2];
+                }
+
+                var overlap = false;
+                for (0..n) |j| {
+                    const past_ref = result_ref[j];
+
+                    // Connected polys do not overlap
+                    var connected = false;
+                    var check_link_idx = cur_poly.?.first_link;
+                    while (check_link_idx != common.NULL_LINK) {
+                        if (cur_tile.?.links[check_link_idx].ref == past_ref) {
+                            connected = true;
+                            break;
+                        }
+                        check_link_idx = cur_tile.?.links[check_link_idx].next;
+                    }
+                    if (connected) continue;
+
+                    // Potentially overlapping
+                    var past_tile: ?*const MeshTile = null;
+                    var past_poly: ?*const Poly = null;
+                    nav.getTileAndPolyByRefUnsafe(past_ref, &past_tile, &past_poly);
+
+                    // Get vertices and test overlap
+                    const npb = past_poly.?.vert_count;
+                    for (0..npb) |k| {
+                        const vert_idx = past_poly.?.verts[k];
+                        const src_verts = past_tile.?.verts[vert_idx * 3 .. vert_idx * 3 + 3];
+                        pb[k * 3 + 0] = src_verts[0];
+                        pb[k * 3 + 1] = src_verts[1];
+                        pb[k * 3 + 2] = src_verts[2];
+                    }
+
+                    if (math.overlapPolyPoly2D(&pa, npa, &pb, npb)) {
+                        overlap = true;
+                        break;
+                    }
+                }
+                if (overlap) continue;
+
+                // This poly is fine, store and advance to the poly
+                if (n < max_result) {
+                    result_ref[n] = neighbour_ref;
+                    if (result_parent) |parents| {
+                        parents[n] = cur_ref;
+                    }
+                    n += 1;
+                } else {
+                    status.buffer_too_small = true;
+                }
+
+                if (nstack < MAX_STACK) {
+                    stack[nstack] = neighbour_node;
+                    nstack += 1;
+                }
+            }
+        }
+
+        result_count.* = n;
+
+        return status;
+    }
+
+    /// Gets the height of the polygon at the provided position using the detail mesh
+    /// For off-mesh connections, interpolates the height along the connection segment
+    ///
+    /// @param ref Reference to polygon
+    /// @param pos Position to get height at [x,y,z]
+    /// @param height Output height value
+    /// @return Status with success or failure
+    pub fn getPolyHeight(
+        self: *const Self,
+        ref: PolyRef,
+        pos: *const [3]f32,
+        height: *f32,
+    ) !common.Status {
+        var _z = tracy.zone(@src(), "dtGetPolyHeight");
+        defer _z.end();
+
+        const nav = self.nav orelse return error.NoNavMesh;
+
+        // Get tile and poly
+        const result = nav.getTileAndPolyByRef(ref) catch {
+            return common.Status{ .failure = true, .invalid_param = true };
+        };
+        const tile = result.tile;
+        const poly = result.poly;
+
+        // Validate position
+        if (!math.visfinite2D(pos)) {
+            return common.Status{ .failure = true, .invalid_param = true };
+        }
+
+        // Special case for off-mesh connections
+        // Interpolate height along the connection segment
+        if (poly.getType() == .offmesh_connection) {
+            const v0_idx = @as(usize, poly.verts[0]) * 3;
+            const v1_idx = @as(usize, poly.verts[1]) * 3;
+            const v0_slice = tile.verts[v0_idx .. v0_idx + 3];
+            const v1_slice = tile.verts[v1_idx .. v1_idx + 3];
+            const v0: [3]f32 = .{ v0_slice[0], v0_slice[1], v0_slice[2] };
+            const v1: [3]f32 = .{ v1_slice[0], v1_slice[1], v1_slice[2] };
+            var t: f32 = undefined;
+            _ = math.distancePtSegSqr2D(pos, &v0, &v1, &t);
+            height.* = v0[1] + (v1[1] - v0[1]) * t;
+            return common.Status.ok();
+        }
+
+        // For regular polygons, use the navmesh getPolyHeight
+        // Note: This is simplified - full version would use detail mesh
+        nav.getPolyHeight(ref, pos, height) catch {
+            return common.Status{ .failure = true, .invalid_param = true };
+        };
+
+        return common.Status.ok();
+    }
+
+    /// Finds the closest point on the specified polygon
+    /// If the point is inside the polygon (in 2D), returns point with corrected height
+    /// If outside, returns closest point on the polygon boundary
+    ///
+    /// @param ref Reference to polygon
+    /// @param pos Position to find closest point for [x,y,z]
+    /// @param closest Output closest point on polygon [x,y,z]
+    /// @param pos_over_poly Optional output: true if point is over polygon, false otherwise
+    /// @return Status with success or failure
+    /// Returns a random point on a filter-passing ground polygon, weighted by
+    /// polygon area. 1:1 with dtNavMeshQuery::findRandomPoint
+    /// (DetourNavMeshQuery.cpp:226). `rand` supplies uniform floats in [0,1).
+    pub fn findRandomPoint(
+        self: *const Self,
+        filter: *const QueryFilter,
+        rand: std.Random,
+        random_ref: *PolyRef,
+        random_pt: *[3]f32,
+    ) !void {
+        var _z = tracy.zone(@src(), "dtFindRandomPoint");
+        defer _z.end();
+
+        const nav = self.nav orelse return error.NoNavMesh;
+
+        // Randomly pick one tile (reservoir sampling; tiles assumed equal area).
+        var tile: ?*const MeshTile = null;
+        var tsum: f32 = 0.0;
+        for (0..@intCast(nav.max_tiles)) |i| {
+            const t = &nav.tiles[i];
+            if (t.header == null) continue;
+            const area: f32 = 1.0;
+            tsum += area;
+            if (rand.float(f32) * tsum <= area) tile = t;
+        }
+        const picked_tile = tile orelse return error.NotFound;
+
+        // Randomly pick one polygon weighted by area (reservoir sampling).
+        var poly_ref: PolyRef = 0;
+        var picked_poly: ?*const Poly = null;
+        const base = nav.getPolyRefBase(picked_tile);
+        var area_sum: f32 = 0.0;
+        for (0..@intCast(picked_tile.header.?.poly_count)) |i| {
+            const p = &picked_tile.polys[i];
+            if (p.getType() != .ground) continue;
+            const ref = base | @as(PolyRef, @intCast(i));
+            if (!filter.passFilter(ref, picked_tile, p)) continue;
+
+            // Calc area of the polygon. Pointer-based triArea2D (same formula,
+            // bit-identical) — the Vec3-by-value construction cost 3 struct
+            // builds per triangle across the whole tile's poly scan.
+            var poly_area: f32 = 0.0;
+            const vcnt: usize = @intCast(p.vert_count);
+            var j: usize = 2;
+            while (j < vcnt) : (j += 1) {
+                const va = picked_tile.verts[@as(usize, p.verts[0]) * 3 ..][0..3];
+                const vb = picked_tile.verts[@as(usize, p.verts[j - 1]) * 3 ..][0..3];
+                const vc = picked_tile.verts[@as(usize, p.verts[j]) * 3 ..][0..3];
+                poly_area += common.triArea2D(va, vb, vc);
+            }
+
+            area_sum += poly_area;
+            if (rand.float(f32) * area_sum <= poly_area) {
+                picked_poly = p;
+                poly_ref = ref;
+            }
+        }
+        const poly = picked_poly orelse return error.NotFound;
+
+        // Randomly pick a point on the polygon.
+        const vcnt: usize = @intCast(poly.vert_count);
+        var verts: [3 * common.VERTS_PER_POLYGON]f32 = undefined;
+        var areas: [common.VERTS_PER_POLYGON]f32 = undefined;
+        for (0..vcnt) |j| {
+            const vi = @as(usize, poly.verts[j]) * 3;
+            verts[j * 3 + 0] = picked_tile.verts[vi + 0];
+            verts[j * 3 + 1] = picked_tile.verts[vi + 1];
+            verts[j * 3 + 2] = picked_tile.verts[vi + 2];
+        }
+
+        const s = rand.float(f32);
+        const t2 = rand.float(f32);
+        var pt: [3]f32 = undefined;
+        common.randomPointInConvexPoly(verts[0 .. vcnt * 3], @intCast(poly.vert_count), areas[0..vcnt], s, t2, &pt);
+
+        var closest: [3]f32 = pt;
+        if (self.closestPointOnPoly(poly_ref, &pt, &closest, null)) |_| {} else |_| {}
+
+        random_pt.* = closest;
+        random_ref.* = poly_ref;
+    }
+
+    /// Returns a random point reachable within `max_radius` of `center_pos`
+    /// (Dijkstra-bounded), on a filter-passing ground polygon weighted by area.
+    /// 1:1 with dtNavMeshQuery::findRandomPointAroundCircle
+    /// (DetourNavMeshQuery.cpp:317). `rand` supplies uniform floats in [0,1).
+    pub fn findRandomPointAroundCircle(
+        self: *const Self,
+        start_ref: PolyRef,
+        center_pos: *const [3]f32,
+        max_radius: f32,
+        filter: *const QueryFilter,
+        rand: std.Random,
+        random_ref: *PolyRef,
+        random_pt: *[3]f32,
+    ) !void {
+        var _z = tracy.zone(@src(), "dtFindRandomPointAroundCircle");
+        defer _z.end();
+
+        const nav = self.nav orelse return error.NoNavMesh;
+        const node_pool = self.node_pool orelse return error.NoNodePool;
+        const open_list = self.open_list orelse return error.NoOpenList;
+
+        if (!nav.isValidPolyRef(start_ref) or !math.visfinite(center_pos) or
+            max_radius < 0 or !math.isfinite(max_radius))
+        {
+            return error.InvalidParam;
+        }
+
+        const start_r = nav.getTileAndPolyByRef(start_ref) catch return error.InvalidParam;
+        if (!filter.passFilter(start_ref, start_r.tile, start_r.poly)) return error.InvalidParam;
+
+        node_pool.clear();
+        open_list.clear();
+
+        var start_node = node_pool.getNode(start_ref, 0) orelse return error.OutOfNodes;
+        math.vcopy(&start_node.pos, center_pos);
+        start_node.pidx = 0;
+        start_node.cost = 0;
+        start_node.total = 0;
+        start_node.id = start_ref;
+        start_node.flags = .{ .open = true };
+        open_list.push(start_node);
+
+        const radius_sqr = max_radius * max_radius;
+        var area_sum: f32 = 0.0;
+
+        var random_tile: ?*const MeshTile = null;
+        var random_poly: ?*const Poly = null;
+        var random_poly_ref: PolyRef = 0;
+
+        while (!open_list.empty()) {
+            const best_node = open_list.popAssumeNotEmpty();
+            best_node.flags.open = false;
+            best_node.flags.closed = true;
+
+            const best_ref = best_node.id;
+            const best_r = nav.getTileAndPolyByRef(best_ref) catch continue;
+            const best_tile = best_r.tile;
+            const best_poly = best_r.poly;
+
+            // Place random locations on ground (area-weighted reservoir sampling).
+            if (best_poly.getType() == .ground) {
+                var poly_area: f32 = 0.0;
+                const vcnt: usize = @intCast(best_poly.vert_count);
+                var j: usize = 2;
+                while (j < vcnt) : (j += 1) {
+                    const iv0 = @as(usize, best_poly.verts[0]) * 3;
+                    const iv1 = @as(usize, best_poly.verts[j - 1]) * 3;
+                    const iv2 = @as(usize, best_poly.verts[j]) * 3;
+                    const va = math.Vec3.init(best_tile.verts[iv0], best_tile.verts[iv0 + 1], best_tile.verts[iv0 + 2]);
+                    const vb = math.Vec3.init(best_tile.verts[iv1], best_tile.verts[iv1 + 1], best_tile.verts[iv1 + 2]);
+                    const vc = math.Vec3.init(best_tile.verts[iv2], best_tile.verts[iv2 + 1], best_tile.verts[iv2 + 2]);
+                    poly_area += math.triArea2D(va, vb, vc);
+                }
+                area_sum += poly_area;
+                if (rand.float(f32) * area_sum <= poly_area) {
+                    random_tile = best_tile;
+                    random_poly = best_poly;
+                    random_poly_ref = best_ref;
+                }
+            }
+
+            // Get parent ref.
+            var parent_ref: PolyRef = 0;
+            if (best_node.pidx != 0) {
+                parent_ref = node_pool.getNodeAtIdxConst(best_node.pidx).?.id;
+            }
+
+            // Expand to neighbours.
+            var link_idx = best_poly.first_link;
+            while (link_idx != common.NULL_LINK) {
+                const link = &best_tile.links[link_idx];
+                const neighbour_ref = link.ref;
+                link_idx = link.next;
+
+                if (neighbour_ref == 0 or neighbour_ref == parent_ref) continue;
+
+                var neighbour_tile: ?*const MeshTile = null;
+                var neighbour_poly: ?*const Poly = null;
+                nav.getTileAndPolyByRefUnsafe(neighbour_ref, &neighbour_tile, &neighbour_poly);
+
+                if (!filter.passFilter(neighbour_ref, neighbour_tile.?, neighbour_poly.?)) continue;
+
+                // Find edge and calc distance to the edge.
+                var va: [3]f32 = undefined;
+                var vb: [3]f32 = undefined;
+                var pp_ft: u8 = undefined;
+                var pp_tt: u8 = undefined;
+                self.getPortalPoints(best_ref, neighbour_ref, &va, &vb, &pp_ft, &pp_tt) catch continue;
+
+                // If the circle is not touching the next polygon, skip it.
+                var tseg: f32 = undefined;
+                const dist_sqr = math.distancePtSegSqr2D(center_pos, &va, &vb, &tseg);
+                if (dist_sqr > radius_sqr) continue;
+
+                var neighbour_node = node_pool.getNode(neighbour_ref, 0) orelse continue;
+                if (neighbour_node.flags.closed) continue;
+
+                // First visit: set position to edge midpoint.
+                if (!neighbour_node.flags.open and !neighbour_node.flags.closed) {
+                    math.vlerp(&neighbour_node.pos, &va, &vb, 0.5);
+                }
+
+                const total = best_node.total + math.vdist(&best_node.pos, &neighbour_node.pos);
+
+                // Already open with a better cost: skip.
+                if (neighbour_node.flags.open and total >= neighbour_node.total) continue;
+
+                neighbour_node.id = neighbour_ref;
+                neighbour_node.flags.closed = false;
+                neighbour_node.pidx = @intCast(node_pool.getNodeIdx(best_node));
+                neighbour_node.total = total;
+
+                if (neighbour_node.flags.open) {
+                    open_list.modify(neighbour_node);
+                } else {
+                    neighbour_node.flags.open = true;
+                    open_list.push(neighbour_node);
+                }
+            }
+        }
+
+        const poly = random_poly orelse return error.NotFound;
+        const tile = random_tile.?;
+
+        // Randomly pick a point on the chosen polygon.
+        const vcnt: usize = @intCast(poly.vert_count);
+        var verts: [3 * common.VERTS_PER_POLYGON]f32 = undefined;
+        var areas: [common.VERTS_PER_POLYGON]f32 = undefined;
+        for (0..vcnt) |j| {
+            const vi = @as(usize, poly.verts[j]) * 3;
+            verts[j * 3 + 0] = tile.verts[vi + 0];
+            verts[j * 3 + 1] = tile.verts[vi + 1];
+            verts[j * 3 + 2] = tile.verts[vi + 2];
+        }
+
+        const s = rand.float(f32);
+        const t2 = rand.float(f32);
+        var pt: [3]f32 = undefined;
+        common.randomPointInConvexPoly(verts[0 .. vcnt * 3], @intCast(poly.vert_count), areas[0..vcnt], s, t2, &pt);
+
+        var closest: [3]f32 = pt;
+        if (self.closestPointOnPoly(random_poly_ref, &pt, &closest, null)) |_| {} else |_| {}
+
+        random_pt.* = closest;
+        random_ref.* = random_poly_ref;
+    }
+
+    pub fn closestPointOnPoly(
+        self: *const Self,
+        ref: PolyRef,
+        pos: *const [3]f32,
+        closest: *[3]f32,
+        pos_over_poly: ?*bool,
+    ) !common.Status {
+        const nav = self.nav orelse return error.NoNavMesh;
+
+        // Validate parameters
+        if (!nav.isValidPolyRef(ref) or !math.visfinite(pos)) {
+            return common.Status{ .failure = true, .invalid_param = true };
+        }
+
+        // Call navmesh implementation
+        nav.closestPointOnPoly(ref, pos, closest, pos_over_poly) catch {
+            return common.Status{ .failure = true, .invalid_param = true };
+        };
+
+        return common.Status.ok();
+    }
+
+    /// Finds the closest point on the polygon boundary
+    /// Much faster than closestPointOnPoly() but only returns boundary points
+    /// The height is from the polygon boundary, not from detail mesh
+    ///
+    /// @param ref Reference to polygon
+    /// @param pos Position to find closest point for [x,y,z]
+    /// @param closest Output closest point on boundary [x,y,z]
+    /// @return Status with success or failure
+    pub fn closestPointOnPolyBoundary(
+        self: *const Self,
+        ref: PolyRef,
+        pos: *const [3]f32,
+        closest: *[3]f32,
+    ) !common.Status {
+        const nav = self.nav orelse return error.NoNavMesh;
+
+        // Get tile and poly to validate
+        const result = nav.getTileAndPolyByRef(ref) catch {
+            return common.Status{ .failure = true, .invalid_param = true };
+        };
+        _ = result.tile;
+        _ = result.poly;
+
+        // Validate position
+        if (!math.visfinite(pos)) {
+            return common.Status{ .failure = true, .invalid_param = true };
+        }
+
+        // Call navmesh implementation
+        nav.closestPointOnPolyBoundary(ref, pos, closest) catch {
+            return common.Status{ .failure = true, .invalid_param = true };
+        };
+
+        return common.Status.ok();
+    }
+
+    /// Finds all polygons within a circular search area using Dijkstra expansion
+    /// Results are ordered from least to highest cost
+    /// Useful for queries like "find all polys within X meters"
+    ///
+    /// @param start_ref Reference to starting polygon
+    /// @param center_pos Center of search circle [x,y,z]
+    /// @param radius Search radius
+    /// @param filter Polygon filter
+    /// @param result_ref Output array for polygon references
+    /// @param result_parent Output array for parent references (optional)
+    /// @param result_cost Output array for path costs (optional)
+    /// @param result_count Output count of found polygons
+    /// @return Status with success/failure and buffer_too_small if needed
+    pub fn findPolysAroundCircle(
+        self: *const Self,
+        start_ref: PolyRef,
+        center_pos: *const [3]f32,
+        radius: f32,
+        filter: *const QueryFilter,
+        result_ref: []PolyRef,
+        result_parent: ?[]PolyRef,
+        result_cost: ?[]f32,
+        result_count: *usize,
+    ) !common.Status {
+        var _z = tracy.zone(@src(), "dtFindPolysAroundCircle");
+        defer _z.end();
+        const nav = self.nav orelse return error.NoNavMesh;
+        const node_pool = self.node_pool orelse return error.NoNodePool;
+        const open_list = self.open_list orelse return error.NoOpenList;
+
+        result_count.* = 0;
+
+        // Validate input
+        if (!nav.isValidPolyRef(start_ref) or
+            !math.visfinite(center_pos) or
+            radius < 0 or !math.isfinite(radius))
+        {
+            return common.Status{ .failure = true, .invalid_param = true };
+        }
+
+        const max_result = result_ref.len;
+        if (max_result <= 0) {
+            return common.Status{ .failure = true, .invalid_param = true };
+        }
+
+        node_pool.clear();
+        open_list.clear();
+
+        var start_node = node_pool.getNode(start_ref, 0) orelse return common.Status{ .failure = true, .out_of_nodes = true };
+        math.vcopy(&start_node.pos, center_pos);
+        start_node.pidx = 0;
+        start_node.cost = 0;
+        start_node.total = 0;
+        start_node.id = start_ref;
+        start_node.flags = .{ .open = true };
+        open_list.push(start_node);
+
+        var status = common.Status.ok();
+
+        var n: usize = 0;
+
+        const radius_sqr = radius * radius;
+
+        while (!open_list.empty()) {
+            const best_node = open_list.popAssumeNotEmpty();
+            best_node.flags.open = false;
+            best_node.flags.closed = true;
+
+            // Get poly and tile. best_ref came off the open list (validated when inserted),
+            // so use the unsafe fetch (no bounds/error-union) — 1:1 with C++ which calls
+            // getTileAndPolyByRefUnsafe here ("input has been checked already"). Output-preserving.
+            const best_ref = best_node.id;
+            var best_tile_o: ?*const MeshTile = null;
+            var best_poly_o: ?*const Poly = null;
+            nav.getTileAndPolyByRefUnsafe(best_ref, &best_tile_o, &best_poly_o);
+            const best_tile = best_tile_o.?;
+            const best_poly = best_poly_o.?;
+
+            // Get parent poly and tile
+            var parent_ref: PolyRef = 0;
+            var parent_tile: ?*const MeshTile = null;
+            var parent_poly: ?*const Poly = null;
+            if (best_node.pidx != 0) {
+                const parent_node = node_pool.getNodeAtIdxConst(best_node.pidx).?;
+                parent_ref = parent_node.id;
+                nav.getTileAndPolyByRefUnsafe(parent_ref, &parent_tile, &parent_poly);
+            }
+
+            // Add to result
+            if (n < max_result) {
+                result_ref[n] = best_ref;
+                if (result_parent) |parents| {
+                    parents[n] = parent_ref;
+                }
+                if (result_cost) |costs| {
+                    costs[n] = best_node.total;
+                }
+                n += 1;
+            } else {
+                status.buffer_too_small = true;
+            }
+
+            // Expand to neighbors
+            var link_idx = best_poly.first_link;
+            while (link_idx != common.NULL_LINK) {
+                const link = &best_tile.links[link_idx];
+                const neighbour_ref = link.ref;
+                link_idx = link.next;
+
+                // Skip invalid neighbours and do not follow back to parent
+                if (neighbour_ref == 0 or neighbour_ref == parent_ref) continue;
+
+                // Expand to neighbour
+                var neighbour_tile: ?*const MeshTile = null;
+                var neighbour_poly: ?*const Poly = null;
+                nav.getTileAndPolyByRefUnsafe(neighbour_ref, &neighbour_tile, &neighbour_poly);
+
+                // Do not advance if the polygon is excluded by the filter
+                if (!filter.passFilter(neighbour_ref, neighbour_tile.?, neighbour_poly.?)) continue;
+
+                // Find edge and calc distance to the edge
+                var va: [3]f32 = undefined;
+                var vb: [3]f32 = undefined;
+                self.getPortalPointsResolved(
+                    best_ref, best_poly, best_tile,
+                    neighbour_ref, neighbour_poly.?, neighbour_tile.?,
+                    &va, &vb,
+                ) catch continue;
+
+                // If the circle is not touching the next polygon, skip it
+                var tseg: f32 = undefined;
+                const dist_sqr = math.distancePtSegSqr2D(center_pos, &va, &vb, &tseg);
+                if (dist_sqr > radius_sqr) continue;
+
+                var neighbour_node = node_pool.getNode(neighbour_ref, 0) orelse {
+                    status.out_of_nodes = true;
+                    continue;
+                };
+
+                if (neighbour_node.flags.closed) continue;
+
+                // Cost - set position to edge midpoint on first visit
+                if (!neighbour_node.flags.open and !neighbour_node.flags.closed) {
+                    math.vlerp(&neighbour_node.pos, &va, &vb, 0.5);
+                }
+
+                const cost = filter.getCost(
+                    &best_node.pos,
+                    &neighbour_node.pos,
+                    parent_ref,
+                    parent_tile,
+                    parent_poly,
+                    best_ref,
+                    best_tile,
+                    best_poly,
+                    neighbour_ref,
+                    neighbour_tile,
+                    neighbour_poly,
+                );
+
+                const total = best_node.total + cost;
+
+                // The node is already in open list and the new result is worse, skip
+                if (neighbour_node.flags.open and total >= neighbour_node.total) continue;
+
+                neighbour_node.id = neighbour_ref;
+                neighbour_node.pidx = @intCast(node_pool.getNodeIdx(best_node));
+                neighbour_node.total = total;
+
+                if (neighbour_node.flags.open) {
+                    open_list.modify(neighbour_node);
+                } else {
+                    neighbour_node.flags = .{ .open = true };
+                    open_list.push(neighbour_node);
+                }
+            }
+        }
+
+        result_count.* = n;
+
+        return status;
+    }
+
+    /// Finds all polygons that intersect with a convex shape using Dijkstra expansion
+    /// Results are ordered from least to highest cost
+    /// Similar to findPolysAroundCircle but uses arbitrary convex polygon instead of circle
+    ///
+    /// @param start_ref Reference to starting polygon
+    /// @param verts Shape vertices [x,y,z] * nverts (must be convex)
+    /// @param nverts Number of vertices in shape (must be >= 3)
+    /// @param filter Polygon filter
+    /// @param result_ref Output array for polygon references
+    /// @param result_parent Output array for parent references (optional)
+    /// @param result_cost Output array for path costs (optional)
+    /// @param result_count Output count of found polygons
+    /// @return Status with success/failure and buffer_too_small if needed
+    pub fn findPolysAroundShape(
+        self: *const Self,
+        start_ref: PolyRef,
+        verts: []const f32,
+        nverts: usize,
+        filter: *const QueryFilter,
+        result_ref: []PolyRef,
+        result_parent: ?[]PolyRef,
+        result_cost: ?[]f32,
+        result_count: *usize,
+    ) !common.Status {
+        var _z = tracy.zone(@src(), "dtFindPolysAroundShape");
+        defer _z.end();
+        const nav = self.nav orelse return error.NoNavMesh;
+        const node_pool = self.node_pool orelse return error.NoNodePool;
+        const open_list = self.open_list orelse return error.NoOpenList;
+
+        result_count.* = 0;
+
+        // Validate input
+        if (!nav.isValidPolyRef(start_ref) or nverts < 3) {
+            return common.Status{ .failure = true, .invalid_param = true };
+        }
+
+        const max_result = result_ref.len;
+        if (max_result <= 0) {
+            return common.Status{ .failure = true, .invalid_param = true };
+        }
+
+        node_pool.clear();
+        open_list.clear();
+
+        // Calculate center of shape
+        var center_pos = [3]f32{ 0, 0, 0 };
+        for (0..nverts) |i| {
+            center_pos[0] += verts[i * 3 + 0];
+            center_pos[1] += verts[i * 3 + 1];
+            center_pos[2] += verts[i * 3 + 2];
+        }
+        const inv_nverts = 1.0 / @as(f32, @floatFromInt(nverts));
+        center_pos[0] *= inv_nverts;
+        center_pos[1] *= inv_nverts;
+        center_pos[2] *= inv_nverts;
+
+        var start_node = node_pool.getNode(start_ref, 0) orelse return common.Status{ .failure = true, .out_of_nodes = true };
+        math.vcopy(&start_node.pos, &center_pos);
+        start_node.pidx = 0;
+        start_node.cost = 0;
+        start_node.total = 0;
+        start_node.id = start_ref;
+        start_node.flags = .{ .open = true };
+        open_list.push(start_node);
+
+        var status = common.Status.ok();
+
+        var n: usize = 0;
+
+        while (!open_list.empty()) {
+            const best_node = open_list.popAssumeNotEmpty();
+            best_node.flags.open = false;
+            best_node.flags.closed = true;
+
+            // Get poly and tile. best_ref came off the open list (validated when inserted),
+            // so use the unsafe fetch (no bounds/error-union) — 1:1 with C++ which calls
+            // getTileAndPolyByRefUnsafe here ("input has been checked already"). Output-preserving.
+            const best_ref = best_node.id;
+            var best_tile_o: ?*const MeshTile = null;
+            var best_poly_o: ?*const Poly = null;
+            nav.getTileAndPolyByRefUnsafe(best_ref, &best_tile_o, &best_poly_o);
+            const best_tile = best_tile_o.?;
+            const best_poly = best_poly_o.?;
+
+            // Get parent poly and tile
+            var parent_ref: PolyRef = 0;
+            var parent_tile: ?*const MeshTile = null;
+            var parent_poly: ?*const Poly = null;
+            if (best_node.pidx != 0) {
+                const parent_node = node_pool.getNodeAtIdxConst(best_node.pidx).?;
+                parent_ref = parent_node.id;
+                nav.getTileAndPolyByRefUnsafe(parent_ref, &parent_tile, &parent_poly);
+            }
+
+            // Add to result
+            if (n < max_result) {
+                result_ref[n] = best_ref;
+                if (result_parent) |parents| {
+                    parents[n] = parent_ref;
+                }
+                if (result_cost) |costs| {
+                    costs[n] = best_node.total;
+                }
+                n += 1;
+            } else {
+                status.buffer_too_small = true;
+            }
+
+            // Expand to neighbors
+            var link_idx = best_poly.first_link;
+            while (link_idx != common.NULL_LINK) {
+                const link = &best_tile.links[link_idx];
+                const neighbour_ref = link.ref;
+                link_idx = link.next;
+
+                // Skip invalid neighbours and do not follow back to parent
+                if (neighbour_ref == 0 or neighbour_ref == parent_ref) continue;
+
+                // Expand to neighbour
+                var neighbour_tile: ?*const MeshTile = null;
+                var neighbour_poly: ?*const Poly = null;
+                nav.getTileAndPolyByRefUnsafe(neighbour_ref, &neighbour_tile, &neighbour_poly);
+
+                // Do not advance if the polygon is excluded by the filter
+                if (!filter.passFilter(neighbour_ref, neighbour_tile.?, neighbour_poly.?)) continue;
+
+                // Find edge and calc distance to the edge
+                var va: [3]f32 = undefined;
+                var vb: [3]f32 = undefined;
+                self.getPortalPointsResolved(
+                    best_ref, best_poly, best_tile,
+                    neighbour_ref, neighbour_poly.?, neighbour_tile.?,
+                    &va, &vb,
+                ) catch continue;
+
+                // If the portal is not intersecting the shape, skip it
+                var tmin: f32 = undefined;
+                var tmax: f32 = undefined;
+                var seg_min: i32 = undefined;
+                var seg_max: i32 = undefined;
+                if (!math.intersectSegmentPoly2D(&va, &vb, verts, nverts, &tmin, &tmax, &seg_min, &seg_max))
+                    continue;
+                if (tmin > 1.0 or tmax < 0.0) continue;
+
+                var neighbour_node = node_pool.getNode(neighbour_ref, 0) orelse {
+                    status.out_of_nodes = true;
+                    continue;
+                };
+
+                if (neighbour_node.flags.closed) continue;
+
+                // Cost - set position to edge midpoint on first visit
+                if (!neighbour_node.flags.open and !neighbour_node.flags.closed) {
+                    math.vlerp(&neighbour_node.pos, &va, &vb, 0.5);
+                }
+
+                const cost = filter.getCost(
+                    &best_node.pos,
+                    &neighbour_node.pos,
+                    parent_ref,
+                    parent_tile,
+                    parent_poly,
+                    best_ref,
+                    best_tile,
+                    best_poly,
+                    neighbour_ref,
+                    neighbour_tile,
+                    neighbour_poly,
+                );
+
+                const total = best_node.total + cost;
+
+                // The node is already in open list and the new result is worse, skip
+                if (neighbour_node.flags.open and total >= neighbour_node.total) continue;
+
+                neighbour_node.id = neighbour_ref;
+                neighbour_node.pidx = @intCast(node_pool.getNodeIdx(best_node));
+                neighbour_node.total = total;
+
+                if (neighbour_node.flags.open) {
+                    open_list.modify(neighbour_node);
+                } else {
+                    neighbour_node.flags = .{ .open = true };
+                    open_list.push(neighbour_node);
+                }
+            }
+        }
+
+        result_count.* = n;
+
+        return status;
+    }
+
+    // ========================================================================
+    // Sliced Pathfinding API
+    // ========================================================================
+
+    /// Initialize sliced pathfinding query
+    /// Must be followed by updateSlicedFindPath() calls and finalized with
+    /// finalizeSlicedFindPath() or finalizeSlicedFindPathPartial()
+    pub fn initSlicedFindPath(
+        self: *Self,
+        start_ref: PolyRef,
+        end_ref: PolyRef,
+        start_pos: *const [3]f32,
+        end_pos: *const [3]f32,
+        filter: *const QueryFilter,
+        options: u32,
+    ) common.Status {
+        var _z = tracy.zone(@src(), "dtInitSlicedFindPath");
+        defer _z.end();
+        const nav = self.nav orelse return common.Status{ .failure = true };
+        const node_pool = self.node_pool orelse return common.Status{ .failure = true };
+        const open_list = self.open_list orelse return common.Status{ .failure = true };
+
+        // Init path state. Source-faithful to C++ memset + field writes, but
+        // written as one aggregate assignment to avoid reinitializing fields.
+        self.query = .{
+            .status = .{ .failure = true },
+            .last_best_node = null,
+            .last_best_node_cost = 0,
+            .start_ref = start_ref,
+            .end_ref = end_ref,
+            .start_pos = start_pos.*,
+            .end_pos = end_pos.*,
+            .filter = filter,
+            .options = options,
+            .raycast_limit_sqr = std.math.floatMax(f32),
+        };
+
+        // Validate input
+        if (!nav.isValidPolyRef(start_ref) or !nav.isValidPolyRef(end_ref)) {
+            return common.Status{ .failure = true, .invalid_param = true };
+        }
+
+        // Trade quality with performance for DT_FINDPATH_ANY_ANGLE
+        if ((options & common.FINDPATH_ANY_ANGLE) != 0) {
+            const result = nav.getTileAndPolyByRef(start_ref) catch null;
+            if (result) |r| {
+                if (r.tile.header) |header| {
+                    const agent_radius = header.walkable_radius;
+                    const RAY_CAST_LIMIT_PROPORTIONS = 50.0;
+                    self.query.raycast_limit_sqr = math.sqr(f32, agent_radius * RAY_CAST_LIMIT_PROPORTIONS);
+                }
+            }
+        }
+
+        // Special case: start == end
+        if (start_ref == end_ref) {
+            self.query.status = common.Status{ .success = true };
+            return common.Status{ .success = true };
+        }
+
+        node_pool.clear();
+        open_list.clear();
+
+        const H_SCALE = 0.999;
+        var start_node = node_pool.getNode(start_ref, 0) orelse {
+            self.query.status = common.Status{ .failure = true, .out_of_nodes = true };
+            return self.query.status;
+        };
+
+        math.vcopy(&start_node.pos, start_pos);
+        start_node.pidx = 0;
+        start_node.cost = 0;
+        start_node.total = math.vdist(start_pos, end_pos) * H_SCALE;
+        start_node.id = start_ref;
+        start_node.flags.open = true;
+        open_list.push(start_node);
+
+        self.query.status = common.Status{ .in_progress = true };
+        self.query.last_best_node = start_node;
+        self.query.last_best_node_cost = start_node.total;
+
+        return self.query.status;
+    }
+
+    /// Update sliced pathfinding query - performs up to maxIter A* iterations
+    /// Returns: Status (in_progress, success, or failure)
+    pub fn updateSlicedFindPath(self: *Self, max_iter: u32, done_iters: ?*u32) common.Status {
+        var _z = tracy.zone(@src(), "dtUpdateSlicedFindPath");
+        defer _z.end();
+        if (!self.query.status.in_progress) return self.query.status;
+
+        const nav = self.nav orelse {
+            self.query.status = common.Status{ .failure = true };
+            return self.query.status;
+        };
+        const node_pool = self.node_pool orelse {
+            self.query.status = common.Status{ .failure = true };
+            return self.query.status;
+        };
+        const open_list = self.open_list orelse {
+            self.query.status = common.Status{ .failure = true };
+            return self.query.status;
+        };
+
+        const filter = self.query.filter orelse {
+            self.query.status = common.Status{ .failure = true };
+            return common.Status{ .failure = true };
+        };
+
+        // Make sure the request is still valid
+        if (!nav.isValidPolyRef(self.query.start_ref) or !nav.isValidPolyRef(self.query.end_ref)) {
+            self.query.status = common.Status{ .failure = true };
+            return common.Status{ .failure = true };
+        }
+
+        const H_SCALE = 0.999;
+        var iter: u32 = 0;
+
+        while (iter < max_iter and !open_list.empty()) {
+            iter += 1;
+
+            // Remove node from open list and put it in closed list
+            var best_node = open_list.popAssumeNotEmpty();
+            best_node.flags.open = false;
+            best_node.flags.closed = true;
+
+            // Reached the goal, stop searching
+            if (best_node.id == self.query.end_ref) {
+                self.query.last_best_node = best_node;
+                self.query.status = common.Status{ .success = true };
+                if (done_iters) |di| di.* = iter;
+                return self.query.status;
+            }
+
+            // Get current poly and tile
+            const best_ref = best_node.id;
+            var best_tile: ?*const MeshTile = null;
+            var best_poly: ?*const Poly = null;
+            nav.getTileAndPolyByRefUnsafe(best_ref, &best_tile, &best_poly);
+
+            if (best_tile == null or best_poly == null) {
+                // The polygon has disappeared during the sliced query, fail
+                self.query.status = common.Status{ .failure = true };
+                if (done_iters) |di| di.* = iter;
+                return self.query.status;
+            }
+
+            // Get parent poly
+            var parent_ref: PolyRef = 0;
+            if (best_node.pidx != 0) {
+                const parent_node = node_pool.getNodeAtIdx(best_node.pidx);
+                if (parent_node) |pn| {
+                    parent_ref = pn.id;
+                }
+            }
+
+            // Expand neighbors
+            var _ze = tracy.zoneDeep(@src(), "dtUpdateSlicedFindPath.expand");
+            defer _ze.end();
+            var i = best_poly.?.first_link;
+            while (i != common.NULL_LINK) : (i = best_tile.?.links[i].next) {
+                const neighbour_ref = best_tile.?.links[i].ref;
+
+                // Skip invalid ids and do not expand back to where we came from
+                if (neighbour_ref == 0 or neighbour_ref == parent_ref) continue;
+
+                // Get neighbour poly and tile
+                var neighbour_tile: ?*const MeshTile = null;
+                var neighbour_poly: ?*const Poly = null;
+                nav.getTileAndPolyByRefUnsafe(neighbour_ref, &neighbour_tile, &neighbour_poly);
+
+                if (!filter.passFilter(neighbour_ref, neighbour_tile.?, neighbour_poly.?)) continue;
+
+                // Get the neighbor node
+                const neighbour_node = node_pool.getNode(neighbour_ref, 0);
+                if (neighbour_node == null) {
+                    self.query.status.out_of_nodes = true;
+                    continue;
+                }
+
+                const nn = neighbour_node.?;
+
+                // Do not expand to nodes that were already visited from the same parent
+                if (nn.pidx != 0 and nn.pidx == best_node.pidx) continue;
+
+                // If the node is visited the first time, calculate node position
+                if (!nn.flags.open and !nn.flags.closed) {
+                    _ = nav.getEdgeMidPoint(
+                        best_ref,
+                        best_poly.?,
+                        best_tile.?,
+                        neighbour_ref,
+                        neighbour_poly.?,
+                        neighbour_tile.?,
+                        &nn.pos,
+                    ) catch continue;
+                }
+
+                // Calculate cost and heuristic
+                const cur_cost = filter.getCost(
+                    &best_node.pos,
+                    &nn.pos,
+                    parent_ref,
+                    null,
+                    null,
+                    best_ref,
+                    best_tile.?,
+                    best_poly.?,
+                    neighbour_ref,
+                    neighbour_tile.?,
+                    neighbour_poly.?,
+                );
+
+                var cost = best_node.cost + cur_cost;
+                var heuristic: f32 = 0;
+
+                // Special case for last node
+                if (neighbour_ref == self.query.end_ref) {
+                    const end_cost = filter.getCost(
+                        &nn.pos,
+                        &self.query.end_pos,
+                        best_ref,
+                        best_tile.?,
+                        best_poly.?,
+                        neighbour_ref,
+                        neighbour_tile.?,
+                        neighbour_poly.?,
+                        0,
+                        null,
+                        null,
+                    );
+                    cost = cost + end_cost;
+                    heuristic = 0;
+                } else {
+                    heuristic = math.vdist(&nn.pos, &self.query.end_pos) * H_SCALE;
+                }
+
+                const total = cost + heuristic;
+
+                // The node is already in open list and the new result is worse, skip
+                if (nn.flags.open and total >= nn.total) continue;
+                // The node is already visited and processed, and the new result is worse, skip
+                if (nn.flags.closed and total >= nn.total) continue;
+
+                // Add or update the node
+                nn.pidx = @intCast(node_pool.getNodeIdx(best_node));
+                nn.id = neighbour_ref;
+                nn.flags.closed = false;
+                nn.cost = cost;
+                nn.total = total;
+
+                if (nn.flags.open) {
+                    // Already in open, update node location
+                    open_list.modify(nn);
+                } else {
+                    // Put the node in open list
+                    nn.flags.open = true;
+                    open_list.push(nn);
+                }
+
+                // Update nearest node to target so far
+                if (heuristic < self.query.last_best_node_cost) {
+                    self.query.last_best_node_cost = heuristic;
+                    self.query.last_best_node = nn;
+                }
+            }
+        }
+
+        // Exhausted all nodes, but could not find path
+        if (open_list.empty()) {
+            self.query.status = common.Status{ .success = true };
+        }
+
+        if (done_iters) |di| di.* = iter;
+        return self.query.status;
+    }
+
+    /// Finalize sliced pathfinding query and return complete path
+    pub fn finalizeSlicedFindPath(
+        self: *Self,
+        path: []PolyRef,
+        path_count: *usize,
+    ) common.Status {
+        path_count.* = 0;
+
+        if (self.query.status.failure) {
+            // Reset query
+            self.query = QueryData.init();
+            return common.Status{ .failure = true };
+        }
+
+        const node_pool = self.node_pool orelse {
+            self.query = QueryData.init();
+            return common.Status{ .failure = true };
+        };
+
+        var n: usize = 0;
+
+        // Special case: start == end
+        if (self.query.start_ref == self.query.end_ref) {
+            path[n] = self.query.start_ref;
+            n += 1;
+        } else {
+            // Check if we found the goal
+            const last_best = self.query.last_best_node orelse {
+                self.query = QueryData.init();
+                return common.Status{ .failure = true };
+            };
+
+            if (last_best.id != self.query.end_ref) {
+                self.query.status.partial_result = true;
+            }
+
+            // Reverse the path
+            var prev: ?*Node = null;
+            var node: ?*Node = last_best;
+
+            while (node) |n_ptr| {
+                const next = if (n_ptr.pidx != 0) node_pool.getNodeAtIdx(n_ptr.pidx) else null;
+                n_ptr.pidx = if (prev) |p| @intCast(node_pool.getNodeIdx(p)) else 0;
+                prev = n_ptr;
+                node = next;
+            }
+
+            // Store path
+            node = prev;
+            while (node) |n_ptr| {
+                const next = if (n_ptr.pidx != 0) node_pool.getNodeAtIdx(n_ptr.pidx) else null;
+
+                if (n < path.len) {
+                    path[n] = n_ptr.id;
+                    n += 1;
+                } else {
+                    self.query.status.buffer_too_small = true;
+                    break;
+                }
+
+                node = next;
+            }
+        }
+
+        const result_status = self.query.status;
+
+        // Reset query
+        self.query = QueryData.init();
+
+        path_count.* = n;
+        return result_status;
+    }
+
+    /// Finalize sliced pathfinding query with partial path support
+    /// Returns path to furthest polygon on existing path that was visited during search
+    pub fn finalizeSlicedFindPathPartial(
+        self: *Self,
+        existing: []const PolyRef,
+        path: []PolyRef,
+        path_count: *usize,
+    ) common.Status {
+        path_count.* = 0;
+
+        if (existing.len == 0 or path.len == 0) {
+            self.query = QueryData.init();
+            return common.Status{ .failure = true, .invalid_param = true };
+        }
+
+        if (self.query.status.failure) {
+            // Reset query
+            self.query = QueryData.init();
+            return common.Status{ .failure = true };
+        }
+
+        const node_pool = self.node_pool orelse {
+            self.query = QueryData.init();
+            return common.Status{ .failure = true };
+        };
+
+        var n: usize = 0;
+
+        // Special case: start == end
+        if (self.query.start_ref == self.query.end_ref) {
+            path[n] = self.query.start_ref;
+            n += 1;
+        } else {
+            // Find furthest existing node that was visited
+            var node: ?*Node = null;
+            var i: usize = existing.len;
+            while (i > 0) {
+                i -= 1;
+                var found_nodes_buf: [1]*Node = undefined;
+                const count = node_pool.findNodes(existing[i], &found_nodes_buf, 1);
+                if (count > 0) {
+                    node = found_nodes_buf[0];
+                    break;
+                }
+            }
+
+            if (node == null) {
+                self.query.status.partial_result = true;
+                node = self.query.last_best_node;
+            }
+
+            const start_node = node orelse {
+                self.query = QueryData.init();
+                return common.Status{ .failure = true };
+            };
+
+            // Reverse the path
+            var prev: ?*Node = null;
+            node = start_node;
+
+            while (node) |n_ptr| {
+                const next = if (n_ptr.pidx != 0) node_pool.getNodeAtIdx(n_ptr.pidx) else null;
+                n_ptr.pidx = if (prev) |p| @intCast(node_pool.getNodeIdx(p)) else 0;
+                prev = n_ptr;
+                node = next;
+            }
+
+            // Store path
+            node = prev;
+            while (node) |n_ptr| {
+                const next = if (n_ptr.pidx != 0) node_pool.getNodeAtIdx(n_ptr.pidx) else null;
+
+                if (n < path.len) {
+                    path[n] = n_ptr.id;
+                    n += 1;
+                } else {
+                    self.query.status.buffer_too_small = true;
+                    break;
+                }
+
+                node = next;
+            }
+        }
+
+        const result_status = self.query.status;
+
+        // Reset query
+        self.query = QueryData.init();
+
+        path_count.* = n;
+        return result_status;
+    }
+
+    /// Append a vertex to straight path
+    /// Returns: Status with DT_IN_PROGRESS, DT_SUCCESS, or DT_SUCCESS | DT_BUFFER_TOO_SMALL
+    fn appendVertex(
+        pos: *const [3]f32,
+        flags: u8,
+        ref: PolyRef,
+        straight_path: []f32,
+        straight_path_flags: ?[]u8,
+        straight_path_refs: ?[]PolyRef,
+        straight_path_count: *usize,
+        max_straight_path: usize,
+    ) common.Status {
+        if (straight_path_count.* > 0) {
+            const last_idx = (straight_path_count.* - 1) * 3;
+            if (math.vequal(straight_path[last_idx .. last_idx + 3][0..3], pos)) {
+                // Vertices are equal, update flags and poly
+                if (straight_path_flags) |spf| {
+                    spf[straight_path_count.* - 1] = flags;
+                }
+                if (straight_path_refs) |spr| {
+                    spr[straight_path_count.* - 1] = ref;
+                }
+                return common.Status{ .in_progress = true };
+            }
+        }
+
+        // Append new vertex
+        const idx = straight_path_count.* * 3;
+        math.vcopy(straight_path[idx .. idx + 3][0..3], pos);
+        if (straight_path_flags) |spf| {
+            spf[straight_path_count.*] = flags;
+        }
+        if (straight_path_refs) |spr| {
+            spr[straight_path_count.*] = ref;
+        }
+        straight_path_count.* += 1;
+
+        // If no space to append more vertices, return
+        if (straight_path_count.* >= max_straight_path) {
+            return common.Status{ .success = true, .buffer_too_small = true };
+        }
+
+        // If reached end of path, return
+        if (flags == common.STRAIGHTPATH_END) {
+            return common.Status.ok();
+        }
+
+        return common.Status{ .in_progress = true };
+    }
+
+    /// Append portals along current straight path segment
+    fn appendPortals(
+        self: *const Self,
+        start_idx: usize,
+        end_idx: usize,
+        end_pos: *const [3]f32,
+        path: []const PolyRef,
+        straight_path: []f32,
+        straight_path_flags: ?[]u8,
+        straight_path_refs: ?[]PolyRef,
+        straight_path_count: *usize,
+        max_straight_path: usize,
+        options: u32,
+    ) !common.Status {
+        const nav = self.nav orelse return error.NoNavMesh;
+        const start_pos_idx = (straight_path_count.* - 1) * 3;
+        const start_pos = straight_path[start_pos_idx .. start_pos_idx + 3][0..3];
+
+        var i = start_idx;
+        while (i < end_idx) : (i += 1) {
+            // Calculate portal
+            const from = path[i];
+            const from_result = try nav.getTileAndPolyByRef(from);
+            const from_tile = from_result.tile;
+            const from_poly = from_result.poly;
+
+            const to = path[i + 1];
+            const to_result = try nav.getTileAndPolyByRef(to);
+            const to_tile = to_result.tile;
+            const to_poly = to_result.poly;
+
+            var left: [3]f32 = undefined;
+            var right: [3]f32 = undefined;
+            nav.getPortalPoints(from, from_poly, from_tile, to, to_poly, to_tile, &left, &right) catch break;
+
+            if ((options & common.STRAIGHTPATH_AREA_CROSSINGS) != 0) {
+                // Skip intersection if only area crossings are requested
+                if (from_poly.getArea() == to_poly.getArea()) {
+                    continue;
+                }
+            }
+
+            // Append intersection
+            var s: f32 = undefined;
+            var t: f32 = undefined;
+            if (math.intersectSegSeg2D(start_pos, end_pos, &left, &right, &s, &t)) {
+                var pt: [3]f32 = undefined;
+                math.vlerp(&pt, &left, &right, t);
+
+                const stat = appendVertex(&pt, 0, path[i + 1], straight_path, straight_path_flags, straight_path_refs, straight_path_count, max_straight_path);
+                if (!stat.isInProgress()) {
+                    return stat;
+                }
+            }
+        }
+
+        return common.Status{ .in_progress = true };
+    }
+};
+
+test "NodePool basic operations" {
+    const allocator = std.testing.allocator;
+
+    var pool = try NodePool.init(allocator, 128, 64);
+    defer pool.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), pool.getNodeCount());
+
+    const node1 = pool.getNode(100, 0);
+    try std.testing.expect(node1 != null);
+    try std.testing.expectEqual(@as(PolyRef, 100), node1.?.id);
+    try std.testing.expectEqual(@as(usize, 1), pool.getNodeCount());
+
+    const node2 = pool.getNode(100, 0);
+    try std.testing.expect(node2 != null);
+    try std.testing.expect(node1 == node2); // Should return the same node
+
+    pool.clear();
+    try std.testing.expectEqual(@as(usize, 0), pool.getNodeCount());
+}
+
+test "NodeQueue operations" {
+    const allocator = std.testing.allocator;
+
+    var queue = try NodeQueue.init(allocator, 64);
+    defer queue.deinit();
+
+    try std.testing.expect(queue.empty());
+
+    var node1 = Node.init();
+    node1.total = 10.0;
+
+    var node2 = Node.init();
+    node2.total = 5.0;
+
+    var node3 = Node.init();
+    node3.total = 15.0;
+
+    queue.push(&node1);
+    queue.push(&node2);
+    queue.push(&node3);
+
+    try std.testing.expectEqual(@as(usize, 3), queue.size);
+
+    const top = queue.top();
+    try std.testing.expect(top != null);
+    try std.testing.expectEqual(@as(f32, 5.0), top.?.total);
+
+    _ = queue.pop();
+    const top2 = queue.top();
+    try std.testing.expectEqual(@as(f32, 10.0), top2.?.total);
+}
+
+test "NavMeshQuery initialization" {
+    const allocator = std.testing.allocator;
+
+    var query = try NavMeshQuery.init(allocator);
+    defer query.deinit();
+
+    try std.testing.expect(query.nav == null);
+    try std.testing.expect(query.node_pool == null);
+}
+
+/// Segment interval for edge processing
+const SegInterval = struct {
+    ref: PolyRef,
+    tmin: i16,
+    tmax: i16,
+};
+
+/// Insert an interval into sorted interval array
+fn insertInterval(ints: []SegInterval, nints: *usize, tmin: i16, tmax: i16, ref: PolyRef) void {
+    if (nints.* + 1 > ints.len) return;
+
+    // Find insertion point
+    var idx: usize = 0;
+    while (idx < nints.*) : (idx += 1) {
+        if (tmax <= ints[idx].tmin) {
+            break;
+        }
+    }
+
+    // Move current results
+    if (nints.* > idx) {
+        const move_count = nints.* - idx;
+        std.mem.copyBackwards(SegInterval, ints[idx + 1 .. idx + 1 + move_count], ints[idx .. idx + move_count]);
+    }
+
+    // Store
+    ints[idx].ref = ref;
+    ints[idx].tmin = tmin;
+    ints[idx].tmax = tmax;
+    nints.* += 1;
+}
+
+/// Get wall segments from a polygon
+/// If segmentRefs is provided, returns all segments (portals + walls)
+/// Otherwise returns only wall segments
+pub fn getPolyWallSegments(
+    self: *const NavMeshQuery,
+    ref: PolyRef,
+    filter: *const QueryFilter,
+    segment_verts: []f32,
+    segment_refs: ?[]PolyRef,
+    segment_count: *usize,
+    max_segments: usize,
+) !common.Status {
+    var _z = tracy.zone(@src(), "dtGetPolyWallSegments");
+    defer _z.end();
+
+    if (self.nav == null) {
+        return common.Status{ .failure = true, .invalid_param = true };
+    }
+
+    segment_count.* = 0;
+
+    const nav = self.nav.?;
+
+    const result = nav.getTileAndPolyByRef(ref) catch {
+        return common.Status{ .failure = true, .invalid_param = true };
+    };
+    const tile_ptr = result.tile;
+    const poly_ptr = result.poly;
+
+    var n: usize = 0;
+    const MAX_INTERVAL = 16;
+    var ints: [MAX_INTERVAL]SegInterval = undefined;
+    var nints: usize = 0;
+
+    const store_portals = segment_refs != null;
+    var result_status = common.Status.ok();
+
+    var j: usize = @intCast(poly_ptr.vert_count - 1);
+    var i: usize = 0;
+    while (i < poly_ptr.vert_count) : ({
+        j = i;
+        i += 1;
+    }) {
+        nints = 0;
+
+        // Check if this is an external link
+        if ((poly_ptr.neis[j] & common.EXT_LINK) != 0) {
+            // Tile border - collect intervals from links
+            var k = poly_ptr.first_link;
+            while (k != common.NULL_LINK) {
+                const link = &tile_ptr.links[k];
+                if (link.edge == @as(u8, @intCast(j))) {
+                    if (link.ref != 0) {
+                        var nei_tile: ?*const navmesh.MeshTile = null;
+                        var nei_poly: ?*const navmesh.Poly = null;
+                        nav.getTileAndPolyByRefUnsafe(link.ref, &nei_tile, &nei_poly);
+
+                        if (filter.passFilter(link.ref, nei_tile.?, nei_poly.?)) {
+                            insertInterval(&ints, &nints, @intCast(link.bmin), @intCast(link.bmax), link.ref);
+                        }
+                    }
+                }
+                k = link.next;
+            }
+        } else {
+            // Internal edge
+            var nei_ref: PolyRef = 0;
+            if (poly_ptr.neis[j] != 0) {
+                const idx: u32 = poly_ptr.neis[j] - 1;
+                nei_ref = nav.getPolyRefBase(tile_ptr) | idx;
+                if (!filter.passFilter(nei_ref, tile_ptr, &tile_ptr.polys[idx])) {
+                    nei_ref = 0;
+                }
+            }
+
+            // If the edge leads to another polygon and portals are not stored, skip
+            if (nei_ref != 0 and !store_portals) {
+                continue;
+            }
+
+            // Store the segment
+            if (n < max_segments) {
+                const vj_idx = @as(usize, poly_ptr.verts[j]) * 3;
+                const vi_idx = @as(usize, poly_ptr.verts[i]) * 3;
+                const vj = tile_ptr.verts[vj_idx .. vj_idx + 3];
+                const vi = tile_ptr.verts[vi_idx .. vi_idx + 3];
+                const seg = segment_verts[n * 6 .. n * 6 + 6];
+                seg[0] = vj[0];
+                seg[1] = vj[1];
+                seg[2] = vj[2];
+                seg[3] = vi[0];
+                seg[4] = vi[1];
+                seg[5] = vi[2];
+                if (segment_refs) |refs| {
+                    refs[n] = nei_ref;
+                }
+                n += 1;
+            } else {
+                result_status.buffer_too_small = true;
+            }
+
+            continue;
+        }
+
+        // Add sentinels
+        insertInterval(&ints, &nints, -1, 0, 0);
+        insertInterval(&ints, &nints, 255, 256, 0);
+
+        // Store segments
+        const vj_idx = @as(usize, poly_ptr.verts[j]) * 3;
+        const vi_idx = @as(usize, poly_ptr.verts[i]) * 3;
+        const vj = tile_ptr.verts[vj_idx .. vj_idx + 3];
+        const vi = tile_ptr.verts[vi_idx .. vi_idx + 3];
+
+        var k: usize = 1;
+        while (k < nints) : (k += 1) {
+            // Portal segment
+            if (store_portals and ints[k].ref != 0) {
+                const tmin: f32 = @as(f32, @floatFromInt(ints[k].tmin)) / 255.0;
+                const tmax: f32 = @as(f32, @floatFromInt(ints[k].tmax)) / 255.0;
+                if (n < max_segments) {
+                    const seg = segment_verts[n * 6 .. n * 6 + 6];
+                    // vlerp for first point
+                    seg[0] = vj[0] + (vi[0] - vj[0]) * tmin;
+                    seg[1] = vj[1] + (vi[1] - vj[1]) * tmin;
+                    seg[2] = vj[2] + (vi[2] - vj[2]) * tmin;
+                    // vlerp for second point
+                    seg[3] = vj[0] + (vi[0] - vj[0]) * tmax;
+                    seg[4] = vj[1] + (vi[1] - vj[1]) * tmax;
+                    seg[5] = vj[2] + (vi[2] - vj[2]) * tmax;
+                    if (segment_refs) |refs| {
+                        refs[n] = ints[k].ref;
+                    }
+                    n += 1;
+                } else {
+                    result_status.buffer_too_small = true;
+                }
+            }
+
+            // Wall segment
+            const imin = ints[k - 1].tmax;
+            const imax = ints[k].tmin;
+            if (imin != imax) {
+                const tmin: f32 = @as(f32, @floatFromInt(imin)) / 255.0;
+                const tmax: f32 = @as(f32, @floatFromInt(imax)) / 255.0;
+                if (n < max_segments) {
+                    const seg = segment_verts[n * 6 .. n * 6 + 6];
+                    // vlerp for first point
+                    seg[0] = vj[0] + (vi[0] - vj[0]) * tmin;
+                    seg[1] = vj[1] + (vi[1] - vj[1]) * tmin;
+                    seg[2] = vj[2] + (vi[2] - vj[2]) * tmin;
+                    // vlerp for second point
+                    seg[3] = vj[0] + (vi[0] - vj[0]) * tmax;
+                    seg[4] = vj[1] + (vi[1] - vj[1]) * tmax;
+                    seg[5] = vj[2] + (vi[2] - vj[2]) * tmax;
+                    if (segment_refs) |refs| {
+                        refs[n] = 0;
+                    }
+                    n += 1;
+                } else {
+                    result_status.buffer_too_small = true;
+                }
+            }
+        }
+    }
+
+    segment_count.* = n;
+    return result_status;
+}

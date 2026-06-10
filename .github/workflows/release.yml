@@ -1,0 +1,110 @@
+name: release
+
+# Собирает recast_demo нативно на Windows/Linux/macOS и прикрепляет готовые бинари
+# к GitHub Release. Запускается при пуше тега v* (например v0.1.0) либо вручную.
+# GUI-demo линкует системный OpenGL/оконную систему, поэтому кросс-компиляция невозможна —
+# каждый бинарь собирается на своей ОС нативно.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.asset }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            asset: recast_demo-windows-x86_64
+            ext: zip
+            zig_url: https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip
+          - os: ubuntu-latest
+            asset: recast_demo-linux-x86_64
+            ext: tar.gz
+            zig_url: https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
+          - os: macos-latest
+            asset: recast_demo-macos-aarch64
+            ext: tar.gz
+            zig_url: https://ziglang.org/download/0.16.0/zig-aarch64-macos-0.16.0.tar.xz
+    steps:
+      - uses: actions/checkout@v4
+
+      # Zig 0.16.0 ставим прямой загрузкой с ziglang.org (исходники переехали на Codeberg,
+      # но бинарные релизы по-прежнему на ziglang.org/download; setup-action-индекс мёртв).
+      - name: Setup Zig (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          curl -fL -o zig.tar.xz "${{ matrix.zig_url }}"
+          mkdir -p "$HOME/zig"
+          tar -xf zig.tar.xz -C "$HOME/zig" --strip-components=1
+          echo "$HOME/zig" >> "$GITHUB_PATH"
+
+      - name: Setup Zig (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          curl.exe -fL -o zig.zip "${{ matrix.zig_url }}"
+          Expand-Archive -Path zig.zip -DestinationPath "$env:USERPROFILE\zig" -Force
+          $inner = (Get-ChildItem "$env:USERPROFILE\zig" -Directory | Select-Object -First 1).FullName
+          "$inner" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Verify Zig
+        run: zig version
+
+      - name: Install Linux GUI dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgl1-mesa-dev libx11-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libxi-dev libwayland-dev libxkbcommon-dev
+
+      - name: Build demo (ReleaseFast)
+        run: zig build demo-fast
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path zig-out/bin/recast_demo.exe, zig-out/bin/test_data `
+            -DestinationPath "${{ matrix.asset }}.${{ matrix.ext }}" -Force
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: tar czf "${{ matrix.asset }}.${{ matrix.ext }}" -C zig-out/bin recast_demo test_data
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}.${{ matrix.ext }}
+          if-no-files-found: error
+
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

@@ -1,0 +1,2101 @@
+const std = @import("std");
+const tracy = @import("../tracy.zig");
+const math = @import("../math.zig");
+const common = @import("common.zig");
+const Vec3 = math.Vec3;
+const AABB = math.AABB;
+const PolyRef = common.PolyRef;
+const TileRef = common.TileRef;
+const Status = common.Status;
+
+/// Polygon within navigation mesh
+pub const Poly = struct {
+    /// Index to first link (or NULL_LINK)
+    first_link: u32,
+
+    /// Vertex indices
+    verts: [common.VERTS_PER_POLYGON]u16,
+
+    /// Neighbor polygon references and flags
+    neis: [common.VERTS_PER_POLYGON]u16,
+
+    /// User-defined flags
+    flags: u16,
+
+    /// Vertex count
+    vert_count: u8,
+
+    /// Area and type (packed)
+    area_and_type: u8,
+
+    pub fn init() Poly {
+        return .{
+            .first_link = common.NULL_LINK,
+            .verts = [_]u16{0} ** common.VERTS_PER_POLYGON,
+            .neis = [_]u16{0} ** common.VERTS_PER_POLYGON,
+            .flags = 0,
+            .vert_count = 0,
+            .area_and_type = 0,
+        };
+    }
+
+    pub fn setArea(self: *Poly, area: u8) void {
+        self.area_and_type = (self.area_and_type & 0xc0) | (area & 0x3f);
+    }
+
+    pub fn setType(self: *Poly, poly_type: common.PolyType) void {
+        const t = @intFromEnum(poly_type);
+        self.area_and_type = (self.area_and_type & 0x3f) | (t << 6);
+    }
+
+    pub fn getArea(self: *const Poly) u8 {
+        return self.area_and_type & 0x3f;
+    }
+
+    pub fn getType(self: *const Poly) common.PolyType {
+        return @enumFromInt(self.area_and_type >> 6);
+    }
+};
+
+/// Detail polygon
+pub const PolyDetail = struct {
+    vert_base: u32, // Offset in detailVerts
+    tri_base: u32, // Offset in detailTris
+    vert_count: u8,
+    tri_count: u8,
+
+    pub fn init() PolyDetail {
+        return .{
+            .vert_base = 0,
+            .tri_base = 0,
+            .vert_count = 0,
+            .tri_count = 0,
+        };
+    }
+};
+
+/// Link between polygons
+pub const Link = struct {
+    // align(4): the tile-data link section is laid out on 4-byte boundaries
+    // (align4, 1:1 with C++ dtAlign4). With 64-bit refs a natural u64 would force
+    // 8-byte struct alignment and make the `@alignCast` to `[*]Link` over a
+    // 4-aligned offset panic. Lowering ref to 4-byte alignment keeps the byte
+    // layout (ref@0, next@8, …) and the access valid (no-op for 32-bit refs).
+    ref: PolyRef align(4), // Neighbor reference
+    next: u32, // Index of next link
+    edge: u8, // Polygon edge that owns this link
+    side: u8, // Boundary link side
+    bmin: u8, // Minimum sub-edge area
+    bmax: u8, // Maximum sub-edge area
+
+    pub fn init() Link {
+        return .{
+            .ref = 0,
+            .next = common.NULL_LINK,
+            .edge = 0,
+            .side = 0,
+            .bmin = 0,
+            .bmax = 0,
+        };
+    }
+};
+
+/// Bounding volume node
+pub const BVNode = struct {
+    bmin: [3]u16,
+    bmax: [3]u16,
+    i: i32, // Index (negative for escape sequence)
+
+    pub fn init() BVNode {
+        return .{
+            .bmin = [_]u16{0} ** 3,
+            .bmax = [_]u16{0} ** 3,
+            .i = 0,
+        };
+    }
+};
+
+/// Off-mesh connection
+pub const OffMeshConnection = extern struct {
+    pos: [6]f32, // Endpoints [(ax,ay,az,bx,by,bz)]
+    rad: f32, // Endpoint radius
+    poly: u16, // Polygon reference
+    flags: u8, // Link flags
+    side: u8, // Endpoint side
+    user_id: u32, // User-assigned ID
+
+    pub fn init() OffMeshConnection {
+        return .{
+            .pos = [_]f32{0} ** 6,
+            .rad = 0,
+            .poly = 0,
+            .flags = 0,
+            .side = 0,
+            .user_id = 0,
+        };
+    }
+};
+
+/// Mesh tile header
+pub const MeshHeader = struct {
+    magic: i32,
+    version: i32,
+    x: i32,
+    y: i32,
+    layer: i32,
+    user_id: u32,
+    poly_count: i32,
+    vert_count: i32,
+    max_link_count: i32,
+    detail_mesh_count: i32,
+    detail_vert_count: i32,
+    detail_tri_count: i32,
+    bv_node_count: i32,
+    off_mesh_con_count: i32,
+    off_mesh_base: i32,
+    walkable_height: f32,
+    walkable_radius: f32,
+    walkable_climb: f32,
+    bmin: Vec3,
+    bmax: Vec3,
+    bv_quant_factor: f32,
+
+    pub fn init() MeshHeader {
+        return .{
+            .magic = common.NAVMESH_MAGIC,
+            .version = common.NAVMESH_VERSION,
+            .x = 0,
+            .y = 0,
+            .layer = 0,
+            .user_id = 0,
+            .poly_count = 0,
+            .vert_count = 0,
+            .max_link_count = 0,
+            .detail_mesh_count = 0,
+            .detail_vert_count = 0,
+            .detail_tri_count = 0,
+            .bv_node_count = 0,
+            .off_mesh_con_count = 0,
+            .off_mesh_base = 0,
+            .walkable_height = 0,
+            .walkable_radius = 0,
+            .walkable_climb = 0,
+            .bmin = Vec3.zero(),
+            .bmax = Vec3.zero(),
+            .bv_quant_factor = 0,
+        };
+    }
+};
+
+/// Navigation mesh tile
+pub const MeshTile = struct {
+    salt: u32, // Modification counter
+    poly_count: u32, // Cached header.poly_count (0 when header==null); eliminates 2nd-level deref in hot path
+    links_free_list: u32, // Next free link
+    header: ?*MeshHeader,
+    polys: []Poly,
+    verts: []f32,
+    links: []Link,
+    detail_meshes: []PolyDetail,
+    detail_verts: []f32,
+    detail_tris: []u8,
+    bv_tree: []BVNode,
+    off_mesh_cons: []OffMeshConnection,
+    data: []u8,
+    data_size: usize,
+    flags: common.TileFlags,
+    next: ?*MeshTile,
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator) MeshTile {
+        return .{
+            .salt = 0,
+            .poly_count = 0,
+            .links_free_list = common.NULL_LINK,
+            .header = null,
+            .polys = &[_]Poly{},
+            .verts = &[_]f32{},
+            .links = &[_]Link{},
+            .detail_meshes = &[_]PolyDetail{},
+            .detail_verts = &[_]f32{},
+            .detail_tris = &[_]u8{},
+            .bv_tree = &[_]BVNode{},
+            .off_mesh_cons = &[_]OffMeshConnection{},
+            .data = &[_]u8{},
+            .data_size = 0,
+            .flags = .{},
+            .next = null,
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *MeshTile) void {
+        if (self.flags.free_data and self.data.len > 0) {
+            self.allocator.free(self.data);
+        }
+        self.* = undefined;
+    }
+};
+
+/// Navigation mesh parameters
+pub const NavMeshParams = struct {
+    orig: Vec3, // Origin of tile space
+    tile_width: f32,
+    tile_height: f32,
+    max_tiles: i32,
+    max_polys: i32,
+
+    pub fn init() NavMeshParams {
+        return .{
+            .orig = Vec3.zero(),
+            .tile_width = 0,
+            .tile_height = 0,
+            .max_tiles = 0,
+            .max_polys = 0,
+        };
+    }
+};
+
+/// Tile state for serialization (non-structural data)
+const TileState = struct {
+    magic: i32,
+    version: i32,
+    ref: TileRef,
+};
+
+/// Polygon state for serialization (flags and area)
+const PolyState = struct {
+    flags: u16,
+    area: u8,
+};
+
+/// Align value to 4-byte boundary
+inline fn align4(x: usize) usize {
+    return (x + 3) & ~@as(usize, 3);
+}
+
+/// Navigation mesh
+pub const NavMesh = struct {
+    params: NavMeshParams,
+    orig: Vec3,
+    tile_width: f32,
+    tile_height: f32,
+    max_tiles: i32,
+    tile_lut_size: i32,
+    tile_lut_mask: i32,
+    pos_lookup: []?*MeshTile,
+    next_free: ?*MeshTile,
+    tiles: []MeshTile,
+    salt_bits: u32,
+    tile_bits: u32,
+    poly_bits: u32,
+    allocator: std.mem.Allocator,
+
+    const Self = @This();
+
+    pub fn init(allocator: std.mem.Allocator, params: NavMeshParams) !Self {
+        var _z = tracy.zone(@src(), "dtNavMeshInit");
+        defer _z.end();
+        // Salt/tile/poly bit layout. With 64-bit refs (DT_POLYREF64) the layout is
+        // fixed at salt=16 / tile=28 / poly=20 (= 64), 1:1 with C++. With 32-bit
+        // refs it is derived from the requested tile/poly counts (fits in 32).
+        const tile_bits: u32 = if (common.polyref64) 28 else @min(math.ilog2(math.nextPow2(@intCast(params.max_tiles))), 14);
+        const poly_bits: u32 = if (common.polyref64) 20 else @min(math.ilog2(math.nextPow2(@intCast(params.max_polys))), 20);
+        const salt_bits: u32 = if (common.polyref64) 16 else @min(32 - tile_bits - poly_bits, 16);
+
+        const tile_lut_size = math.nextPow2(@intCast(@divTrunc(params.max_tiles, 4)));
+        const pos_lookup = try allocator.alloc(?*MeshTile, tile_lut_size);
+        @memset(pos_lookup, null);
+
+        const tiles = try allocator.alloc(MeshTile, @intCast(params.max_tiles));
+        for (tiles) |*tile| {
+            tile.* = MeshTile.init(allocator);
+        }
+
+        // Build freelist
+        for (0..tiles.len - 1) |i| {
+            tiles[i].salt = 1;
+            tiles[i].next = &tiles[i + 1];
+        }
+        tiles[tiles.len - 1].salt = 1;
+        tiles[tiles.len - 1].next = null;
+
+        return Self{
+            .params = params,
+            .orig = params.orig,
+            .tile_width = params.tile_width,
+            .tile_height = params.tile_height,
+            .max_tiles = params.max_tiles,
+            .tile_lut_size = @intCast(tile_lut_size),
+            .tile_lut_mask = @intCast(tile_lut_size - 1),
+            .pos_lookup = pos_lookup,
+            .next_free = &tiles[0],
+            .tiles = tiles,
+            .salt_bits = salt_bits,
+            .tile_bits = tile_bits,
+            .poly_bits = poly_bits,
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        for (self.tiles) |*tile| {
+            tile.deinit();
+        }
+        self.allocator.free(self.tiles);
+        self.allocator.free(self.pos_lookup);
+        self.* = undefined;
+    }
+
+    pub fn encodePolyId(self: *const Self, salt: u32, it: u32, ip: u32) PolyRef {
+        // Shift amounts are RefShift (u5 for 32-bit refs, u6 for 64-bit).
+        const salt_shift: common.RefShift = @intCast(self.poly_bits + self.tile_bits);
+        const tile_shift: common.RefShift = @intCast(self.poly_bits);
+
+        return (@as(PolyRef, salt) << salt_shift) | (@as(PolyRef, it) << tile_shift) | @as(PolyRef, ip);
+    }
+
+    pub inline fn decodePolyId(self: *const Self, ref: PolyRef) struct { salt: u32, tile: u32, poly: u32 } {
+        const salt_shift: common.RefShift = @intCast(self.poly_bits + self.tile_bits);
+        const tile_shift: common.RefShift = @intCast(self.poly_bits);
+        const salt_bw: common.RefShift = @intCast(self.salt_bits);
+        const tile_bw: common.RefShift = @intCast(self.tile_bits);
+        const poly_bw: common.RefShift = @intCast(self.poly_bits);
+
+        // Masks are ref-width (u32 or u64); each field still fits in u32
+        // (salt<=16, tile<=28, poly<=20 bits) so the decoded values are @intCast back.
+        const salt_mask: PolyRef = (@as(PolyRef, 1) << salt_bw) - 1;
+        const tile_mask: PolyRef = (@as(PolyRef, 1) << tile_bw) - 1;
+        const poly_mask: PolyRef = (@as(PolyRef, 1) << poly_bw) - 1;
+
+        return .{
+            .salt = @intCast((ref >> salt_shift) & salt_mask),
+            .tile = @intCast((ref >> tile_shift) & tile_mask),
+            .poly = @intCast(ref & poly_mask),
+        };
+    }
+
+    pub fn calcTileLoc(self: *const Self, pos: Vec3) struct { x: i32, y: i32 } {
+        return .{
+            .x = @intFromFloat(@floor((pos.x - self.orig.x) / self.tile_width)),
+            .y = @intFromFloat(@floor((pos.z - self.orig.z) / self.tile_height)),
+        };
+    }
+
+    /// Compute tile hash from x,y coordinates
+    inline fn computeTileHash(x: i32, y: i32, mask: i32) i32 {
+        const h1: u32 = 0x8da6b343; // Large multiplicative constants
+        const h2: u32 = 0xd8163841;
+        const n: u32 = @bitCast(h1 *% @as(u32, @bitCast(x)) +% h2 *% @as(u32, @bitCast(y)));
+        return @intCast(n & @as(u32, @bitCast(mask)));
+    }
+
+    /// Get opposite tile direction
+    inline fn oppositeTile(side: i32) i32 {
+        return (side + 4) & 0x7;
+    }
+
+    /// Get slab coordinate based on side
+    inline fn getSlabCoord(va: *const [3]f32, side: i32) f32 {
+        if (side == 0 or side == 4) {
+            return va[0];
+        } else if (side == 2 or side == 6) {
+            return va[2];
+        }
+        return 0;
+    }
+
+    /// Calculate slab end points
+    fn calcSlabEndPoints(va: *const [3]f32, vb: *const [3]f32, bmin: *[2]f32, bmax: *[2]f32, side: i32) void {
+        if (side == 0 or side == 4) {
+            if (va[2] < vb[2]) {
+                bmin[0] = va[2];
+                bmin[1] = va[1];
+                bmax[0] = vb[2];
+                bmax[1] = vb[1];
+            } else {
+                bmin[0] = vb[2];
+                bmin[1] = vb[1];
+                bmax[0] = va[2];
+                bmax[1] = va[1];
+            }
+        } else if (side == 2 or side == 6) {
+            if (va[0] < vb[0]) {
+                bmin[0] = va[0];
+                bmin[1] = va[1];
+                bmax[0] = vb[0];
+                bmax[1] = vb[1];
+            } else {
+                bmin[0] = vb[0];
+                bmin[1] = vb[1];
+                bmax[0] = va[0];
+                bmax[1] = va[1];
+            }
+        }
+    }
+
+    /// Check if two slabs overlap
+    inline fn overlapSlabs(amin: *const [2]f32, amax: *const [2]f32, bmin: *const [2]f32, bmax: *const [2]f32, px: f32, py: f32) bool {
+        // Check for horizontal overlap
+        const minx = @max(amin[0] + px, bmin[0] + px);
+        const maxx = @min(amax[0] - px, bmax[0] - px);
+        if (minx > maxx) return false;
+
+        // Check vertical overlap
+        const ad = (amax[1] - amin[1]) / (amax[0] - amin[0]);
+        const ak = amin[1] - ad * amin[0];
+        const bd = (bmax[1] - bmin[1]) / (bmax[0] - bmin[0]);
+        const bk = bmin[1] - bd * bmin[0];
+        const aminy = ad * minx + ak;
+        const amaxy = ad * maxx + ak;
+        const bminy = bd * minx + bk;
+        const bmaxy = bd * maxx + bk;
+        const dmin = bminy - aminy;
+        const dmax = bmaxy - amaxy;
+
+        // Crossing segments always overlap
+        if (dmin * dmax < 0) return true;
+
+        // Check for overlap at endpoints
+        // FIXED: Changed from py*py*4.0 to py*py to resolve issue #793
+        // The original C++ code incorrectly used (py*2)², allowing connections at 4x walkableClimb
+        const thr = py * py;
+        if (dmin * dmin <= thr or dmax * dmax <= thr) return true;
+
+        return false;
+    }
+
+    /// Get base polygon reference for a tile
+    pub fn getPolyRefBase(self: *const Self, tile: *const MeshTile) PolyRef {
+        if (tile.header == null) return 0;
+        const it: u32 = @intCast(self.getTileIndex(tile));
+        return self.encodePolyId(tile.salt, it, 0);
+    }
+
+    /// Get tile index in the tiles array
+    fn getTileIndex(self: *const Self, tile: *const MeshTile) usize {
+        const base_ptr = @intFromPtr(self.tiles.ptr);
+        const tile_ptr = @intFromPtr(tile);
+        return @divExact(tile_ptr - base_ptr, @sizeOf(MeshTile));
+    }
+
+    /// Get tile reference
+    pub fn getTileRef(self: *const Self, tile: *const MeshTile) TileRef {
+        if (tile.header == null) return 0;
+        const it: u32 = @intCast(self.getTileIndex(tile));
+        return self.encodePolyId(tile.salt, it, 0);
+    }
+
+    /// Allocate a link from tile's free list
+    fn allocLink(_: *Self, tile: *MeshTile) u32 {
+        if (tile.links_free_list == common.NULL_LINK) {
+            return common.NULL_LINK;
+        }
+        const link_idx = tile.links_free_list;
+        tile.links_free_list = tile.links[link_idx].next;
+        return link_idx;
+    }
+
+    /// Free a link and return it to tile's free list
+    fn freeLink(self: *Self, tile: *MeshTile, link_idx: u32) void {
+        _ = self;
+        tile.links[link_idx].next = tile.links_free_list;
+        tile.links_free_list = link_idx;
+    }
+
+    /// Connect internal links (within tile)
+    fn connectIntLinks(self: *Self, tile: *MeshTile) void {
+        if (tile.header == null) return;
+
+        const base = self.getPolyRefBase(tile);
+
+        for (0..@intCast(tile.header.?.poly_count)) |i| {
+            var poly = &tile.polys[i];
+            poly.first_link = common.NULL_LINK;
+
+            if (poly.getType() == .offmesh_connection) continue;
+
+            // Build edge links backwards for proper ordering
+            var j: usize = @intCast(poly.vert_count);
+            while (j > 0) {
+                j -= 1;
+                // Skip hard and non-internal edges
+                if (poly.neis[j] == 0 or (poly.neis[j] & common.EXT_LINK) != 0) continue;
+
+                const idx = self.allocLink(tile);
+                if (idx != common.NULL_LINK) {
+                    var link = &tile.links[idx];
+                    link.ref = base | @as(PolyRef, poly.neis[j] - 1);
+                    link.edge = @intCast(j);
+                    link.side = 0xff;
+                    link.bmin = 0;
+                    link.bmax = 0;
+                    // Add to linked list
+                    link.next = poly.first_link;
+                    poly.first_link = idx;
+                }
+            }
+        }
+    }
+
+    /// Get tile at specific coordinates and layer
+    pub fn getTileAt(self: *const Self, x: i32, y: i32, layer: i32) ?*MeshTile {
+        const h = computeTileHash(x, y, self.tile_lut_mask);
+        var tile = self.pos_lookup[@intCast(h)];
+        while (tile) |t| {
+            if (t.header) |header| {
+                if (header.x == x and header.y == y and header.layer == layer) {
+                    return t;
+                }
+            }
+            tile = t.next;
+        }
+        return null;
+    }
+
+    /// Get all tiles at specific coordinates (across layers)
+    pub fn getTilesAt(self: *const Self, x: i32, y: i32, tiles: []*MeshTile, max_tiles: usize) usize {
+        var n: usize = 0;
+        const h = computeTileHash(x, y, self.tile_lut_mask);
+        var tile = self.pos_lookup[@intCast(h)];
+        while (tile) |t| : (tile = t.next) {
+            if (t.header) |header| {
+                if (header.x == x and header.y == y) {
+                    if (n < max_tiles) {
+                        tiles[n] = t;
+                        n += 1;
+                    }
+                }
+            }
+        }
+        return n;
+    }
+
+    /// Get neighbour tiles at specific side
+    pub fn getNeighbourTilesAt(self: *const Self, x: i32, y: i32, side: i32, tiles: []*MeshTile, max_tiles: usize) usize {
+        var nx = x;
+        var ny = y;
+        switch (side) {
+            0 => nx += 1,
+            1 => {
+                nx += 1;
+                ny += 1;
+            },
+            2 => ny += 1,
+            3 => {
+                nx -= 1;
+                ny += 1;
+            },
+            4 => nx -= 1,
+            5 => {
+                nx -= 1;
+                ny -= 1;
+            },
+            6 => ny -= 1,
+            7 => {
+                nx += 1;
+                ny -= 1;
+            },
+            else => {},
+        }
+        return self.getTilesAt(nx, ny, tiles, max_tiles);
+    }
+
+    /// Find polygons connecting to given edge
+    fn findConnectingPolys(
+        self: *const Self,
+        va: *const [3]f32,
+        vb: *const [3]f32,
+        tile: *const MeshTile,
+        side: i32,
+        con: []PolyRef,
+        conarea: []f32,
+        max_con: usize,
+    ) usize {
+        if (tile.header == null) return 0;
+
+        var amin: [2]f32 = undefined;
+        var amax: [2]f32 = undefined;
+        calcSlabEndPoints(va, vb, &amin, &amax, side);
+        const apos = getSlabCoord(va, side);
+
+        var bmin: [2]f32 = undefined;
+        var bmax: [2]f32 = undefined;
+        const m = common.EXT_LINK | @as(u16, @intCast(side));
+        var n: usize = 0;
+
+        const base = self.getPolyRefBase(tile);
+
+        for (0..@intCast(tile.header.?.poly_count)) |i| {
+            const poly = &tile.polys[i];
+            const nv: usize = @intCast(poly.vert_count);
+
+            for (0..nv) |j| {
+                // Skip edges which do not point to the right side
+                if (poly.neis[j] != m) continue;
+
+                const vc_idx = @as(usize, poly.verts[j]) * 3;
+                const vc: *const [3]f32 = @ptrCast(tile.verts[vc_idx .. vc_idx + 3]);
+                const vd_idx = @as(usize, poly.verts[(j + 1) % nv]) * 3;
+                const vd: *const [3]f32 = @ptrCast(tile.verts[vd_idx .. vd_idx + 3]);
+                const bpos = getSlabCoord(vc, side);
+
+                // Segments are not close enough
+                if (@abs(apos - bpos) > 0.01) continue;
+
+                // Check if the segments touch
+                calcSlabEndPoints(vc, vd, &bmin, &bmax, side);
+
+                if (!overlapSlabs(&amin, &amax, &bmin, &bmax, 0.01, tile.header.?.walkable_climb)) continue;
+
+                // Add return value
+                if (n < max_con) {
+                    conarea[n * 2 + 0] = @max(amin[0], bmin[0]);
+                    conarea[n * 2 + 1] = @min(amax[0], bmax[0]);
+                    con[n] = base | @as(PolyRef, @intCast(i));
+                    n += 1;
+                }
+                break;
+            }
+        }
+        return n;
+    }
+
+    /// Get tile and polygon by reference
+    /// Get tile and poly by ref without error checking (unsafe, for performance)
+    pub fn getTileAndPolyByRefUnsafe(
+        self: *const Self,
+        ref: PolyRef,
+        tile: *?*const MeshTile,
+        poly: *?*const Poly,
+    ) void {
+        const decoded = self.decodePolyId(ref);
+        tile.* = &self.tiles[decoded.tile];
+        poly.* = &self.tiles[decoded.tile].polys[decoded.poly];
+    }
+
+    pub inline fn getTileAndPolyByRef(
+        self: *const Self,
+        ref: PolyRef,
+    ) error{InvalidParam}!struct { tile: *MeshTile, poly: *Poly } {
+        if (ref == 0) return error.InvalidParam;
+
+        const decoded = self.decodePolyId(ref);
+        if (decoded.tile >= @as(u32, @intCast(self.max_tiles))) return error.InvalidParam;
+        const tile = &self.tiles[decoded.tile];
+        if (tile.salt != decoded.salt) return error.InvalidParam;
+        if (tile.header == null) return error.InvalidParam;
+        // Use cached poly_count — avoids the 2nd-level header.poly_count pointer-chase
+        if (decoded.poly >= tile.poly_count) return error.InvalidParam;
+
+        const poly = &tile.polys[decoded.poly];
+        return .{ .tile = tile, .poly = poly };
+    }
+
+    /// Check if a polygon reference is valid (tile exists, salt matches, poly index in range)
+    pub fn isValidPolyRef(self: *const Self, ref: PolyRef) bool {
+        if (ref == 0) return false;
+        _ = self.getTileAndPolyByRef(ref) catch return false;
+        return true;
+    }
+
+    /// Set polygon flags
+    /// Returns the off-mesh connection record for an off-mesh polygon ref, or
+    /// null. 1:1 with dtNavMesh::getOffMeshConnectionByRef (DetourNavMesh.cpp:1508).
+    pub fn getOffMeshConnectionByRef(self: *const Self, ref: PolyRef) ?*const OffMeshConnection {
+        if (ref == 0) return null;
+
+        const decoded = self.decodePolyId(ref);
+        if (decoded.tile >= @as(u32, @intCast(self.max_tiles))) return null;
+        const tile = &self.tiles[decoded.tile];
+        if (tile.salt != decoded.salt or tile.header == null) return null;
+        if (decoded.poly >= @as(u32, @intCast(tile.header.?.poly_count))) return null;
+        const poly = &tile.polys[decoded.poly];
+
+        // Make sure that the current poly is indeed an off-mesh link.
+        if (poly.getType() != .offmesh_connection) return null;
+
+        const idx = decoded.poly - @as(u32, @intCast(tile.header.?.off_mesh_base));
+        return &tile.off_mesh_cons[idx];
+    }
+
+    pub fn setPolyFlags(self: *Self, ref: PolyRef, flags: u16) !void {
+        const result = try self.getTileAndPolyByRef(ref);
+        result.poly.flags = flags;
+    }
+
+    /// Get polygon flags
+    pub fn getPolyFlags(self: *const Self, ref: PolyRef) !u16 {
+        const result = try self.getTileAndPolyByRef(ref);
+        return result.poly.flags;
+    }
+
+    /// Set polygon area
+    pub fn setPolyArea(self: *Self, ref: PolyRef, area: u8) !void {
+        const result = try self.getTileAndPolyByRef(ref);
+        result.poly.setArea(area);
+    }
+
+    /// Get polygon area
+    pub fn getPolyArea(self: *const Self, ref: PolyRef) !u8 {
+        const result = try self.getTileAndPolyByRef(ref);
+        return result.poly.getArea();
+    }
+
+    /// Query polygons in tile within bounding box (simplified version without BVTree)
+    /// Query polygons in tile using BVTree or linear search
+    fn queryPolygonsInTile(
+        self: *const Self,
+        tile: *const MeshTile,
+        qmin: *const [3]f32,
+        qmax: *const [3]f32,
+        polys: []PolyRef,
+        max_polys: usize,
+    ) usize {
+        if (tile.header == null) return 0;
+
+        const base = self.getPolyRefBase(tile);
+
+        // Use BVTree if available
+        if (tile.bv_tree.len > 0) {
+            const tbmin = &tile.header.?.bmin;
+            const tbmax = &tile.header.?.bmax;
+            const qfac = tile.header.?.bv_quant_factor;
+
+            // Calculate quantized box
+            var bmin: [3]u16 = undefined;
+            var bmax: [3]u16 = undefined;
+            // Clamp query box to world box
+            const minx = math.clamp(f32, qmin[0], tbmin.x, tbmax.x) - tbmin.x;
+            const miny = math.clamp(f32, qmin[1], tbmin.y, tbmax.y) - tbmin.y;
+            const minz = math.clamp(f32, qmin[2], tbmin.z, tbmax.z) - tbmin.z;
+            const maxx = math.clamp(f32, qmax[0], tbmin.x, tbmax.x) - tbmin.x;
+            const maxy = math.clamp(f32, qmax[1], tbmin.y, tbmax.y) - tbmin.y;
+            const maxz = math.clamp(f32, qmax[2], tbmin.z, tbmax.z) - tbmin.z;
+            // Quantize
+            bmin[0] = @intFromFloat(qfac * minx);
+            bmin[0] &= 0xfffe;
+            bmin[1] = @intFromFloat(qfac * miny);
+            bmin[1] &= 0xfffe;
+            bmin[2] = @intFromFloat(qfac * minz);
+            bmin[2] &= 0xfffe;
+            bmax[0] = @intFromFloat(qfac * maxx + 1.0);
+            bmax[0] |= 1;
+            bmax[1] = @intFromFloat(qfac * maxy + 1.0);
+            bmax[1] |= 1;
+            bmax[2] = @intFromFloat(qfac * maxz + 1.0);
+            bmax[2] |= 1;
+
+            // Traverse tree
+            var n: usize = 0;
+            var node_idx: usize = 0;
+            const end_idx = tile.bv_tree.len;
+
+            while (node_idx < end_idx) {
+                const node = &tile.bv_tree[node_idx];
+                const overlap = math.overlapQuantBounds(&bmin, &bmax, &node.bmin, &node.bmax);
+                const is_leaf_node = node.i >= 0;
+
+                if (is_leaf_node and overlap) {
+                    if (n < max_polys) {
+                        polys[n] = base | @as(PolyRef, @intCast(node.i));
+                        n += 1;
+                    }
+                }
+
+                if (overlap or is_leaf_node) {
+                    node_idx += 1;
+                } else {
+                    const escape_index: i32 = -node.i;
+                    node_idx += @intCast(escape_index);
+                }
+            }
+
+            return n;
+        } else {
+            // Linear search fallback
+            var bmin: [3]f32 = undefined;
+            var bmax: [3]f32 = undefined;
+            var n: usize = 0;
+
+            for (0..@intCast(tile.header.?.poly_count)) |i| {
+                const p = &tile.polys[i];
+                // Do not return off-mesh connection polygons
+                if (p.getType() == .offmesh_connection) continue;
+
+                // Calc polygon bounds
+                const v0_idx = @as(usize, p.verts[0]) * 3;
+                const v0: *const [3]f32 = tile.verts[v0_idx..][0..3];
+                math.vcopy(&bmin, v0);
+                math.vcopy(&bmax, v0);
+
+                for (1..@intCast(p.vert_count)) |j| {
+                    const v_idx = @as(usize, p.verts[j]) * 3;
+                    const v: *const [3]f32 = tile.verts[v_idx..][0..3];
+                    math.vmin(&bmin, v);
+                    math.vmax(&bmax, v);
+                }
+
+                if (qmin[0] <= bmax[0] and qmax[0] >= bmin[0] and
+                    qmin[1] <= bmax[1] and qmax[1] >= bmin[1] and
+                    qmin[2] <= bmax[2] and qmax[2] >= bmin[2])
+                {
+                    if (n < max_polys) {
+                        polys[n] = base | @as(PolyRef, @intCast(i));
+                        n += 1;
+                    }
+                }
+            }
+            return n;
+        }
+    }
+
+    /// Find nearest polygon in tile
+    fn findNearestPolyInTile(
+        self: *const Self,
+        tile: *const MeshTile,
+        center: *const [3]f32,
+        half_extents: *const [3]f32,
+        nearest_pt: *[3]f32,
+    ) PolyRef {
+        var bmin = [3]f32{
+            center[0] - half_extents[0],
+            center[1] - half_extents[1],
+            center[2] - half_extents[2],
+        };
+        var bmax = [3]f32{
+            center[0] + half_extents[0],
+            center[1] + half_extents[1],
+            center[2] + half_extents[2],
+        };
+
+        var polys: [128]PolyRef = undefined;
+        const poly_count = self.queryPolygonsInTile(tile, &bmin, &bmax, &polys, 128);
+
+        var nearest: PolyRef = 0;
+        var nearest_dist_sqr: f32 = std.math.floatMax(f32);
+
+        for (0..poly_count) |i| {
+            const ref = polys[i];
+
+            // Find closest point on poly
+            var closest_pt_poly: [3]f32 = undefined;
+            var pos_over_poly: bool = false;
+
+            self.closestPointOnPoly(ref, center, &closest_pt_poly, &pos_over_poly) catch continue;
+
+            // If point is directly over polygon and closer than previous best, update
+            var d = math.vdistSqr(center, &closest_pt_poly);
+
+            // If point is inside poly, adjust distance for comparison
+            // Give preference to polys that are under the point
+            if (pos_over_poly) {
+                var diff_y = @abs(closest_pt_poly[1] - center[1]);
+                const walkable_climb = if (tile.header) |h| h.walkable_climb else 0.0;
+
+                if (diff_y < walkable_climb) {
+                    diff_y = 0;
+                }
+
+                d = diff_y * diff_y;
+            }
+
+            if (d < nearest_dist_sqr) {
+                nearest_pt.* = closest_pt_poly;
+                nearest_dist_sqr = d;
+                nearest = ref;
+            }
+        }
+
+        return nearest;
+    }
+
+    /// Find nearest polygon in tile with directional bias for ladder connections.
+    /// Only accepts polygons in front of the ladder (positive projection along approach dir).
+    /// Scores by perpendicular distance to approach ray. Falls back to standard search.
+    fn findNearestPolyInDirection(
+        self: *const Self,
+        tile: *const MeshTile,
+        center: *const [3]f32,
+        half_extents: *const [3]f32,
+        user_id: u32,
+        is_top: bool,
+        nearest_pt: *[3]f32,
+    ) PolyRef {
+        const dir_enc = if (is_top) (user_id >> 28) & 3 else (user_id >> 24) & 3;
+        const angle_deg: u16 = @intCast(dir_enc * 90);
+        const angle_rad = @as(f32, @floatFromInt(angle_deg)) * std.math.pi / 180.0;
+        const primary_dir_x = @cos(angle_rad);
+        const primary_dir_z = @sin(angle_rad);
+
+        const bmin = [3]f32{
+            center[0] - half_extents[0],
+            center[1] - half_extents[1],
+            center[2] - half_extents[2],
+        };
+        const bmax = [3]f32{
+            center[0] + half_extents[0],
+            center[1] + half_extents[1],
+            center[2] + half_extents[2],
+        };
+
+        var polys: [128]PolyRef = undefined;
+        const poly_count = self.queryPolygonsInTile(tile, &bmin, &bmax, &polys, 128);
+
+        // Try primary direction first, then opposite direction if all polys rejected
+        const directions = [2][2]f32{
+            .{ primary_dir_x, primary_dir_z },
+            .{ -primary_dir_x, -primary_dir_z },
+        };
+
+        for (directions) |dir_pair| {
+            const dir_x = dir_pair[0];
+            const dir_z = dir_pair[1];
+
+            var nearest: PolyRef = 0;
+            var nearest_score: f32 = std.math.floatMax(f32);
+
+            for (0..poly_count) |pi| {
+                const ref = polys[pi];
+
+                var closest_pt_poly: [3]f32 = undefined;
+                var pos_over_poly: bool = false;
+                self.closestPointOnPoly(ref, center, &closest_pt_poly, &pos_over_poly) catch continue;
+
+                const vx = closest_pt_poly[0] - center[0];
+                const vz = closest_pt_poly[2] - center[2];
+                const proj = vx * dir_x + vz * dir_z;
+
+                if (proj < 0) continue;
+
+                const perp_x = vx - proj * dir_x;
+                const perp_z = vz - proj * dir_z;
+                var score = perp_x * perp_x + perp_z * perp_z;
+
+                if (pos_over_poly) {
+                    const dy = @abs(closest_pt_poly[1] - center[1]);
+                    const walkable_climb = if (tile.header) |h| h.walkable_climb else 0.0;
+                    if (dy > walkable_climb) score += dy * dy;
+                }
+
+                if (score < nearest_score) {
+                    nearest_pt.* = closest_pt_poly;
+                    nearest_score = score;
+                    nearest = ref;
+                }
+            }
+
+            if (nearest != 0) return nearest;
+        }
+
+        // Fallback: neither direction worked, use standard search
+        return self.findNearestPolyInTile(tile, center, half_extents, nearest_pt);
+    }
+
+    /// Connect external links between tiles
+    fn connectExtLinks(self: *Self, tile: *MeshTile, target: ?*MeshTile, side: i32) void {
+        if (tile.header == null) return;
+
+        for (0..@intCast(tile.header.?.poly_count)) |i| {
+            var poly = &tile.polys[i];
+
+            const nv: usize = @intCast(poly.vert_count);
+            for (0..nv) |j| {
+                // Skip non-portal edges
+                if ((poly.neis[j] & common.EXT_LINK) == 0) continue;
+
+                const dir = @as(i32, @intCast(poly.neis[j] & 0xff));
+                if (side != -1 and dir != side) continue;
+
+                // Create new links
+                const va_idx = @as(usize, poly.verts[j]) * 3;
+                const va: *const [3]f32 = @ptrCast(tile.verts[va_idx .. va_idx + 3]);
+                const vb_idx = @as(usize, poly.verts[(j + 1) % nv]) * 3;
+                const vb: *const [3]f32 = @ptrCast(tile.verts[vb_idx .. vb_idx + 3]);
+
+                var nei: [4]PolyRef = undefined;
+                var neia: [4 * 2]f32 = undefined;
+
+                const nnei = if (target) |t|
+                    self.findConnectingPolys(va, vb, t, oppositeTile(dir), &nei, &neia, 4)
+                else
+                    0;
+
+                for (0..nnei) |k| {
+                    const idx = self.allocLink(tile);
+                    if (idx != common.NULL_LINK) {
+                        var link = &tile.links[idx];
+                        link.ref = nei[k];
+                        link.edge = @intCast(j);
+                        link.side = @intCast(dir);
+
+                        link.next = poly.first_link;
+                        poly.first_link = idx;
+
+                        // Compress portal limits to a byte value
+                        if (dir == 0 or dir == 4) {
+                            const tmin = (neia[k * 2 + 0] - va[2]) / (vb[2] - va[2]);
+                            const tmax = (neia[k * 2 + 1] - va[2]) / (vb[2] - va[2]);
+                            const tmin_clamped = std.math.clamp(if (tmin > tmax) tmax else tmin, 0.0, 1.0);
+                            const tmax_clamped = std.math.clamp(if (tmin > tmax) tmin else tmax, 0.0, 1.0);
+                            link.bmin = @intFromFloat(@round(tmin_clamped * 255.0));
+                            link.bmax = @intFromFloat(@round(tmax_clamped * 255.0));
+                        } else if (dir == 2 or dir == 6) {
+                            const tmin = (neia[k * 2 + 0] - va[0]) / (vb[0] - va[0]);
+                            const tmax = (neia[k * 2 + 1] - va[0]) / (vb[0] - va[0]);
+                            const tmin_clamped = std.math.clamp(if (tmin > tmax) tmax else tmin, 0.0, 1.0);
+                            const tmax_clamped = std.math.clamp(if (tmin > tmax) tmin else tmax, 0.0, 1.0);
+                            link.bmin = @intFromFloat(@round(tmin_clamped * 255.0));
+                            link.bmax = @intFromFloat(@round(tmax_clamped * 255.0));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Walk `tile`'s per-poly link lists and detach every link whose `ref`
+    /// points at `target`, returning each freed slot to the tile's link
+    /// freelist. Must run before `removeTile` frees `target`'s slot — once
+    /// `target.salt` is bumped, the link refs become unreferenceable but
+    /// their Link records remain allocated in this tile's pool.
+    fn unconnectLinks(self: *Self, tile: *MeshTile, target: *MeshTile) void {
+        if (tile.header == null) return;
+        if (target.header == null) return;
+
+        const target_ref = self.getTileRef(target);
+        const target_tile_idx = self.decodePolyId(target_ref).tile;
+
+        const poly_count: usize = @intCast(tile.header.?.poly_count);
+        for (tile.polys[0..poly_count]) |*poly| {
+            var prev: u32 = common.NULL_LINK;
+            var j = poly.first_link;
+            while (j != common.NULL_LINK) {
+                const next = tile.links[j].next;
+                const ref_tile_idx = self.decodePolyId(tile.links[j].ref).tile;
+                if (ref_tile_idx == target_tile_idx) {
+                    if (prev == common.NULL_LINK) {
+                        poly.first_link = next;
+                    } else {
+                        tile.links[prev].next = next;
+                    }
+                    self.freeLink(tile, j);
+                } else {
+                    prev = j;
+                }
+                j = next;
+            }
+        }
+    }
+
+    /// Add a tile to the navigation mesh
+    pub fn addTile(
+        self: *Self,
+        data: []u8,
+        flags: common.TileFlags,
+        last_ref: TileRef,
+    ) !TileRef {
+        var _z = tracy.zone(@src(), "dtAddTile");
+        defer _z.end();
+        // Verify data format
+        const header: *MeshHeader = @ptrCast(@alignCast(data.ptr));
+        if (header.magic != common.NAVMESH_MAGIC) return error.WrongMagic;
+        if (header.version != common.NAVMESH_VERSION) return error.WrongVersion;
+
+        // Do not allow adding more polygons than specified in the NavMesh's maxPolys constraint.
+        // Otherwise, the poly ID cannot be represented with the given number of bits.
+        // 1:1 with dtNavMesh::addTile (DetourNavMesh.cpp:927).
+        if (self.poly_bits < math.ilog2(math.nextPow2(@intCast(header.poly_count)))) {
+            return error.InvalidParam;
+        }
+
+        // Check if location is free
+        if (self.getTileAt(header.x, header.y, header.layer)) |_| {
+            return error.AlreadyOccupied;
+        }
+
+        // Allocate a tile
+        var tile: ?*MeshTile = null;
+        if (last_ref == 0) {
+            // Use next free tile
+            if (self.next_free) |free_tile| {
+                tile = free_tile;
+                self.next_free = free_tile.next;
+                free_tile.next = null;
+            }
+        } else {
+            // Try to relocate to specific index
+            const decoded = self.decodePolyId(last_ref);
+            if (decoded.tile >= @as(u32, @intCast(self.max_tiles))) {
+                return error.OutOfMemory;
+            }
+
+            var target = &self.tiles[decoded.tile];
+            var prev: ?*MeshTile = null;
+            var current = self.next_free;
+
+            while (current) |curr| {
+                if (curr == target) break;
+                prev = curr;
+                current = curr.next;
+            }
+
+            if (current != target) return error.OutOfMemory;
+
+            // Remove from freelist
+            if (prev) |p| {
+                p.next = target.next;
+            } else {
+                self.next_free = target.next;
+            }
+
+            // Restore salt
+            target.salt = decoded.salt;
+            tile = target;
+        }
+
+        if (tile == null) return error.OutOfMemory;
+
+        // Insert tile into position lookup
+        const h = computeTileHash(header.x, header.y, self.tile_lut_mask);
+        tile.?.next = self.pos_lookup[@intCast(h)];
+        self.pos_lookup[@intCast(h)] = tile;
+
+        // Patch header pointers
+        const header_size = std.mem.alignForward(usize, @sizeOf(MeshHeader), 4);
+        const verts_size = std.mem.alignForward(usize, @sizeOf(f32) * 3 * @as(usize, @intCast(header.vert_count)), 4);
+        const polys_size = std.mem.alignForward(usize, @sizeOf(Poly) * @as(usize, @intCast(header.poly_count)), 4);
+        const links_size = std.mem.alignForward(usize, @sizeOf(Link) * @as(usize, @intCast(header.max_link_count)), 4);
+        const detail_meshes_size = std.mem.alignForward(usize, @sizeOf(PolyDetail) * @as(usize, @intCast(header.detail_mesh_count)), 4);
+        const detail_verts_size = std.mem.alignForward(usize, @sizeOf(f32) * 3 * @as(usize, @intCast(header.detail_vert_count)), 4);
+        const detail_tris_size = std.mem.alignForward(usize, @sizeOf(u8) * 4 * @as(usize, @intCast(header.detail_tri_count)), 4);
+        const bvtree_size = std.mem.alignForward(usize, @sizeOf(BVNode) * @as(usize, @intCast(header.bv_node_count)), 4);
+        const offmesh_size = std.mem.alignForward(usize, @sizeOf(OffMeshConnection) * @as(usize, @intCast(header.off_mesh_con_count)), 4);
+
+        var offset: usize = header_size;
+
+        // Setup pointers to data sections
+        const verts_ptr: [*]f32 = @ptrCast(@alignCast(data[offset..].ptr));
+        tile.?.verts = verts_ptr[0 .. @as(usize, @intCast(header.vert_count)) * 3];
+        offset += verts_size;
+
+        const polys_ptr: [*]Poly = @ptrCast(@alignCast(data[offset..].ptr));
+        tile.?.polys = polys_ptr[0..@intCast(header.poly_count)];
+        offset += polys_size;
+
+        const links_ptr: [*]Link = @ptrCast(@alignCast(data[offset..].ptr));
+        tile.?.links = links_ptr[0..@intCast(header.max_link_count)];
+        offset += links_size;
+
+        const dmeshes_ptr: [*]PolyDetail = @ptrCast(@alignCast(data[offset..].ptr));
+        tile.?.detail_meshes = dmeshes_ptr[0..@intCast(header.detail_mesh_count)];
+        offset += detail_meshes_size;
+
+        const dverts_ptr: [*]f32 = @ptrCast(@alignCast(data[offset..].ptr));
+        tile.?.detail_verts = dverts_ptr[0 .. @as(usize, @intCast(header.detail_vert_count)) * 3];
+        offset += detail_verts_size;
+
+        const dtris_ptr: [*]u8 = @ptrCast(@alignCast(data[offset..].ptr));
+        tile.?.detail_tris = dtris_ptr[0 .. @as(usize, @intCast(header.detail_tri_count)) * 4];
+        offset += detail_tris_size;
+
+        if (bvtree_size > 0) {
+            const bvtree_ptr: [*]BVNode = @ptrCast(@alignCast(data[offset..].ptr));
+            tile.?.bv_tree = bvtree_ptr[0..@intCast(header.bv_node_count)];
+        } else {
+            tile.?.bv_tree = &[_]BVNode{};
+        }
+        offset += bvtree_size;
+
+        if (offmesh_size > 0) {
+            const offmesh_ptr: [*]OffMeshConnection = @ptrCast(@alignCast(data[offset..].ptr));
+            tile.?.off_mesh_cons = offmesh_ptr[0..@intCast(header.off_mesh_con_count)];
+        } else {
+            tile.?.off_mesh_cons = &[_]OffMeshConnection{};
+        }
+
+        // Build links freelist
+        tile.?.links_free_list = 0;
+        tile.?.links[@intCast(header.max_link_count - 1)].next = common.NULL_LINK;
+        for (0..@intCast(header.max_link_count - 1)) |i| {
+            tile.?.links[i].next = @intCast(i + 1);
+        }
+
+        // Initialize tile
+        tile.?.header = header;
+        tile.?.poly_count = @intCast(header.poly_count); // keep in sync with header.poly_count
+        tile.?.data = data;
+        tile.?.data_size = data.len;
+        tile.?.flags = flags;
+
+        // Connect internal links
+        self.connectIntLinks(tile.?);
+
+        // Create connections with neighbor tiles
+        const MAX_NEIS = 32;
+        var neis: [MAX_NEIS]*MeshTile = undefined;
+
+        // Connect with layers in current tile
+        var nneis = self.getTilesAt(header.x, header.y, &neis, MAX_NEIS);
+        for (0..nneis) |jj| {
+            if (neis[jj] == tile.?) continue;
+
+            self.connectExtLinks(tile.?, neis[jj], -1);
+            self.connectExtLinks(neis[jj], tile.?, -1);
+            self.connectExtOffMeshLinks(tile.?, neis[jj], -1);
+            self.connectExtOffMeshLinks(neis[jj], tile.?, -1);
+        }
+
+        // Connect with neighbor tiles
+        for (0..8) |ii| {
+            nneis = self.getNeighbourTilesAt(header.x, header.y, @intCast(ii), &neis, MAX_NEIS);
+            for (0..nneis) |jj| {
+                self.connectExtLinks(tile.?, neis[jj], @intCast(ii));
+                self.connectExtLinks(neis[jj], tile.?, oppositeTile(@intCast(ii)));
+                self.connectExtOffMeshLinks(tile.?, neis[jj], @intCast(ii));
+                self.connectExtOffMeshLinks(neis[jj], tile.?, oppositeTile(@intCast(ii)));
+            }
+        }
+
+        // Base off-mesh connections to their starting polygons
+        self.baseOffMeshLinks(tile.?);
+        self.connectExtOffMeshLinks(tile.?, tile.?, -1);
+
+        return self.getTileRef(tile.?);
+    }
+
+    /// Base off-mesh connection links
+    fn baseOffMeshLinks(self: *Self, tile: *MeshTile) void {
+        if (tile.header == null) return;
+
+        const base = self.getPolyRefBase(tile);
+
+        for (0..@intCast(tile.header.?.off_mesh_con_count)) |i| {
+            const con = &tile.off_mesh_cons[i];
+
+            // Bounds check to prevent crash
+            if (con.poly >= tile.header.?.poly_count) {
+                continue;
+            }
+
+            var poly = &tile.polys[@intCast(con.poly)];
+
+            const half_extents = [3]f32{ con.rad, tile.header.?.walkable_climb, con.rad };
+
+            // Find polygon to connect to (first vertex - start point)
+            const p: *const [3]f32 = @ptrCast(con.pos[0..3]);
+            var nearest_pt: [3]f32 = undefined;
+            var ref: PolyRef = 0;
+
+            // Ladder connections (area == 2): direction-aware polygon search
+            // to avoid snapping to a polygon on the wrong side of a wall
+            if (poly.getArea() == 2) {
+                ref = self.findNearestPolyInDirection(tile, p, &half_extents, con.user_id, false, &nearest_pt);
+            } else {
+                ref = self.findNearestPolyInTile(tile, p, &half_extents, &nearest_pt);
+            }
+            if (ref == 0) continue;
+
+            // Check distance — skip for ladders (area==2) since we keep original
+            // coordinates and just need a polygon to link to, not to snap to
+            if (poly.getArea() != 2) {
+                const dx = nearest_pt[0] - p[0];
+                const dz = nearest_pt[2] - p[2];
+                if (dx * dx + dz * dz > con.rad * con.rad) continue;
+            }
+
+            // Set the vertex position for this off-mesh connection endpoint.
+            // For ladders (area==2): keep original ladder position so the path
+            // routes through the exact ladder coordinates, not a polygon edge.
+            const v_idx = @as(usize, poly.verts[0]) * 3;
+            if (poly.getArea() == 2) {
+                tile.verts[v_idx + 0] = p[0];
+                tile.verts[v_idx + 1] = p[1];
+                tile.verts[v_idx + 2] = p[2];
+            } else {
+                tile.verts[v_idx + 0] = nearest_pt[0];
+                tile.verts[v_idx + 1] = nearest_pt[1];
+                tile.verts[v_idx + 2] = nearest_pt[2];
+            }
+
+            // Link off-mesh connection to target poly
+            const idx = self.allocLink(tile);
+            if (idx != common.NULL_LINK) {
+                var link = &tile.links[idx];
+                link.ref = ref;
+                link.edge = 0;
+                link.side = 0xff;
+                link.bmin = 0;
+                link.bmax = 0;
+                link.next = poly.first_link;
+                poly.first_link = idx;
+            }
+
+            // Start end-point always connects back to off-mesh connection
+            const tidx = self.allocLink(tile);
+            if (tidx != common.NULL_LINK) {
+                const decoded = self.decodePolyId(ref);
+                const land_poly_idx = decoded.poly;
+                var land_poly = &tile.polys[land_poly_idx];
+                var link = &tile.links[tidx];
+                link.ref = base | @as(PolyRef, @intCast(con.poly));
+                link.edge = 0xff;
+                link.side = 0xff;
+                link.bmin = 0;
+                link.bmax = 0;
+                link.next = land_poly.first_link;
+                land_poly.first_link = tidx;
+            }
+        }
+    }
+
+    /// Connect external off-mesh links
+    fn connectExtOffMeshLinks(self: *Self, tile: *MeshTile, target: *MeshTile, side: i32) void {
+        if (tile.header == null or target.header == null) return;
+
+        const opposite_side: u8 = if (side == -1) 0xff else @intCast(oppositeTile(side));
+
+        for (0..@intCast(target.header.?.off_mesh_con_count)) |i| {
+            const target_con = &target.off_mesh_cons[i];
+            if (target_con.side != opposite_side) continue;
+
+            var target_poly = &target.polys[@intCast(target_con.poly)];
+            // Skip off-mesh connections which start location could not be connected at all
+            if (target_poly.first_link == common.NULL_LINK) continue;
+
+            const half_extents = [3]f32{ target_con.rad, target.header.?.walkable_climb, target_con.rad };
+
+            // Find polygon to connect to (second vertex - end point)
+            const p: *const [3]f32 = @ptrCast(target_con.pos[3..6]);
+            var nearest_pt: [3]f32 = undefined;
+            var ref: PolyRef = 0;
+
+            // Ladder connections (area == 2): direction-aware polygon search for top endpoint
+            if (target_poly.getArea() == 2) {
+                ref = self.findNearestPolyInDirection(tile, p, &half_extents, target_con.user_id, true, &nearest_pt);
+            } else {
+                ref = self.findNearestPolyInTile(tile, p, &half_extents, &nearest_pt);
+            }
+            if (ref == 0) continue;
+
+            // Check distance — skip for ladders (area==2) since we keep original
+            // coordinates and just need a polygon to link to
+            if (target_poly.getArea() != 2) {
+                const dx = nearest_pt[0] - p[0];
+                const dz = nearest_pt[2] - p[2];
+                if (dx * dx + dz * dz > target_con.rad * target_con.rad) continue;
+            }
+
+            // Make sure the location is on current mesh
+            const v_idx = @as(usize, target_poly.verts[1]) * 3;
+            if (target_poly.getArea() == 2) {
+                target.verts[v_idx + 0] = p[0];
+                target.verts[v_idx + 1] = p[1];
+                target.verts[v_idx + 2] = p[2];
+            } else {
+                target.verts[v_idx + 0] = nearest_pt[0];
+                target.verts[v_idx + 1] = nearest_pt[1];
+                target.verts[v_idx + 2] = nearest_pt[2];
+            }
+
+            // Link off-mesh connection to target poly
+            const idx = self.allocLink(target);
+            if (idx != common.NULL_LINK) {
+                var link = &target.links[idx];
+                link.ref = ref;
+                link.edge = 1;
+                link.side = opposite_side;
+                link.bmin = 0;
+                link.bmax = 0;
+                link.next = target_poly.first_link;
+                target_poly.first_link = idx;
+            }
+
+            // Link target poly to off-mesh connection (bidirectional)
+            if ((target_con.flags & 1) != 0) { // DT_OFFMESH_CON_BIDIR
+                const tidx = self.allocLink(tile);
+                if (tidx != common.NULL_LINK) {
+                    const decoded = self.decodePolyId(ref);
+                    const land_poly_idx = decoded.poly;
+                    var land_poly = &tile.polys[land_poly_idx];
+                    var link = &tile.links[tidx];
+                    link.ref = self.getPolyRefBase(target) | @as(PolyRef, @intCast(target_con.poly));
+                    link.edge = 0xff;
+                    link.side = if (side == -1) 0xff else @intCast(side);
+                    link.bmin = 0;
+                    link.bmax = 0;
+                    link.next = land_poly.first_link;
+                    land_poly.first_link = tidx;
+                }
+            }
+        }
+    }
+
+    /// Remove a tile from the navigation mesh
+    pub fn removeTile(self: *Self, ref: TileRef) !struct { data: []u8, data_size: usize } {
+        if (ref == 0) return error.InvalidParam;
+
+        const decoded = self.decodePolyId(ref);
+        if (decoded.tile >= @as(u32, @intCast(self.max_tiles))) return error.InvalidParam;
+
+        var tile = &self.tiles[decoded.tile];
+        if (tile.salt != decoded.salt) return error.InvalidParam;
+        if (tile.header == null) return error.InvalidParam;
+
+        // Disconnect neighbour tiles' portal links pointing at this tile before
+        // we release the slot. Without this, neighbour tiles leak Link records
+        // into their per-tile freelists until `allocLink` returns NULL_LINK and
+        // `connectExtLinks` for new tiles silently drops portal stitches.
+        // Matches upstream recastnavigation `dtNavMesh::removeTile`.
+        {
+            const MAX_NEIS = 32;
+            var neis: [MAX_NEIS]*MeshTile = undefined;
+
+            var nneis = self.getTilesAt(tile.header.?.x, tile.header.?.y, &neis, MAX_NEIS);
+            for (0..nneis) |j| {
+                if (neis[j] == tile) continue;
+                self.unconnectLinks(neis[j], tile);
+            }
+
+            var side: i32 = 0;
+            while (side < 8) : (side += 1) {
+                nneis = self.getNeighbourTilesAt(tile.header.?.x, tile.header.?.y, side, &neis, MAX_NEIS);
+                for (0..nneis) |j| self.unconnectLinks(neis[j], tile);
+            }
+        }
+
+        // Remove tile from hash lookup
+        const h = computeTileHash(tile.header.?.x, tile.header.?.y, self.tile_lut_mask);
+        var prev: ?*MeshTile = null;
+        var current = self.pos_lookup[@intCast(h)];
+
+        while (current) |curr| {
+            if (curr == tile) {
+                if (prev) |p| {
+                    p.next = curr.next;
+                } else {
+                    self.pos_lookup[@intCast(h)] = curr.next;
+                }
+                break;
+            }
+            prev = curr;
+            current = curr.next;
+        }
+
+        // Save data before clearing
+        const data = tile.data;
+        const data_size = tile.data_size;
+
+        // Reset tile
+        tile.header = null;
+        tile.poly_count = 0; // keep in sync with header (null → 0)
+        tile.polys = &[_]Poly{};
+        tile.verts = &[_]f32{};
+        tile.links = &[_]Link{};
+        tile.detail_meshes = &[_]PolyDetail{};
+        tile.detail_verts = &[_]f32{};
+        tile.detail_tris = &[_]u8{};
+        tile.bv_tree = &[_]BVNode{};
+        tile.off_mesh_cons = &[_]OffMeshConnection{};
+        tile.data = &[_]u8{};
+        tile.data_size = 0;
+        tile.flags = .{};
+
+        // Update salt
+        const mask = (@as(u32, 1) << @intCast(self.salt_bits)) - 1;
+        tile.salt = (tile.salt + 1) & mask;
+        if (tile.salt == 0) tile.salt = 1;
+
+        // Return to freelist
+        tile.next = self.next_free;
+        self.next_free = tile;
+
+        return .{ .data = data, .data_size = data_size };
+    }
+
+    /// Find closest point on detail edges
+    ///  @param[in]   only_boundary  If true, only check boundary edges
+    ///  @param[in]   tile           The mesh tile
+    ///  @param[in]   poly           The polygon
+    ///  @param[in]   pos            The position to test
+    ///  @param[out]  closest        The closest point on detail edges
+    inline fn closestPointOnDetailEdges(
+        comptime only_boundary: bool,
+        tile: *const MeshTile,
+        poly: *const Poly,
+        pos: *const [3]f32,
+        closest: *[3]f32,
+    ) void {
+        const ip: usize = @intFromPtr(poly) - @intFromPtr(&tile.polys[0]);
+        const poly_idx = ip / @sizeOf(Poly);
+        const pd = &tile.detail_meshes[poly_idx];
+
+        var dmin: f32 = std.math.floatMax(f32);
+        var tmin: f32 = 0;
+        var pmin: ?*const f32 = null;
+        var pmax: ?*const f32 = null;
+
+        const ANY_BOUNDARY_EDGE: u8 = (common.DETAIL_EDGE_BOUNDARY << 0) |
+            (common.DETAIL_EDGE_BOUNDARY << 2) |
+            (common.DETAIL_EDGE_BOUNDARY << 4);
+
+        for (0..@intCast(pd.tri_count)) |i| {
+            const tris_idx = (pd.tri_base + @as(u32, @intCast(i))) * 4;
+            const tris = tile.detail_tris[tris_idx .. tris_idx + 4];
+
+            if (only_boundary and (tris[3] & ANY_BOUNDARY_EDGE) == 0) {
+                continue;
+            }
+
+            var v: [3]*const f32 = undefined;
+            for (0..3) |j| {
+                if (tris[j] < poly.vert_count) {
+                    const vert_idx = poly.verts[tris[j]] * 3;
+                    v[j] = &tile.verts[vert_idx];
+                } else {
+                    const detail_idx = (pd.vert_base + (tris[j] - poly.vert_count)) * 3;
+                    v[j] = &tile.detail_verts[detail_idx];
+                }
+            }
+
+            var k: usize = 0;
+            var j: usize = 2;
+            while (k < 3) : ({
+                j = k;
+                k += 1;
+            }) {
+                const edge_flags = common.getDetailTriEdgeFlags(tris[3], j);
+                if ((edge_flags & common.DETAIL_EDGE_BOUNDARY) == 0 and
+                    (only_boundary or tris[j] < tris[k]))
+                {
+                    continue;
+                }
+
+                var t: f32 = undefined;
+                const d = math.distancePtSegSqr2D(pos, @ptrCast(v[j]), @ptrCast(v[k]), &t);
+                if (d < dmin) {
+                    dmin = d;
+                    tmin = t;
+                    pmin = v[j];
+                    pmax = v[k];
+                }
+            }
+        }
+
+        if (pmin != null and pmax != null) {
+            math.vlerp(closest, @ptrCast(pmin.?), @ptrCast(pmax.?), tmin);
+        }
+    }
+
+    /// Get height on polygon (using detail mesh for accurate height)
+    /// Returns false if point is not over the polygon
+    fn getPolyHeightInternal(
+        tile: *const MeshTile,
+        poly: *const Poly,
+        pos: *const [3]f32,
+        height: ?*f32,
+    ) bool {
+        // Off-mesh connections don't have detail polys
+        if (poly.getType() == .offmesh_connection) {
+            return false;
+        }
+
+        const ip: usize = @intFromPtr(poly) - @intFromPtr(&tile.polys[0]);
+        const poly_idx = ip / @sizeOf(Poly);
+        const pd = &tile.detail_meshes[poly_idx];
+
+        var verts: [common.VERTS_PER_POLYGON * 3]f32 = undefined;
+        const nv: usize = @intCast(poly.vert_count);
+        for (0..nv) |i| {
+            const v_idx = @as(usize, poly.verts[i]) * 3;
+            verts[i * 3 + 0] = tile.verts[v_idx + 0];
+            verts[i * 3 + 1] = tile.verts[v_idx + 1];
+            verts[i * 3 + 2] = tile.verts[v_idx + 2];
+        }
+
+        var vec_verts: [common.VERTS_PER_POLYGON]Vec3 = undefined;
+        for (0..nv) |i| {
+            vec_verts[i] = Vec3.init(verts[i * 3], verts[i * 3 + 1], verts[i * 3 + 2]);
+        }
+        const inside = math.pointInPolygon(Vec3.fromArray(pos), vec_verts[0..nv]);
+        if (!inside) {
+            return false;
+        }
+
+        if (height == null) {
+            return true;
+        }
+
+        // Find height at the location
+        for (0..@intCast(pd.tri_count)) |j| {
+            const t_idx = (pd.tri_base + @as(u32, @intCast(j))) * 4;
+            const t = tile.detail_tris[t_idx .. t_idx + 4];
+            var v: [3]*const f32 = undefined;
+
+            for (0..3) |k| {
+                if (t[k] < poly.vert_count) {
+                    const vert_idx = poly.verts[t[k]] * 3;
+                    v[k] = &tile.verts[vert_idx];
+                } else {
+                    const detail_idx = (pd.vert_base + (t[k] - poly.vert_count)) * 3;
+                    v[k] = &tile.detail_verts[detail_idx];
+                }
+            }
+
+            var h: f32 = undefined;
+            if (math.closestHeightPointTriangle(pos, @ptrCast(v[0]), @ptrCast(v[1]), @ptrCast(v[2]), &h)) {
+                height.?.* = h;
+                return true;
+            }
+        }
+
+        // If all triangle checks failed, point is on an edge
+        var closest: [3]f32 = undefined;
+        closestPointOnDetailEdges(false, tile, poly, pos, &closest);
+        height.?.* = closest[1];
+        return true;
+    }
+
+    /// Get height on polygon (public API)
+    /// Returns error if point is not over the polygon
+    pub fn getPolyHeight(
+        self: *const Self,
+        ref: PolyRef,
+        pos: *const [3]f32,
+        height: *f32,
+    ) !void {
+        const decoded = self.decodePolyId(ref);
+        if (decoded.tile >= @as(u32, @intCast(self.max_tiles))) return error.InvalidParam;
+
+        const tile = &self.tiles[decoded.tile];
+        if (tile.salt != decoded.salt or tile.header == null) return error.InvalidParam;
+        if (decoded.poly >= @as(u32, @intCast(tile.header.?.poly_count))) return error.InvalidParam;
+
+        const poly = &tile.polys[decoded.poly];
+
+        if (!getPolyHeightInternal(tile, poly, pos, height)) {
+            return error.PointNotInPolygon;
+        }
+    }
+
+    /// Unsafe variant: caller guarantees tile/poly are valid (e.g. from a BV-tree walk).
+    /// Mirrors C++ closestPointOnPoly which uses getTileAndPolyByRefUnsafe.
+    pub fn closestPointOnPolyResolved(
+        tile: *const MeshTile,
+        poly: *const Poly,
+        pos: *const [3]f32,
+        closest: *[3]f32,
+        pos_over_poly: ?*bool,
+    ) void {
+        // Start with the input position
+        math.vcopy(closest, pos);
+
+        // Try to get height at this position using detail mesh
+        var h: f32 = undefined;
+        if (getPolyHeightInternal(tile, poly, pos, &h)) {
+            closest[1] = h;
+            if (pos_over_poly) |pop| pop.* = true;
+            return;
+        }
+
+        if (pos_over_poly) |pop| pop.* = false;
+
+        // Off-mesh connections don't have detail polygons
+        if (poly.getType() == .offmesh_connection) {
+            const v0_idx = @as(usize, poly.verts[0]) * 3;
+            const v1_idx = @as(usize, poly.verts[1]) * 3;
+            const v0 = tile.verts[v0_idx .. v0_idx + 3];
+            const v1 = tile.verts[v1_idx .. v1_idx + 3];
+            var t: f32 = undefined;
+            _ = math.distancePtSegSqr2D(pos, v0[0..3], v1[0..3], &t);
+            math.vlerp(closest, v0[0..3], v1[0..3], t);
+            return;
+        }
+
+        // Outside poly that is not an offmesh connection - use detail edges
+        closestPointOnDetailEdges(true, tile, poly, pos, closest);
+    }
+
+    /// Get closest point on polygon
+    pub fn closestPointOnPoly(
+        self: *const Self,
+        ref: PolyRef,
+        pos: *const [3]f32,
+        closest: *[3]f32,
+        pos_over_poly: ?*bool,
+    ) !void {
+        const decoded = self.decodePolyId(ref);
+        if (decoded.tile >= @as(u32, @intCast(self.max_tiles))) return error.InvalidParam;
+
+        const tile = &self.tiles[decoded.tile];
+        if (tile.salt != decoded.salt or tile.header == null) return error.InvalidParam;
+        if (decoded.poly >= @as(u32, @intCast(tile.header.?.poly_count))) return error.InvalidParam;
+
+        const poly = &tile.polys[decoded.poly];
+
+        closestPointOnPolyResolved(tile, poly, pos, closest, pos_over_poly);
+    }
+
+    /// Get closest point on polygon boundary (2D, no height detail)
+    pub fn closestPointOnPolyBoundary(
+        self: *const Self,
+        ref: PolyRef,
+        pos: *const [3]f32,
+        closest: *[3]f32,
+    ) !void {
+        const decoded = self.decodePolyId(ref);
+        if (decoded.tile >= @as(u32, @intCast(self.max_tiles))) return error.InvalidParam;
+
+        const tile = &self.tiles[decoded.tile];
+        if (tile.salt != decoded.salt or tile.header == null) return error.InvalidParam;
+        if (decoded.poly >= @as(u32, @intCast(tile.header.?.poly_count))) return error.InvalidParam;
+
+        const poly = &tile.polys[decoded.poly];
+
+        // Collect vertices
+        var verts: [common.VERTS_PER_POLYGON * 3]f32 = undefined;
+        var edge_dist: [common.VERTS_PER_POLYGON]f32 = undefined;
+        var edge_t: [common.VERTS_PER_POLYGON]f32 = undefined;
+
+        for (0..poly.vert_count) |i| {
+            const v_idx = @as(usize, poly.verts[i]) * 3;
+            verts[i * 3 + 0] = tile.verts[v_idx + 0];
+            verts[i * 3 + 1] = tile.verts[v_idx + 1];
+            verts[i * 3 + 2] = tile.verts[v_idx + 2];
+        }
+
+        const inside = math.distancePtPolyEdgesSqr(pos, verts[0 .. poly.vert_count * 3], poly.vert_count, &edge_dist, &edge_t);
+
+        if (inside) {
+            // Point is inside the polygon, return the point
+            math.vcopy(closest, pos);
+        } else {
+            // Point is outside, clamp to nearest edge
+            var dmin = edge_dist[0];
+            var imin: usize = 0;
+            for (1..poly.vert_count) |i| {
+                if (edge_dist[i] < dmin) {
+                    dmin = edge_dist[i];
+                    imin = i;
+                }
+            }
+
+            const va = verts[imin * 3 .. imin * 3 + 3];
+            const vb = verts[((imin + 1) % poly.vert_count) * 3 .. ((imin + 1) % poly.vert_count) * 3 + 3];
+            math.vlerp(closest, va[0..3], vb[0..3], edge_t[imin]);
+        }
+    }
+
+    /// Get portal points between two connected polygons
+    pub fn getPortalPoints(
+        self: *const Self,
+        from_ref: PolyRef,
+        from_poly: *const Poly,
+        from_tile: *const MeshTile,
+        to_ref: PolyRef,
+        to_poly: *const Poly,
+        to_tile: *const MeshTile,
+        left: *[3]f32,
+        right: *[3]f32,
+    ) !void {
+        _ = self;
+        // Find the link that points to the 'to' polygon
+        var link: ?*const Link = null;
+        var i = from_poly.first_link;
+        while (i != common.NULL_LINK) : (i = from_tile.links[i].next) {
+            if (from_tile.links[i].ref == to_ref) {
+                link = &from_tile.links[i];
+                break;
+            }
+        }
+
+        if (link == null) return error.InvalidParam;
+        const lnk = link.?;
+
+        // Handle off-mesh connections
+        if (from_poly.getType() == .offmesh_connection) {
+            // Find link that points to first vertex
+            var j = from_poly.first_link;
+            while (j != common.NULL_LINK) : (j = from_tile.links[j].next) {
+                if (from_tile.links[j].ref == to_ref) {
+                    const v = from_tile.links[j].edge;
+                    const v_idx = @as(usize, from_poly.verts[v]) * 3;
+                    math.vcopy(left, from_tile.verts[v_idx .. v_idx + 3][0..3]);
+                    math.vcopy(right, from_tile.verts[v_idx .. v_idx + 3][0..3]);
+                    return;
+                }
+            }
+            return error.InvalidParam;
+        }
+
+        if (to_poly.getType() == .offmesh_connection) {
+            var j = to_poly.first_link;
+            while (j != common.NULL_LINK) : (j = to_tile.links[j].next) {
+                if (to_tile.links[j].ref == from_ref) {
+                    const v = to_tile.links[j].edge;
+                    const v_idx = @as(usize, to_poly.verts[v]) * 3;
+                    math.vcopy(left, to_tile.verts[v_idx .. v_idx + 3][0..3]);
+                    math.vcopy(right, to_tile.verts[v_idx .. v_idx + 3][0..3]);
+                    return;
+                }
+            }
+            return error.InvalidParam;
+        }
+
+        // Find portal vertices (edge between from and to)
+        const v0 = from_poly.verts[lnk.edge];
+        const v1 = from_poly.verts[(lnk.edge + 1) % from_poly.vert_count];
+
+        const v0_idx = v0 * 3;
+        const v1_idx = v1 * 3;
+
+        math.vcopy(left, from_tile.verts[v0_idx .. v0_idx + 3][0..3]);
+        math.vcopy(right, from_tile.verts[v1_idx .. v1_idx + 3][0..3]);
+
+        // If the link is at tile boundary, clamp the vertices to the link width
+        if (lnk.side != 0xff) {
+            if (lnk.bmin != 0 or lnk.bmax != 255) {
+                const s = 1.0 / 255.0;
+                const tmin = @as(f32, @floatFromInt(lnk.bmin)) * s;
+                const tmax = @as(f32, @floatFromInt(lnk.bmax)) * s;
+
+                const v0_slice = from_tile.verts[v0_idx .. v0_idx + 3];
+                const v1_slice = from_tile.verts[v1_idx .. v1_idx + 3];
+
+                math.vlerp(left, v0_slice[0..3], v1_slice[0..3], tmin);
+                math.vlerp(right, v0_slice[0..3], v1_slice[0..3], tmax);
+            }
+        }
+    }
+
+    /// Get edge mid point between two connected polygons
+    pub fn getEdgeMidPoint(
+        self: *const Self,
+        from_ref: PolyRef,
+        from_poly: *const Poly,
+        from_tile: *const MeshTile,
+        to_ref: PolyRef,
+        to_poly: *const Poly,
+        to_tile: *const MeshTile,
+        mid: *[3]f32,
+    ) !void {
+        var left: [3]f32 = undefined;
+        var right: [3]f32 = undefined;
+
+        try self.getPortalPoints(from_ref, from_poly, from_tile, to_ref, to_poly, to_tile, &left, &right);
+
+        mid[0] = (left[0] + right[0]) * 0.5;
+        mid[1] = (left[1] + right[1]) * 0.5;
+        mid[2] = (left[2] + right[2]) * 0.5;
+    }
+
+    /// Get the endpoints of an off-mesh connection poly, ordered so that
+    /// 'start' is the point that is linked to the normal polygon and 'end'
+    /// is the destination point
+    pub fn getOffMeshConnectionPolyEndPoints(
+        self: *const Self,
+        prev_ref: PolyRef,
+        poly_ref: PolyRef,
+        start_pos: *[3]f32,
+        end_pos: *[3]f32,
+    ) !void {
+        if (poly_ref == 0) return error.InvalidParam;
+
+        // Decode poly reference
+        const decoded = self.decodePolyId(poly_ref);
+        if (decoded.tile >= @as(u32, @intCast(self.max_tiles))) return error.InvalidParam;
+
+        const tile = &self.tiles[decoded.tile];
+        if (tile.salt != decoded.salt or tile.header == null) return error.InvalidParam;
+        if (decoded.poly >= @as(u32, @intCast(tile.header.?.poly_count))) return error.InvalidParam;
+
+        const poly = &tile.polys[decoded.poly];
+
+        // Make sure the current poly is indeed an off-mesh link
+        if (poly.getType() != .offmesh_connection) return error.InvalidParam;
+
+        // Figure out which way to hand out the vertices
+        var idx0: usize = 0;
+        var idx1: usize = 1;
+
+        // Find link that points to first vertex (edge 0)
+        var i = poly.first_link;
+        while (i != common.NULL_LINK) : (i = tile.links[i].next) {
+            if (tile.links[i].edge == 0) {
+                // If this link doesn't point to prevRef, swap the order
+                if (tile.links[i].ref != prev_ref) {
+                    idx0 = 1;
+                    idx1 = 0;
+                }
+                break;
+            }
+        }
+
+        // Copy vertex positions
+        const v0 = @as(usize, poly.verts[idx0]) * 3;
+        const v1 = @as(usize, poly.verts[idx1]) * 3;
+
+        start_pos[0] = tile.verts[v0 + 0];
+        start_pos[1] = tile.verts[v0 + 1];
+        start_pos[2] = tile.verts[v0 + 2];
+
+        end_pos[0] = tile.verts[v1 + 0];
+        end_pos[1] = tile.verts[v1 + 1];
+        end_pos[2] = tile.verts[v1 + 2];
+    }
+
+    /// Gets the size of the buffer required to store the specified tile's state
+    ///  @param[in]  tile    The tile
+    /// @return The size of the buffer required to store the state
+    pub fn getTileStateSize(self: *const Self, tile: *const MeshTile) usize {
+        _ = self;
+        if (tile.header == null) return 0;
+        const header_size = align4(@sizeOf(TileState));
+        const poly_state_size = align4(@sizeOf(PolyState) * @as(usize, @intCast(tile.header.?.poly_count)));
+        return header_size + poly_state_size;
+    }
+
+    /// Stores the non-structural state of the tile in the specified buffer (flags, area ids, etc.)
+    ///  @param[in]   tile           The tile
+    ///  @param[out]  data           The buffer to store the tile's state in
+    ///  @param[in]   max_data_size  The size of the data buffer
+    /// @return Status flags for the operation
+    pub fn storeTileState(self: *const Self, tile: *const MeshTile, data: []u8) !void {
+        // Make sure there is enough space to store the state
+        const size_req = self.getTileStateSize(tile);
+        if (data.len < size_req) {
+            return error.BufferTooSmall;
+        }
+
+        var offset: usize = 0;
+
+        // Store tile state header
+        const tile_state = TileState{
+            .magic = common.NAVMESH_STATE_MAGIC,
+            .version = common.NAVMESH_STATE_VERSION,
+            .ref = self.getTileRef(tile),
+        };
+        const tile_state_bytes = std.mem.asBytes(&tile_state);
+        @memcpy(data[offset..][0..tile_state_bytes.len], tile_state_bytes);
+        offset += align4(@sizeOf(TileState));
+
+        // Store per-polygon state
+        if (tile.header) |header| {
+            for (0..@intCast(header.poly_count)) |i| {
+                const poly = &tile.polys[i];
+                const poly_state = PolyState{
+                    .flags = poly.flags,
+                    .area = poly.getArea(),
+                };
+                const poly_state_bytes = std.mem.asBytes(&poly_state);
+                @memcpy(data[offset..][0..poly_state_bytes.len], poly_state_bytes);
+                offset += @sizeOf(PolyState);
+            }
+        }
+    }
+
+    /// Restores the state of the tile
+    ///  @param[in]  tile           The tile
+    ///  @param[in]  data           The new state (obtained from storeTileState)
+    ///  @param[in]  max_data_size  The size of the state within the data buffer
+    /// @return Status flags for the operation
+    pub fn restoreTileState(self: *const Self, tile: *MeshTile, data: []const u8) !void {
+        // Make sure there is enough space to restore the state
+        const size_req = self.getTileStateSize(tile);
+        if (data.len < size_req) {
+            return error.InvalidParam;
+        }
+
+        var offset: usize = 0;
+
+        // Read tile state header
+        const tile_state_size = @sizeOf(TileState);
+        const tile_state_bytes = data[offset..][0..tile_state_size];
+        const tile_state: *const TileState = @ptrCast(@alignCast(tile_state_bytes.ptr));
+        offset += align4(tile_state_size);
+
+        // Check that the restore is possible
+        if (tile_state.magic != common.NAVMESH_STATE_MAGIC) {
+            return error.WrongMagic;
+        }
+        if (tile_state.version != common.NAVMESH_STATE_VERSION) {
+            return error.WrongVersion;
+        }
+        if (tile_state.ref != self.getTileRef(tile)) {
+            return error.InvalidParam;
+        }
+
+        // Restore per-polygon state
+        if (tile.header) |header| {
+            for (0..@intCast(header.poly_count)) |i| {
+                const poly_state_bytes = data[offset..][0..@sizeOf(PolyState)];
+                const poly_state: *const PolyState = @ptrCast(@alignCast(poly_state_bytes.ptr));
+                offset += @sizeOf(PolyState);
+
+                tile.polys[i].flags = poly_state.flags;
+                tile.polys[i].setArea(poly_state.area);
+            }
+        }
+    }
+};
+
+test "NavMesh initialization" {
+    const allocator = std.testing.allocator;
+
+    var params = NavMeshParams.init();
+    params.orig = Vec3.init(0, 0, 0);
+    params.tile_width = 32;
+    params.tile_height = 32;
+    params.max_tiles = 256;
+    params.max_polys = 8192;
+
+    var navmesh = try NavMesh.init(allocator, params);
+    defer navmesh.deinit();
+
+    try std.testing.expectEqual(@as(i32, 256), navmesh.max_tiles);
+}
+
+test "NavMesh polyRef encoding/decoding" {
+    const allocator = std.testing.allocator;
+
+    var params = NavMeshParams.init();
+    params.orig = Vec3.init(0, 0, 0);
+    params.tile_width = 32;
+    params.tile_height = 32;
+    params.max_tiles = 256;
+    params.max_polys = 8192;
+
+    var navmesh = try NavMesh.init(allocator, params);
+    defer navmesh.deinit();
+
+    const salt: u32 = 5;
+    const tile: u32 = 10;
+    const poly: u32 = 100;
+
+    const ref = navmesh.encodePolyId(salt, tile, poly);
+    const decoded = navmesh.decodePolyId(ref);
+
+    try std.testing.expectEqual(salt, decoded.salt);
+    try std.testing.expectEqual(tile, decoded.tile);
+    try std.testing.expectEqual(poly, decoded.poly);
+}
+
+test "NavMesh tile location calculation" {
+    const allocator = std.testing.allocator;
+
+    var params = NavMeshParams.init();
+    params.orig = Vec3.init(0, 0, 0);
+    params.tile_width = 32;
+    params.tile_height = 32;
+    params.max_tiles = 256;
+    params.max_polys = 8192;
+
+    var navmesh = try NavMesh.init(allocator, params);
+    defer navmesh.deinit();
+
+    const pos = Vec3.init(64.5, 0, 96.5);
+    const loc = navmesh.calcTileLoc(pos);
+
+    try std.testing.expectEqual(@as(i32, 2), loc.x);
+    try std.testing.expectEqual(@as(i32, 3), loc.y);
+}

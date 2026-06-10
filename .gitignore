@@ -1,0 +1,61 @@
+# Zig build artifacts
+zig-cache/
+.zig-cache/
+zig-out/
+# Ignore downloaded build artifacts under tools/ (e.g. tools/build/ tracy-capture
+# binaries) but KEEP the committed analysis source tools. git cannot re-include a
+# path whose parent dir is excluded, so we ignore tools/ CONTENTS (tools/*) and the
+# build subtree, then re-include tools/analysis/.
+tools/*
+!tools/analysis/
+tools/build/
+.claude
+.agent
+MULTILINGUAL_SETUP_COMPLETE.md
+DOCUMENTATION_STRUCTURE.md
+CLAUDE.md
+
+# Development files (temporary testing/debugging)
+dev/
+*.txt
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.o
+*.a
+*.so
+*.dll
+*.exe
+*.pdb
+
+# Vendored package cache (reproducible from build.zig.zon)
+zig-pkg/
+
+# Scratch / debug artifacts (session)
+*.tracy
+*.err
+*.lib
+/*.png
+*.ps1
+query_diff/
+ref_harness.cpp
+
+# Large BVH world-geometry benchmark inputs (tens-hundreds of MB; regenerate
+# via navMeshCreator `export_bench_geom --bvh <map>`). The nav-area <map>
+# .obj variants stay tracked.
+test_data/bench_geom/*_bvh.obj
+
+out/
+test_data/sponza.obj
+compass_artifact_*.md

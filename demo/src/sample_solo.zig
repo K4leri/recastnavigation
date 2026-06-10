@@ -1,0 +1,606 @@
+//! Sample_SoloMesh — построение navmesh из всей геометрии за один проход.
+//! Порт RecastDemo/Sample_SoloMesh.cpp (build pipeline + DrawMode + UI).
+
+const std = @import("std");
+const dvui = @import("dvui");
+const zgl = @import("zgl");
+const recast = @import("recast-nav");
+const sample = @import("sample.zig");
+const InputGeom = @import("input_geom.zig").InputGeom;
+const BuildContext = @import("build_context.zig").BuildContext;
+const ddgl = @import("debug_draw_gl.zig");
+const io_util = @import("io_util.zig");
+const ui = @import("ui.zig");
+const nav_io = @import("navmesh_io.zig");
+
+const rc = recast.recast;
+const dt = recast.detour;
+const dbg = recast.debug;
+const Vec3 = recast.math.Vec3;
+
+pub const DrawMode = enum {
+    mesh,
+    navmesh,
+    navmesh_trans,
+    navmesh_bvtree,
+    navmesh_nodes,
+    voxels,
+    voxels_walkable,
+    compact,
+    compact_distance,
+    compact_regions,
+    region_connections,
+    raw_contours,
+    both_contours,
+    contours,
+    polymesh,
+    polymesh_detail,
+};
+
+pub const SampleSolo = struct {
+    alloc: std.mem.Allocator,
+    settings: sample.CommonSettings = .{},
+    geom: ?*InputGeom = null,
+    bctx: *BuildContext,
+    dd_gl: *ddgl.DebugDrawGL,
+
+    draw_mode: DrawMode = .navmesh,
+    build_time_ms: f32 = 0,
+    build_gen: u32 = 0, // инкремент при каждой успешной сборке (для синхронизации тулов)
+
+    // промежуточные результаты (для отрисовки)
+    hf: ?recast.Heightfield = null,
+    chf: ?recast.CompactHeightfield = null,
+    cset: ?recast.ContourSet = null,
+    pmesh: ?recast.PolyMesh = null,
+    dmesh: ?recast.PolyMeshDetail = null,
+    navmesh: ?dt.NavMesh = null,
+    navmesh_data: ?[]u8 = null,
+
+    pub fn init(alloc: std.mem.Allocator, bctx: *BuildContext, dd_gl: *ddgl.DebugDrawGL) SampleSolo {
+        return .{ .alloc = alloc, .bctx = bctx, .dd_gl = dd_gl };
+    }
+
+    pub fn deinit(self: *SampleSolo) void {
+        self.cleanup();
+    }
+
+    fn cleanup(self: *SampleSolo) void {
+        if (self.hf) |*h| h.deinit();
+        if (self.chf) |*c| c.deinit();
+        if (self.cset) |*c| c.deinit();
+        if (self.pmesh) |*p| p.deinit();
+        if (self.dmesh) |*d| d.deinit();
+        if (self.navmesh) |*n| n.deinit();
+        if (self.navmesh_data) |d| self.alloc.free(d);
+        self.hf = null;
+        self.chf = null;
+        self.cset = null;
+        self.pmesh = null;
+        self.dmesh = null;
+        self.navmesh = null;
+        self.navmesh_data = null;
+    }
+
+    pub fn setGeom(self: *SampleSolo, geom: *InputGeom) void {
+        self.geom = geom;
+        self.cleanup();
+    }
+
+    /// Указатель на построенный navmesh (для инструментов), или null.
+    pub fn navMesh(self: *SampleSolo) ?*dt.NavMesh {
+        if (self.navmesh) |*n| return n;
+        return null;
+    }
+
+    /// Sample-интерфейс.
+    pub fn sampleIface(self: *SampleSolo) sample.Sample {
+        return .{ .ptr = self, .vtable = &vtable };
+    }
+
+    const vtable = sample.Sample.VTable{
+        .drawSettings = vtDrawSettings,
+        .drawDebugMode = vtDrawDebugMode,
+        .onClick = vtOnClick,
+        .onToggle = vtNoop,
+        .step = vtNoop,
+        .render = vtRender,
+        .renderOverlay = vtNoop,
+        .onMeshChanged = vtNoop,
+        .build = vtBuild,
+        .update = vtUpdate,
+    };
+
+    fn vtNoop(_: *anyopaque) void {}
+    fn vtUpdate(_: *anyopaque, _: f32) void {}
+    fn vtOnClick(_: *anyopaque, _: *const [3]f32, _: *const [3]f32, _: bool) void {}
+
+    fn vtBuild(ptr: *anyopaque) bool {
+        const self: *SampleSolo = @ptrCast(@alignCast(ptr));
+        return self.build();
+    }
+
+    fn vtRender(ptr: *anyopaque) void {
+        const self: *SampleSolo = @ptrCast(@alignCast(ptr));
+        self.render();
+    }
+
+    fn vtDrawSettings(ptr: *anyopaque) void {
+        const self: *SampleSolo = @ptrCast(@alignCast(ptr));
+        self.drawSettings();
+    }
+
+    fn vtDrawDebugMode(ptr: *anyopaque) void {
+        const self: *SampleSolo = @ptrCast(@alignCast(ptr));
+        self.drawDebugMode();
+    }
+
+    // ========================================================================
+    // BUILD
+    // ========================================================================
+    pub fn build(self: *SampleSolo) bool {
+        const geom = self.geom orelse return false;
+        if (geom.triCount() == 0) return false;
+        self.cleanup();
+        self.bctx.resetLog();
+        const ctx = self.bctx.context();
+        const s = &self.settings;
+
+        var timer = io_util.PerfTimer.start();
+
+        // конфиг (конвертация параметров как RecastDemo)
+        const cs = s.cell_size;
+        const ch = s.cell_height;
+        const walkable_height: i32 = @intFromFloat(@ceil(s.agent_height / ch));
+        const walkable_climb: i32 = @intFromFloat(@floor(s.agent_max_climb / ch));
+        const walkable_radius: i32 = @intFromFloat(@ceil(s.agent_radius / cs));
+        const max_edge_len: i32 = @intFromFloat(s.edge_max_len / cs);
+        const min_region_area: i32 = @intFromFloat(s.region_min_size * s.region_min_size);
+        const merge_region_area: i32 = @intFromFloat(s.region_merge_size * s.region_merge_size);
+        const detail_sample_dist: f32 = if (s.detail_sample_dist < 0.9) 0 else cs * s.detail_sample_dist;
+        const detail_sample_max_error: f32 = ch * s.detail_sample_max_error;
+        const border_size: i32 = 0;
+
+        var bmin = Vec3.init(geom.bmin[0], geom.bmin[1], geom.bmin[2]);
+        var bmax = Vec3.init(geom.bmax[0], geom.bmax[1], geom.bmax[2]);
+
+        var size_x: i32 = 0;
+        var size_z: i32 = 0;
+        recast.RecastConfig.calcGridSize(bmin, bmax, cs, &size_x, &size_z);
+
+        self.doBuild(ctx, geom, .{
+            .cs = cs,
+            .ch = ch,
+            .width = size_x,
+            .height = size_z,
+            .bmin = bmin,
+            .bmax = bmax,
+            .walkable_height = walkable_height,
+            .walkable_climb = walkable_climb,
+            .walkable_radius = walkable_radius,
+            .walkable_slope = s.agent_max_slope,
+            .max_edge_len = max_edge_len,
+            .max_simpl_error = s.edge_max_error,
+            .min_region_area = min_region_area,
+            .merge_region_area = merge_region_area,
+            .nvp = @intFromFloat(s.verts_per_poly),
+            .detail_sample_dist = detail_sample_dist,
+            .detail_sample_max_error = detail_sample_max_error,
+            .border_size = border_size,
+        }) catch |e| {
+            ctx.log(.err, "build failed: {s}", .{@errorName(e)});
+            return false;
+        };
+        _ = &bmin;
+        _ = &bmax;
+
+        self.build_time_ms = timer.readMs();
+        self.build_gen +%= 1;
+        ctx.log(.progress, "Build OK in {d:.1} ms", .{self.build_time_ms});
+        return true;
+    }
+
+    const Cfg = struct {
+        cs: f32,
+        ch: f32,
+        width: i32,
+        height: i32,
+        bmin: Vec3,
+        bmax: Vec3,
+        walkable_height: i32,
+        walkable_climb: i32,
+        walkable_radius: i32,
+        walkable_slope: f32,
+        max_edge_len: i32,
+        max_simpl_error: f32,
+        min_region_area: i32,
+        merge_region_area: i32,
+        nvp: i32,
+        detail_sample_dist: f32,
+        detail_sample_max_error: f32,
+        border_size: i32,
+    };
+
+    fn doBuild(self: *SampleSolo, ctx: *recast.Context, geom: *InputGeom, cfg: Cfg) !void {
+        const a = self.alloc;
+        const verts = geom.verts.items;
+        const tris = geom.tris.items;
+        const ntris = geom.triCount();
+
+        // 1. heightfield
+        var hf = try recast.Heightfield.init(a, cfg.width, cfg.height, cfg.bmin, cfg.bmax, cfg.cs, cfg.ch);
+        errdefer hf.deinit();
+
+        const areas = try a.alloc(u8, ntris);
+        defer a.free(areas);
+        // ВАЖНО: markWalkableTriangles ставит WALKABLE только для проходимых граней,
+        // не-walkable оставляет КАК ЕСТЬ. Как в upstream (Sample_SoloMesh: memset(triareas,0))
+        // буфер нужно обнулить, иначе мусор (0xAA) делает все грани walkable.
+        @memset(areas, rc.config.AreaId.NULL_AREA);
+        rc.filter.markWalkableTriangles(ctx, cfg.walkable_slope, verts, tris, areas);
+
+        try rc.rasterization.rasterizeTriangles(ctx, verts, tris, areas, &hf, cfg.walkable_climb);
+
+        // 2. фильтры
+        rc.filter.filterLowHangingWalkableObstacles(ctx, cfg.walkable_climb, &hf);
+        rc.filter.filterLedgeSpans(ctx, cfg.walkable_height, cfg.walkable_climb, &hf);
+        rc.filter.filterWalkableLowHeightSpans(ctx, cfg.walkable_height, &hf);
+        self.hf = hf;
+
+        // 3. compact heightfield
+        const span_count = rc.compact.getHeightFieldSpanCount(ctx, &hf);
+        var chf = try recast.CompactHeightfield.init(a, cfg.width, cfg.height, @intCast(span_count), cfg.walkable_height, cfg.walkable_climb, cfg.bmin, cfg.bmax, cfg.cs, cfg.ch, cfg.border_size);
+        errdefer chf.deinit();
+        try rc.compact.buildCompactHeightfield(ctx, cfg.walkable_height, cfg.walkable_climb, &hf, &chf);
+
+        // 4. erode + выпуклые объёмы + регионы (watershed)
+        try rc.area.erodeWalkableArea(ctx, cfg.walkable_radius, &chf, a);
+        for (geom.volumes.items) |*vol| {
+            const nv: usize = @intCast(vol.nverts);
+            rc.area.markConvexPolyArea(ctx, vol.verts[0 .. nv * 3], nv, vol.hmin, vol.hmax, vol.area, &chf);
+        }
+        try rc.region.buildDistanceField(ctx, &chf, a);
+        try rc.region.buildRegions(ctx, &chf, cfg.border_size, cfg.min_region_area, cfg.merge_region_area, a);
+        self.chf = chf;
+
+        // 5. контуры
+        var cset = recast.ContourSet.init(a);
+        errdefer cset.deinit();
+        try rc.contour.buildContours(ctx, &chf, cfg.max_simpl_error, cfg.max_edge_len, &cset, rc.config.CONTOUR_TESS_WALL_EDGES, a);
+        self.cset = cset;
+
+        // 6. polymesh
+        var pmesh = recast.PolyMesh.init(a);
+        errdefer pmesh.deinit();
+        try rc.mesh.buildPolyMesh(ctx, &cset, @intCast(cfg.nvp), &pmesh, a);
+        self.pmesh = pmesh;
+
+        // 7. detail mesh
+        var dmesh = recast.PolyMeshDetail.init(a);
+        errdefer dmesh.deinit();
+        try rc.detail.buildPolyMeshDetail(ctx, &pmesh, &chf, cfg.detail_sample_dist, cfg.detail_sample_max_error, &dmesh, a);
+        self.dmesh = dmesh;
+
+        // 8. флаги полигонов по областям
+        const pm = &self.pmesh.?;
+        const npolys: usize = pm.polyCount();
+        const poly_flags = try a.alloc(u16, npolys);
+        defer a.free(poly_flags);
+        for (0..npolys) |i| {
+            // RecastDemo: walkable area (63) -> ground. Также нормализуем area > 5
+            // (валидные SamplePolyAreas = 0..5): WIP-сборка местами оставляет area
+            // неинициализированной (0xAA) -> иначе навмеш красится мусорными цветами.
+            if (pm.areas[i] == rc.config.AreaId.WALKABLE_AREA or pm.areas[i] > @intFromEnum(sample.SamplePolyAreas.jump)) {
+                pm.areas[i] = @intFromEnum(sample.SamplePolyAreas.ground);
+            }
+            const area = pm.areas[i];
+            poly_flags[i] = switch (area) {
+                @intFromEnum(sample.SamplePolyAreas.ground), @intFromEnum(sample.SamplePolyAreas.grass), @intFromEnum(sample.SamplePolyAreas.road) => sample.SamplePolyFlags.walk,
+                @intFromEnum(sample.SamplePolyAreas.water) => sample.SamplePolyFlags.swim,
+                @intFromEnum(sample.SamplePolyAreas.door) => sample.SamplePolyFlags.walk | sample.SamplePolyFlags.door,
+                else => sample.SamplePolyFlags.walk,
+            };
+        }
+
+        // 9. navmesh data
+        const params = dt.NavMeshCreateParams{
+            .verts = pm.verts,
+            .vert_count = pm.vertCount(),
+            .polys = pm.polys,
+            .poly_flags = poly_flags,
+            .poly_areas = pm.areas,
+            .poly_count = pm.polyCount(),
+            .nvp = @intCast(pm.nvp),
+            .detail_meshes = self.dmesh.?.meshes,
+            .detail_verts = self.dmesh.?.verts,
+            .detail_verts_count = self.dmesh.?.vertCount(),
+            .detail_tris = self.dmesh.?.tris,
+            .detail_tri_count = self.dmesh.?.triCount(),
+            .bmin = .{ pm.bmin.x, pm.bmin.y, pm.bmin.z },
+            .bmax = .{ pm.bmax.x, pm.bmax.y, pm.bmax.z },
+            .walkable_height = @as(f32, @floatFromInt(cfg.walkable_height)) * cfg.ch,
+            .walkable_radius = @as(f32, @floatFromInt(cfg.walkable_radius)) * cfg.cs,
+            .walkable_climb = @as(f32, @floatFromInt(cfg.walkable_climb)) * cfg.ch,
+            .cs = pm.cs,
+            .ch = pm.ch,
+            .off_mesh_con_verts = if (geom.offMeshCount() > 0) geom.off_verts.items else null,
+            .off_mesh_con_rad = if (geom.offMeshCount() > 0) geom.off_rad.items else null,
+            .off_mesh_con_flags = if (geom.offMeshCount() > 0) geom.off_flags.items else null,
+            .off_mesh_con_areas = if (geom.offMeshCount() > 0) geom.off_area.items else null,
+            .off_mesh_con_dir = if (geom.offMeshCount() > 0) geom.off_dir.items else null,
+            .off_mesh_con_user_id = if (geom.offMeshCount() > 0) geom.off_id.items else null,
+            .off_mesh_con_count = geom.offMeshCount(),
+            .build_bv_tree = true,
+        };
+        const data = try dt.createNavMeshData(&params, a);
+        self.navmesh_data = data;
+
+        const nm_params = dt.NavMeshParams{
+            .orig = cfg.bmin,
+            .tile_width = cfg.bmax.x - cfg.bmin.x,
+            .tile_height = cfg.bmax.z - cfg.bmin.z,
+            .max_tiles = 1,
+            .max_polys = 1024,
+        };
+        var navmesh = try dt.NavMesh.init(a, nm_params);
+        errdefer navmesh.deinit();
+        _ = try navmesh.addTile(data, dt.TileFlags{ .free_data = false }, 0);
+        self.navmesh = navmesh;
+    }
+
+    // ========================================================================
+    // RENDER
+    // ========================================================================
+    pub fn render(self: *SampleSolo) void {
+        self.dd_gl.area_to_col = sample.sampleAreaToCol;
+        const dd = self.dd_gl.debugDraw();
+
+        // Culling включён ГЛОБАЛЬНО на весь кадр (как оригинал main.cpp: glEnable(GL_CULL_FACE)).
+        // Применяется ко ВСЕМ draw'ам, включая воксели/навмеш — иначе двусторонние грани
+        // соседних боксов z-fight'ят и дают «сетку из отдельных кубиков». Клавиша C меняет режим.
+        // Воксели — полные боксы + back-cull (как оригинал): back-cull снимает совпадение
+        // копланарных граней соседних боксов (одна отсекается -> нет z-fight), а боковые
+        // грани остаются -> тонкая крыша видна с ребра.
+        const voxel_mode = self.draw_mode == .voxels or self.draw_mode == .voxels_walkable;
+        const vv: u8 = self.dd_gl.voxel_variant % 8; // вариант рендера вокселей (клавиша V)
+        if (voxel_mode) {
+            zgl.enable(.cull_face);
+            zgl.cullFace(.back);
+        } else switch (self.dd_gl.cull_mode) {
+            1 => {
+                zgl.enable(.cull_face);
+                zgl.cullFace(.back);
+            },
+            2 => {
+                zgl.enable(.cull_face);
+                zgl.cullFace(.front);
+            },
+            else => zgl.disable(.cull_face),
+        }
+
+        // Инпут-меш как подложка (кроме navmesh_trans). Для вокселей варианты 1/3 — без меша.
+        const skip_mesh = voxel_mode and (vv == 1 or vv == 3);
+        if (self.draw_mode != .navmesh_trans and !skip_mesh) self.renderInputMesh(dd);
+
+        // Применяем стейт ВАРИАНТА для отрисовки вокселей (после меша, до switch).
+        if (voxel_mode) {
+            self.dd_gl.enableFog(vv != 2 and vv != 3); // 2/3 — без тумана
+            switch (vv) {
+                4 => zgl.disable(.cull_face), // без culling
+                5 => {
+                    zgl.enable(.cull_face);
+                    zgl.cullFace(.front);
+                }, // front-cull
+                6 => zgl.depthFunc(.less), // LESS вместо LEQUAL
+                7 => zgl.disable(.blend), // без blend
+                else => {}, // 0/1/2/3: back-cull + LEQUAL (умолчания)
+            }
+        }
+
+        switch (self.draw_mode) {
+            .mesh => {}, // уже нарисован подложкой
+            // Туман как в оригинале: гасит контраст белые-фронты/серые-бока ступенчатых
+            // вокселей -> выглядит однородно-сплошным (без тумана контраст читается как «полосы/просвет»).
+            .voxels => if (self.hf) |*h| dbg.debugDrawHeightfieldSolid(dd, h),
+            .voxels_walkable => if (self.hf) |*h| dbg.debugDrawHeightfieldWalkable(dd, h),
+            .compact => if (self.chf) |*c| dbg.debugDrawCompactHeightfieldSolid(dd, c),
+            .compact_distance => if (self.chf) |*c| dbg.debugDrawCompactHeightfieldDistance(dd, c),
+            .compact_regions => if (self.chf) |*c| dbg.debugDrawCompactHeightfieldRegions(dd, c),
+            // Оригинал: рисует цветные регионы compact-heightfield, затем дуги-связи поверх.
+            .region_connections => {
+                if (self.chf) |*c| dbg.debugDrawCompactHeightfieldRegions(dd, c);
+                if (self.cset) |*c| {
+                    dd.depthMask(false);
+                    dbg.debugDrawRegionConnections(dd, c, 1.0);
+                    dd.depthMask(true);
+                }
+            },
+            .raw_contours => if (self.cset) |*c| dbg.debugDrawRawContours(dd, c, 1.0),
+            .both_contours => if (self.cset) |*c| {
+                dbg.debugDrawRawContours(dd, c, 0.5);
+                dbg.debugDrawContours(dd, c, 1.0);
+            },
+            .contours => if (self.cset) |*c| dbg.debugDrawContours(dd, c, 1.0),
+            .polymesh => if (self.pmesh) |*p| {
+                if (p.nverts > 0 and p.npolys > 0) dbg.debugDrawPolyMesh(dd, p);
+            },
+            .polymesh_detail => if (self.dmesh) |*d| {
+                if (d.nmeshes > 0) dbg.debugDrawPolyMeshDetail(dd, d);
+            },
+            .navmesh, .navmesh_trans => if (self.navmesh) |*n| dbg.debugDrawNavMesh(dd, n, 0),
+            // BVTree/Nodes: оригинал рисует САМ навмеш + overlay поверх (Sample_SoloMesh::render).
+            .navmesh_bvtree => if (self.navmesh) |*n| {
+                dbg.debugDrawNavMesh(dd, n, 0);
+                dbg.debugDrawNavMeshBVTree(dd, n);
+            },
+            .navmesh_nodes => if (self.navmesh) |*n| dbg.debugDrawNavMesh(dd, n, 0),
+        }
+
+        // Тёмный оверлей на DISABLED-полигонах (Toggle Polys) — 1-в-1 Sample_SoloMesh::render
+        // (duDebugDrawNavMeshPolysWithFlags(..., DISABLED, rgba(0,0,0,128))). Видно отключённые.
+        switch (self.draw_mode) {
+            .navmesh, .navmesh_trans, .navmesh_bvtree, .navmesh_nodes => if (self.navmesh) |*n|
+                dbg.debugDrawNavMeshPolysWithFlags(dd, n, sample.SamplePolyFlags.disabled, dbg.rgba(0, 0, 0, 128)),
+            else => {},
+        }
+
+        // Off-mesh connections and convex volumes are part of the scene and are
+        // drawn regardless of the active tool (1:1 Sample::handleRender). The
+        // tools only render their in-progress editing state.
+        if (self.geom) |g| {
+            // Mesh bounds wireframe (1:1 Sample::handleRender — duDebugDrawBoxWire,
+            // white 255,255,255,128). Marks the 3D object's extent.
+            dbg.debugDrawBoxWire(dd, g.bmin[0], g.bmin[1], g.bmin[2], g.bmax[0], g.bmax[1], g.bmax[2], dbg.rgba(255, 255, 255, 128), 1.0);
+            g.drawConvexVolumes(dd);
+            g.drawOffMeshConnections(dd);
+        }
+
+        // ВОССТАНОВЛЕНИЕ GL-стейта после варианта вокселей — чтобы НЕ протекало в UI/др. режимы.
+        if (voxel_mode) {
+            self.dd_gl.enableFog(false);
+            zgl.enable(.cull_face);
+            zgl.cullFace(.back);
+            zgl.depthFunc(.less_or_equal);
+            zgl.enable(.blend);
+            zgl.enable(.depth_test);
+            zgl.depthMask(true);
+        }
+    }
+
+    fn renderInputMesh(self: *SampleSolo, dd: dbg.DebugDraw) void {
+        const geom = self.geom orelse return;
+        const v = geom.verts.items;
+        const t = geom.tris.items;
+        const ng = geom.normals.items;
+        // checker-текстура пола как в RecastDemo: масштаб 1/(cellSize*10).
+        const ts = 1.0 / (self.settings.cell_size * 10.0);
+        self.dd_gl.setTexScale(ts);
+        dd.texture(true);
+        // culling задан глобально в render() (как оригинал) — здесь не трогаем.
+
+        // раскраска по склону (duDebugDrawTriMeshSlope): walkable -> серый с освещением,
+        // unwalkable (крутые грани) -> подмешан tan(192,128,0). Это «текстурный» вид оригинала.
+        const walkable_thr = @cos(self.settings.agent_max_slope * std.math.pi / 180.0);
+        const unwalkable = dbg.rgba(192, 128, 0, 255);
+        // Туман только на input-mesh (как Sample::render: glEnable/glDisable GL_FOG).
+        self.dd_gl.enableFog(true);
+        defer self.dd_gl.enableFog(false);
+        // Polygon offset: отодвигаем input-mesh чуть в глубину, чтобы debug-оверлеи
+        // (воксели/контуры/навмеш) НАДЁЖНО выигрывали depth на совпадающих высотах
+        // (полы на кратных ch Y совпадают точь-в-точь -> иначе z-fight «стипплом»).
+        zgl.enable(.polygon_offset_fill);
+        zgl.polygonOffset(1.0, 1.0);
+        defer zgl.disable(.polygon_offset_fill);
+        dd.begin(.tris, 1.0);
+        var i: usize = 0;
+        while (i < t.len) : (i += 3) {
+            const a: usize = @intCast(t[i]);
+            const b: usize = @intCast(t[i + 1]);
+            const c: usize = @intCast(t[i + 2]);
+            const tri = i / 3;
+            var n = [3]f32{ 0, 1, 0 };
+            if (tri * 3 + 2 < ng.len) {
+                n = .{ ng[tri * 3], ng[tri * 3 + 1], ng[tri * 3 + 2] };
+            }
+            const lit = std.math.clamp(220.0 * (2.0 + n[0] + n[1]) / 4.0, 0.0, 255.0);
+            const av: u8 = @intFromFloat(lit);
+            const gray = dbg.rgba(av, av, av, 255);
+            const col = if (n[1] < walkable_thr) dbg.lerpCol(gray, unwalkable, 64) else gray;
+
+            // Triplanar UV (1:1 duDebugDrawTriMesh): доминантная ось нормали → две
+            // перпендикулярные оси как uv. Иначе стены смазаны вертикально (нет
+            // горизонтальных линий сетки). ax=(dom+1)%3, ay=(ax+1)%3 == (1<<ax)&3.
+            var dom: usize = 0;
+            if (@abs(n[1]) > @abs(n[dom])) dom = 1;
+            if (@abs(n[2]) > @abs(n[dom])) dom = 2;
+            const ax: usize = (dom + 1) % 3;
+            const ay: usize = (ax + 1) % 3;
+
+            // Сырые оси: масштаб (ts) накладывает шейдер (vUV * uTexScale) — один раз,
+            // как texScale в duDebugDrawTriMesh. Здесь НЕ умножаем (иначе ts² → клетки крупнее).
+            self.dd_gl.vertexUV(v[a * 3], v[a * 3 + 1], v[a * 3 + 2], col, v[a * 3 + ax], v[a * 3 + ay]);
+            self.dd_gl.vertexUV(v[b * 3], v[b * 3 + 1], v[b * 3 + 2], col, v[b * 3 + ax], v[b * 3 + ay]);
+            self.dd_gl.vertexUV(v[c * 3], v[c * 3 + 1], v[c * 3 + 2], col, v[c * 3 + ax], v[c * 3 + ay]);
+        }
+        dd.end();
+        dd.texture(false);
+    }
+
+    // ========================================================================
+    // UI
+    // ========================================================================
+    fn drawSettings(self: *SampleSolo) void {
+        const s = &self.settings;
+        // воксельная сетка для строки "Voxels  W x H"
+        var gw: i32 = 0;
+        var gh: i32 = 0;
+        if (self.geom) |g| {
+            const bmin = Vec3.init(g.bmin[0], g.bmin[1], g.bmin[2]);
+            const bmax = Vec3.init(g.bmax[0], g.bmax[1], g.bmax[2]);
+            recast.RecastConfig.calcGridSize(bmin, bmax, s.cell_size, &gw, &gh);
+        }
+        sample.drawCommonSettings(s, gw, gh);
+
+        if (dvui.button(@src(), "Save", .{}, .{})) self.saveNavMesh();
+        if (dvui.button(@src(), "Load", .{}, .{})) self.loadNavMesh();
+        dvui.label(@src(), "Build Time: {d:.1}ms", .{self.build_time_ms}, .{});
+    }
+
+    const SAVE_PATH = "solo_navmesh.bin";
+
+    fn saveNavMesh(self: *SampleSolo) void {
+        const nm = if (self.navmesh) |*n| n else {
+            self.bctx.context().log(.err, "Save: no navmesh", .{});
+            return;
+        };
+        nav_io.save(self.alloc, SAVE_PATH, nm) catch |e| {
+            self.bctx.context().log(.err, "Save failed: {s}", .{@errorName(e)});
+            return;
+        };
+        self.bctx.context().log(.progress, "Saved {s}", .{SAVE_PATH});
+    }
+
+    fn loadNavMesh(self: *SampleSolo) void {
+        const loaded = nav_io.load(self.alloc, SAVE_PATH) catch |e| {
+            self.bctx.context().log(.err, "Load failed: {s}", .{@errorName(e)});
+            return;
+        };
+        self.cleanup(); // освобождаем старый navmesh + промежуточные результаты
+        self.navmesh = loaded;
+        self.build_gen +%= 1; // тулзы пересоберут query
+        self.draw_mode = .navmesh;
+        self.bctx.context().log(.progress, "Loaded {s}", .{SAVE_PATH});
+    }
+
+    fn drawDebugMode(self: *SampleSolo) void {
+        dvui.labelNoFmt(@src(), "Draw", .{}, .{});
+        const has_nav = self.navmesh != null;
+        const has_hf = self.hf != null;
+        const has_chf = self.chf != null;
+        const has_cset = self.cset != null;
+        const has_pm = self.pmesh != null;
+        const has_dm = self.dmesh != null;
+        // (label, mode, доступность) — порядок и тексты как в Sample_SoloMesh::drawDebugUI
+        self.dmOpt("Input Mesh", .mesh, self.geom != null, 0);
+        self.dmOpt("Navmesh", .navmesh, has_nav, 1);
+        self.dmOpt("Navmesh Trans", .navmesh_trans, has_nav, 2);
+        self.dmOpt("Navmesh BVTree", .navmesh_bvtree, has_nav, 3);
+        self.dmOpt("Navmesh Nodes", .navmesh_nodes, has_nav, 4);
+        self.dmOpt("Voxels", .voxels, has_hf, 5);
+        self.dmOpt("Walkable Voxels", .voxels_walkable, has_hf, 6);
+        self.dmOpt("Compact", .compact, has_chf, 7);
+        self.dmOpt("Compact Distance", .compact_distance, has_chf, 8);
+        self.dmOpt("Compact Regions", .compact_regions, has_chf, 9);
+        self.dmOpt("Region Connections", .region_connections, has_cset, 10);
+        self.dmOpt("Raw Contours", .raw_contours, has_cset, 11);
+        self.dmOpt("Both Contours", .both_contours, has_cset, 12);
+        self.dmOpt("Contours", .contours, has_cset, 13);
+        self.dmOpt("Poly Mesh", .polymesh, has_pm, 14);
+        self.dmOpt("Poly Mesh Detail", .polymesh_detail, has_dm, 15);
+    }
+
+    fn dmOpt(self: *SampleSolo, label: []const u8, mode: DrawMode, avail: bool, id: usize) void {
+        if (!avail) return;
+        if (ui.radio(@src(), self.draw_mode == mode, label, id)) self.draw_mode = mode;
+    }
+};

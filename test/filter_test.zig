@@ -1,0 +1,529 @@
+const std = @import("std");
+const recast = @import("recast-nav");
+const filter = recast.recast.filter;
+const Heightfield = recast.Heightfield;
+const Context = recast.Context;
+const Vec3 = recast.Vec3;
+
+const WALKABLE_AREA: u8 = 63;
+const NULL_AREA: u8 = 0;
+
+test "markWalkableTriangles - flat triangle" {
+    const allocator = std.testing.allocator;
+
+    // Counter-clockwise winding when viewed from above (Y-up)
+    const verts = [_]f32{
+        0, 0, 0,
+        1, 0, 0,
+        0, 0, -1,
+    };
+
+    const tris = [_]i32{ 0, 1, 2 };
+    var areas = [_]u8{0};
+
+    const ctx = Context.init(allocator);
+    filter.markWalkableTriangles(&ctx, 45.0, &verts, &tris, &areas);
+
+    // Flat triangle with correct winding should be walkable
+    try std.testing.expectEqual(WALKABLE_AREA, areas[0]);
+}
+
+test "markWalkableTriangles - steep slope" {
+    const allocator = std.testing.allocator;
+
+    // Steep triangle (almost vertical)
+    const verts = [_]f32{
+        0, 0,  0,
+        1, 10, 0,
+        0, 0,  1,
+    };
+
+    const tris = [_]i32{ 0, 1, 2 };
+    var areas = [_]u8{0};
+
+    const ctx = Context.init(allocator);
+    filter.markWalkableTriangles(&ctx, 45.0, &verts, &tris, &areas);
+
+    // Steep triangle should not be marked walkable
+    try std.testing.expectEqual(NULL_AREA, areas[0]);
+}
+
+test "clearUnwalkableTriangles - steep slope" {
+    const allocator = std.testing.allocator;
+
+    // Steep triangle (almost vertical)
+    const verts = [_]f32{
+        0, 0,  0,
+        1, 10, 0,
+        0, 0,  1,
+    };
+
+    const tris = [_]i32{ 0, 1, 2 };
+    var areas = [_]u8{WALKABLE_AREA}; // Start as walkable
+
+    const ctx = Context.init(allocator);
+    filter.clearUnwalkableTriangles(&ctx, 45.0, &verts, &tris, &areas);
+
+    // Steep triangle should be cleared
+    try std.testing.expectEqual(NULL_AREA, areas[0]);
+}
+
+test "clearUnwalkableTriangles - flat triangle unchanged" {
+    const allocator = std.testing.allocator;
+
+    // Counter-clockwise winding
+    const verts = [_]f32{
+        0, 0, 0,
+        1, 0, 0,
+        0, 0, -1,
+    };
+
+    const tris = [_]i32{ 0, 1, 2 };
+    var areas = [_]u8{WALKABLE_AREA};
+
+    const ctx = Context.init(allocator);
+    filter.clearUnwalkableTriangles(&ctx, 45.0, &verts, &tris, &areas);
+
+    // Flat triangle should remain walkable
+    try std.testing.expectEqual(WALKABLE_AREA, areas[0]);
+}
+
+// rcFilterLedgeSpans — 1:1 with upstream main's canonical test
+// (Tests/Recast/Tests_RecastFilter.cpp, TEST_CASE "rcFilterLedgeSpans" /
+// SECTION "Edge spans are marked unwalkable"). A flat 10x10 plane: only the
+// outer ring (x==0 || z==0 || x==9 || z==9) is a ledge; the interior stays
+// walkable. This is operator-agnostic — the clearance check at filter.zig:120
+// never fires on a flat field — so it passes under both the main `>=`/`<` and
+// the proposed PR #772 `>`/`<=`. It pins our 1:1 match with merged upstream.
+test "filterLedgeSpans - flat plane: edges become ledges (upstream main 1:1)" {
+    const allocator = std.testing.allocator;
+    var hf = try Heightfield.init(allocator, 10, 10, Vec3.init(0, 0, 0), Vec3.init(10, 1, 10), 1.0, 1.0);
+    defer hf.deinit();
+
+    var z: i32 = 0;
+    while (z < 10) : (z += 1) {
+        var x: i32 = 0;
+        while (x < 10) : (x += 1) {
+            const s = try hf.allocSpan();
+            s.smin = 0;
+            s.smax = 1;
+            s.area = 1;
+            s.next = null;
+            hf.spans[@intCast(x + z * 10)] = s;
+        }
+    }
+
+    const ctx = Context.init(allocator);
+    filter.filterLedgeSpans(&ctx, 10, 5, &hf); // walkableHeight=10, walkableClimb=5
+
+    z = 0;
+    while (z < 10) : (z += 1) {
+        var x: i32 = 0;
+        while (x < 10) : (x += 1) {
+            const s = hf.spans[@intCast(x + z * 10)].?;
+            const expected: u8 = if (x == 0 or z == 0 or x == 9 or z == 9) NULL_AREA else 1;
+            try std.testing.expectEqual(expected, s.area);
+            try std.testing.expectEqual(@as(u16, 0), s.smin);
+            try std.testing.expectEqual(@as(u16, 1), s.smax);
+            try std.testing.expect(s.next == null);
+        }
+    }
+}
+
+// rcFilterLedgeSpans — the PR #772 discriminating scenario (the new test elsid
+// added in https://github.com/recastnavigation/recastnavigation/pull/772, which
+// is OPEN/unmerged). A 5x5 field with four pillars exactly `walkableHeight`
+// above a flat floor. This is the ONLY known input where the disputed operator
+// matters: a neighbour whose clearance equals walkableHeight is a ledge under
+// main's `>=` (filter.zig:120) but NOT under #772's proposed `>`.
+//
+// We follow upstream MAIN (`>=`/`<`), so every interior cell that touches a
+// pillar is a ledge → the whole interior collapses to RC_NULL_AREA. PR #772's
+// `>`/`<=` would instead keep the four corner cells + the centre walkable (the
+// "diagonal" pattern below). There is no upstream consensus on #772, and main's
+// `>=` is self-consistent with filterWalkableLowHeightSpans' `< walkableHeight`
+// (clearance == walkableHeight is treated as just-walkable), so we deliberately
+// pin the main result. This test is the canary: if upstream ever merges #772,
+// it flips and we revisit. See .agent/core-changes-justification.md.
+test "filterLedgeSpans - PR #772 pillar scenario pins main >= behaviour" {
+    const allocator = std.testing.allocator;
+    var hf = try Heightfield.init(allocator, 5, 5, Vec3.init(0, 0, 0), Vec3.init(5, 100, 5), 1.0, 1.0);
+    defer hf.deinit();
+
+    // Exact smin/smax from upstream PR #772's added SECTION.
+    const smin = [_]u16{
+        0, 0, 0,  0,  0,
+        0, 0, 11, 0,  0,
+        0, 6, 0,  10, 0,
+        0, 0, 11, 0,  0,
+        0, 0, 0,  0,  0,
+    };
+    const smax = [_]u16{
+        1, 1, 1,  1,  1,
+        1, 1, 12, 1,  1,
+        1, 7, 1,  11, 1,
+        1, 1, 12, 1,  1,
+        1, 1, 1,  1,  1,
+    };
+    var i: usize = 0;
+    while (i < 25) : (i += 1) {
+        const s = try hf.allocSpan();
+        s.smin = smin[i];
+        s.smax = smax[i];
+        s.area = 1;
+        s.next = null;
+        hf.spans[i] = s;
+    }
+
+    const ctx = Context.init(allocator);
+    filter.filterLedgeSpans(&ctx, 10, 5, &hf); // walkableHeight=10, walkableClimb=5
+
+    // Our (main `>=`/`<`) result: entire interior collapses to ledge.
+    //   #772's proposed `>`/`<=` would instead give the diagonal:
+    //     0 0 0 0 0 / 0 1 0 1 0 / 0 0 1 0 0 / 0 1 0 1 0 / 0 0 0 0 0
+    const expected = [_]u8{
+        0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0,
+    };
+    i = 0;
+    while (i < 25) : (i += 1) {
+        try std.testing.expectEqual(expected[i], hf.spans[i].?.area);
+    }
+}
+
+test "filterWalkableLowHeightSpans - removes low ceiling spans" {
+    const allocator = std.testing.allocator;
+
+    var hf = try Heightfield.init(
+        allocator,
+        32,
+        32,
+        Vec3.init(0, 0, 0),
+        Vec3.init(32, 10, 32),
+        1.0,
+        0.5,
+    );
+    defer hf.deinit();
+
+    // Manually create a span with low clearance
+    const x: i32 = 5;
+    const z: i32 = 5;
+    const col_idx = @as(usize, @intCast(x + z * 32));
+
+    // Create first span (floor)
+    const span1 = try hf.allocSpan();
+    span1.smin = 0;
+    span1.smax = 10;
+    span1.area = WALKABLE_AREA;
+
+    // Create second span (ceiling) - only 3 units above floor
+    const span2 = try hf.allocSpan();
+    span2.smin = 13; // Only 3 units clearance (13 - 10)
+    span2.smax = 20;
+    span2.area = NULL_AREA;
+
+    span1.next = span2;
+    hf.spans[col_idx] = span1;
+
+    const ctx = Context.init(allocator);
+    filter.filterWalkableLowHeightSpans(&ctx, 5, &hf); // Require 5 units clearance
+
+    // Span should be marked as non-walkable due to low ceiling
+    try std.testing.expectEqual(NULL_AREA, span1.area);
+}
+
+test "filterWalkableLowHeightSpans - keeps sufficient height spans" {
+    const allocator = std.testing.allocator;
+
+    var hf = try Heightfield.init(
+        allocator,
+        32,
+        32,
+        Vec3.init(0, 0, 0),
+        Vec3.init(32, 10, 32),
+        1.0,
+        0.5,
+    );
+    defer hf.deinit();
+
+    const x: i32 = 5;
+    const z: i32 = 5;
+    const col_idx = @as(usize, @intCast(x + z * 32));
+
+    // Create first span (floor)
+    const span1 = try hf.allocSpan();
+    span1.smin = 0;
+    span1.smax = 10;
+    span1.area = WALKABLE_AREA;
+
+    // Create second span (ceiling) - 10 units above floor
+    const span2 = try hf.allocSpan();
+    span2.smin = 20; // 10 units clearance (20 - 10)
+    span2.smax = 30;
+    span2.area = NULL_AREA;
+
+    span1.next = span2;
+    hf.spans[col_idx] = span1;
+
+    const ctx = Context.init(allocator);
+    filter.filterWalkableLowHeightSpans(&ctx, 5, &hf); // Require 5 units clearance
+
+    // Span should remain walkable
+    try std.testing.expectEqual(WALKABLE_AREA, span1.area);
+}
+
+test "filterLowHangingWalkableObstacles - marks low obstacles as walkable" {
+    const allocator = std.testing.allocator;
+
+    var hf = try Heightfield.init(
+        allocator,
+        32,
+        32,
+        Vec3.init(0, 0, 0),
+        Vec3.init(32, 10, 32),
+        1.0,
+        0.5,
+    );
+    defer hf.deinit();
+
+    const x: i32 = 5;
+    const z: i32 = 5;
+    const col_idx = @as(usize, @intCast(x + z * 32));
+
+    // Create walkable span
+    const span1 = try hf.allocSpan();
+    span1.smin = 0;
+    span1.smax = 10;
+    span1.area = WALKABLE_AREA;
+
+    // Create non-walkable obstacle span just above
+    const span2 = try hf.allocSpan();
+    span2.smin = 10;
+    span2.smax = 11; // Only 1 unit high
+    span2.area = NULL_AREA;
+
+    span1.next = span2;
+    hf.spans[col_idx] = span1;
+
+    const ctx = Context.init(allocator);
+    filter.filterLowHangingWalkableObstacles(&ctx, 2, &hf); // Can climb 2 units
+
+    // Small obstacle should be marked as walkable
+    try std.testing.expectEqual(WALKABLE_AREA, span2.area);
+}
+
+test "filterLowHangingWalkableObstacles - ignores tall obstacles" {
+    const allocator = std.testing.allocator;
+
+    var hf = try Heightfield.init(
+        allocator,
+        32,
+        32,
+        Vec3.init(0, 0, 0),
+        Vec3.init(32, 10, 32),
+        1.0,
+        0.5,
+    );
+    defer hf.deinit();
+
+    const x: i32 = 5;
+    const z: i32 = 5;
+    const col_idx = @as(usize, @intCast(x + z * 32));
+
+    // Create walkable span
+    const span1 = try hf.allocSpan();
+    span1.smin = 0;
+    span1.smax = 10;
+    span1.area = WALKABLE_AREA;
+
+    // Create tall obstacle span
+    const span2 = try hf.allocSpan();
+    span2.smin = 10;
+    span2.smax = 15; // 5 units tall
+    span2.area = NULL_AREA;
+
+    span1.next = span2;
+    hf.spans[col_idx] = span1;
+
+    const ctx = Context.init(allocator);
+    filter.filterLowHangingWalkableObstacles(&ctx, 2, &hf); // Can only climb 2 units
+
+    // Tall obstacle should remain non-walkable
+    try std.testing.expectEqual(NULL_AREA, span2.area);
+}
+
+test "filterLedgeSpans - marks edge ledges as unwalkable" {
+    const allocator = std.testing.allocator;
+
+    var hf = try Heightfield.init(
+        allocator,
+        10,
+        10,
+        Vec3.init(0, 0, 0),
+        Vec3.init(10, 10, 10),
+        1.0,
+        0.5,
+    );
+    defer hf.deinit();
+
+    // Create a walkable span at the edge (x=0, z=5)
+    const x: i32 = 0;
+    const z: i32 = 5;
+    const col_idx = @as(usize, @intCast(x + z * 10));
+
+    const span = try hf.allocSpan();
+    span.smin = 0;
+    span.smax = 10;
+    span.area = WALKABLE_AREA;
+
+    hf.spans[col_idx] = span;
+
+    const ctx = Context.init(allocator);
+    filter.filterLedgeSpans(&ctx, 5, 2, &hf);
+
+    // Edge span should be marked as ledge (unwalkable)
+    try std.testing.expectEqual(NULL_AREA, span.area);
+}
+
+test "filterLedgeSpans - keeps interior spans walkable" {
+    const allocator = std.testing.allocator;
+
+    var hf = try Heightfield.init(
+        allocator,
+        10,
+        10,
+        Vec3.init(0, 0, 0),
+        Vec3.init(10, 10, 10),
+        1.0,
+        0.5,
+    );
+    defer hf.deinit();
+
+    const walkable_height: i32 = 5;
+    const walkable_climb: i32 = 2;
+
+    // Create a grid of walkable spans in the middle
+    var z: i32 = 2;
+    while (z <= 7) : (z += 1) {
+        var x: i32 = 2;
+        while (x <= 7) : (x += 1) {
+            const col_idx = @as(usize, @intCast(x + z * 10));
+            const span = try hf.allocSpan();
+            span.smin = 0;
+            span.smax = 10;
+            span.area = WALKABLE_AREA;
+            hf.spans[col_idx] = span;
+        }
+    }
+
+    const ctx = Context.init(allocator);
+    filter.filterLedgeSpans(&ctx, walkable_height, walkable_climb, &hf);
+
+    // Center span should remain walkable (has neighbors on all sides)
+    const center_idx = @as(usize, @intCast(5 + 5 * 10));
+    const center_span = hf.spans[center_idx];
+    try std.testing.expect(center_span != null);
+    try std.testing.expectEqual(WALKABLE_AREA, center_span.?.area);
+}
+
+// Regression test for GitHub issue #772
+// https://github.com/recastnavigation/recastnavigation/issues/729
+// https://github.com/recastnavigation/recastnavigation/pull/772
+test "filterLedgeSpans - edge spans of a flat plane are marked unwalkable" {
+    // 1в1 с upstream Tests_RecastFilter.cpp ("Edge spans are marked unwalkable"):
+    // плоскость 10x10, после фильтра края (x|z == 0 или 9) -> NULL, центр walkable.
+    // Проверяет верное поведение ledge-фильтра (>= / <), как в RecastDemo.
+    const allocator = std.testing.allocator;
+    const w = 10;
+    var hf = try Heightfield.init(
+        allocator,
+        w,
+        w,
+        Vec3.init(0, 0, 0),
+        Vec3.init(10, 1, 10),
+        1.0,
+        1.0,
+    );
+    defer hf.deinit();
+
+    const walkable_height: i32 = 10;
+    const walkable_climb: i32 = 5;
+
+    var idx: usize = 0;
+    while (idx < w * w) : (idx += 1) {
+        const span = try hf.allocSpan();
+        span.smin = 0;
+        span.smax = 1;
+        span.area = WALKABLE_AREA;
+        hf.spans[idx] = span;
+    }
+
+    const ctx = Context.init(allocator);
+    filter.filterLedgeSpans(&ctx, walkable_height, walkable_climb, &hf);
+
+    for (0..w) |x| {
+        for (0..w) |z| {
+            const span = hf.spans[x + z * w].?;
+            const is_edge = (x == 0 or z == 0 or x == w - 1 or z == w - 1);
+            try std.testing.expectEqual(
+                @as(u8, if (is_edge) NULL_AREA else WALKABLE_AREA),
+                span.area,
+            );
+        }
+    }
+}
+
+// Additional boundary test: gap is exactly walkableHeight + 1 (should be walkable)
+test "filterLedgeSpans - boundary case: gap greater than walkableHeight by 1" {
+    const allocator = std.testing.allocator;
+
+    var hf = try Heightfield.init(
+        allocator,
+        3,
+        3,
+        Vec3.init(0, 0, 0),
+        Vec3.init(3, 20, 3),
+        1.0,
+        1.0,
+    );
+    defer hf.deinit();
+
+    const walkable_height: i32 = 10;
+    const walkable_climb: i32 = 2;
+
+    // Create a 3x3 grid where center has ceiling at exactly walkableHeight + 1
+    var z: i32 = 0;
+    while (z < 3) : (z += 1) {
+        var x: i32 = 0;
+        while (x < 3) : (x += 1) {
+            const col_idx = @as(usize, @intCast(x + z * 3));
+            const span1 = try hf.allocSpan();
+            span1.smin = 0;
+            span1.smax = 5;
+            span1.area = WALKABLE_AREA;
+
+            if (x == 1 and z == 1) {
+                // Center: ceiling at floor + walkableHeight + 1 = 5 + 11 = 16
+                const span2 = try hf.allocSpan();
+                span2.smin = 16; // gap = 16 - 5 = 11 (walkableHeight + 1)
+                span2.smax = 20;
+                span2.area = NULL_AREA;
+                span1.next = span2;
+            }
+
+            hf.spans[col_idx] = span1;
+        }
+    }
+
+    const ctx = Context.init(allocator);
+    filter.filterLedgeSpans(&ctx, walkable_height, walkable_climb, &hf);
+
+    // Center span should remain walkable (gap > walkableHeight)
+    const center_idx = @as(usize, 4); // (1, 1)
+    const center_span = hf.spans[center_idx];
+    try std.testing.expect(center_span != null);
+    try std.testing.expectEqual(WALKABLE_AREA, center_span.?.area);
+}

@@ -1,0 +1,397 @@
+module,function,class,verdict,releasefast_ns,note
+recast,insertSort,A,TIE,5.47,"benched head-to-head; analog(s) gated, original optimal / at timer floor"
+recast,pointInPoly,A,TIE,1.93,"benched head-to-head; analog(s) gated, original optimal / at timer floor"
+recast,vsafeNormalize,A,TIE,1.79,"benched head-to-head; analog(s) gated, original optimal / at timer floor"
+recast,erodeWalkableArea,B,TIE,,stage benched; analog done or data-dependent
+recast,medianFilterWalkableArea,B,TIE,,stage; cost in stage trace
+recast,markBoxArea,B,TIE,,stage; cost in stage trace
+recast,markConvexPolyArea,B,TIE,,stage; cost in stage trace
+recast,markCylinderArea,B,TIE,,stage; cost in stage trace
+recast,offsetPoly,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,getHeightFieldSpanCount,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,buildCompactHeightfield,B,WIN,,faster analog adopted+merged (see WIN table)
+recast,calcBounds,B,TIE,,stage; cost in stage trace
+recast,calcGridSize,B,TIE,,stage; cost in stage trace
+recast,getCornerHeight,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,walkContour,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,distancePtSeg,A,TIE,1.42,"benched head-to-head; analog(s) gated, original optimal / at timer floor"
+recast,simplifyContour,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,vequal,A,TIE,1.04,"benched head-to-head; analog(s) gated, original optimal / at timer floor"
+recast,removeDegenerateSegments,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,calcAreaOfPolygon2D,A,TIE,1.25,"benched head-to-head; analog(s) gated, original optimal / at timer floor"
+recast,intersectProp,A,TIE,1.04,"benched head-to-head; analog(s) gated, original optimal / at timer floor"
+recast,between,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,intersect,A,TIE,3.16,"benched head-to-head; analog(s) gated, original optimal / at timer floor"
+recast,intersectSegContour,A,TIE,8.74,"benched head-to-head; analog(s) gated, original optimal / at timer floor"
+recast,inCone,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,buildContours,B,WIN,,faster analog adopted+merged (see WIN table)
+recast,findLeftMostVertex,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,compareHoles,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,compareDiagonals,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,mergeContours,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,mergeRegionHoles,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,circumCircle,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,distPtTri,A,TIE,1.73,"benched head-to-head; analog(s) gated, original optimal / at timer floor"
+recast,distancePtSeg,A,TIE,1.42,"benched head-to-head; analog(s) gated, original optimal / at timer floor"
+recast,distancePtSeg3d,A,TIE,2.39,"benched head-to-head; analog(s) gated, original optimal / at timer floor"
+recast,distancePtSeg2d,A,TIE,1.52,"benched head-to-head; analog(s) gated, original optimal / at timer floor"
+recast,distToTriMesh,A,COVERED-VIA-STAGE,,class-A leaf; complex mesh input — cost inside polymesh-detail stage
+recast,distToPoly,A,TIE,6.04,"benched head-to-head; analog(s) gated, original optimal / at timer floor"
+recast,polyMinExtent,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,getHeight,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,findEdge,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,addEdge,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,updateLeftFace,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,overlapSegSeg2d,A,TIE,1.62,"benched head-to-head; analog(s) gated, original optimal / at timer floor"
+recast,overlapEdges,A,TIE,1.05,"benched head-to-head; analog(s) gated, original optimal / at timer floor"
+recast,completeFacet,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,delaunayHull,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,onHull,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,setTriFlags,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,triangulateHull,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,f,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,f,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,seedArrayWithPolyCenter,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,getHeightData,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,buildPolyDetail,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,buildPolyMeshDetail,B,TIE,,stage benched; analog done or data-dependent
+recast,mergePolyMeshDetails,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,filterLowHangingWalkableObstacles,B,TIE,,stage benched; analog done or data-dependent
+recast,filterLedgeSpans,B,TIE,,stage benched; analog done or data-dependent
+recast,filterWalkableLowHeightSpans,B,TIE,,stage benched; analog done or data-dependent
+recast,markWalkableTriangles,B,TIE,,stage; cost in stage trace
+recast,clearUnwalkableTriangles,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,deinit,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,allocSpan,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,freeSpan,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,getSpanCount,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,setCon,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,getCon,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,deinit,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,getDirOffsetX,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,getDirOffsetY,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,getDirForOffset,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,contains,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,addUnique,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,buildHeightfieldLayers,B,TIE,,stage; cost in stage trace
+recast,intersectProp,A,TIE,1.04,"benched head-to-head; analog(s) gated, original optimal / at timer floor"
+recast,between,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,intersect,A,TIE,3.16,"benched head-to-head; analog(s) gated, original optimal / at timer floor"
+recast,vequal,A,TIE,1.04,"benched head-to-head; analog(s) gated, original optimal / at timer floor"
+recast,diagonalie,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,inCone,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,diagonal,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,diagonalieLoose,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,inConeLoose,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,diagonalLoose,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,triangulate,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,computeVertexHash,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,addVertex,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,buildMeshAdjacency,B,TIE,,stage; cost in stage trace
+recast,countPolyVerts,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,getPolyMergeValue,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,mergePolyVerts,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,canRemoveVertex,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,removeVertex,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,buildPolyMesh,B,TIE,,stage benched; analog done or data-dependent
+recast,mergePolyMeshes,B,TIE,,stage; cost in stage trace
+recast,copyPolyMesh,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,deinit,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,deinit,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,deinit,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,vertCount,A,N/A,,trivial field accessor (count getter) — zero-cost inline
+recast,polyCount,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,deinit,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,vertCount,A,N/A,,trivial field accessor (count getter) — zero-cost inline
+recast,triCount,A,N/A,,trivial field accessor (count getter) — zero-cost inline
+recast,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,deinit,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,deinit,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,layerCount,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,overlapBounds,A,TIE,1.04,"benched head-to-head; analog(s) gated, original optimal / at timer floor"
+recast,rcAddSpan,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,addSpan,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,dividePoly,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,rasterizeTri,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,rasterizeTriangle,B,TIE,,stage; cost in stage trace
+recast,rasterizeTriangles,B,TIE,,stage benched; analog done or data-dependent
+recast,rasterizeTrianglesU16,B,TIE,,stage; cost in stage trace
+recast,rasterizeTrianglesFlat,B,TIE,,stage; cost in stage trace
+recast,paintRectRegion,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,calculateDistanceField,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,boxBlur,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,floodRegion,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,expandRegions,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,sortCellsByLevel,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,appendStacks,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,buildDistanceField,B,WIN,,faster analog adopted+merged (see WIN table)
+recast,removeAdjacentNeighbours,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,replaceNeighbour,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,canMergeWithRegion,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,mergeRegions,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,isRegionConnectedToBorder,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,isSolidEdge,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,walkContour,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,mergeAndFilterRegions,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,buildRegions,B,WIN,,faster analog adopted+merged (see WIN table)
+recast,buildRegionsMonotone,B,TIE,,stage; cost in stage trace
+recast,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,deinit,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,addUniqueConnection,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,addUniqueFloorRegion,D,N/A,,lifecycle/alloc/dispatch — no analog
+recast,mergeAndFilterLayerRegions,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+recast,buildLayerRegions,B,TIE,,stage; cost in stage trace
+detour,compareItemX,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,compareItemY,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,compareItemZ,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,calcExtends,A,TIE,1.05,"benched head-to-head; analog(s) gated, original optimal / at timer floor"
+detour,subdivide,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,createBVTree,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,classifyOffMeshPoint,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,createNavMeshData,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,navMeshHeaderSwapEndian,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,navMeshDataSwapEndian,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,f,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,isSuccess,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,isFailure,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,isInProgress,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,ok,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,fail,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,triArea2D,A,TIE,1.05,"benched head-to-head; analog(s) gated, original optimal / at timer floor"
+detour,randomPointInConvexPoly,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,setArea,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,setType,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,getArea,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,getType,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,deinit,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,deinit,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,encodePolyId,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,decodePolyId,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,calcTileLoc,A,N/A,,class-A leaf; needs runtime fixture (navmesh/agent) — exercised via enclosing query/crowd stage
+detour,calcSlabEndPoints,A,N/A,,class-A leaf; needs runtime fixture (navmesh/agent) — exercised via enclosing query/crowd stage
+detour,getPolyRefBase,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,getTileIndex,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,getTileRef,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,allocLink,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,freeLink,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,connectIntLinks,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,getTileAt,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,getTilesAt,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,getNeighbourTilesAt,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,findConnectingPolys,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,getTileAndPolyByRefUnsafe,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,getTileAndPolyByRef,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,isValidPolyRef,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,getOffMeshConnectionByRef,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,setPolyFlags,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,getPolyFlags,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,setPolyArea,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,getPolyArea,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,queryPolygonsInTile,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,findNearestPolyInTile,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,findNearestPolyInDirection,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,connectExtLinks,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,unconnectLinks,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,addTile,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,baseOffMeshLinks,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,connectExtOffMeshLinks,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,removeTile,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,getPolyHeightInternal,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,getPolyHeight,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,closestPointOnPoly,A,N/A,,class-A leaf; needs runtime fixture (navmesh/agent) — exercised via enclosing query/crowd stage
+detour,closestPointOnPolyBoundary,A,N/A,,class-A leaf; needs runtime fixture (navmesh/agent) — exercised via enclosing query/crowd stage
+detour,getPortalPoints,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,getEdgeMidPoint,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,getOffMeshConnectionPolyEndPoints,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,getTileStateSize,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,storeTileState,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,restoreTileState,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,passFilter,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,getCost,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,deinit,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,clear,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,getNode,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,findNode,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,findNodes,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,getNodeIdx,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,getNodeAtIdx,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,getNodeAtIdxConst,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,getNodeCount,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,getMaxNodes,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,getHashSize,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,deinit,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,clear,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,empty,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,top,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,pop,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,push,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,modify,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,getCapacity,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,bubbleUp,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,trickleDown,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,deinit,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,initQuery,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,getAttachedNavMesh,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,getNodePool,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,isValidPolyRef,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,isInClosedList,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,queryPolygons,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,queryPolygonsInTile,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,findPath,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,getPathToNode,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,findNearestPoly,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,getPortalPoints,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,findStraightPath,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,moveAlongSurface,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,raycast,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,findDistanceToWall,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,findLocalNeighbourhood,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,getPolyHeight,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,findRandomPoint,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,findRandomPointAroundCircle,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,closestPointOnPoly,A,N/A,,class-A leaf; needs runtime fixture (navmesh/agent) — exercised via enclosing query/crowd stage
+detour,closestPointOnPolyBoundary,A,N/A,,class-A leaf; needs runtime fixture (navmesh/agent) — exercised via enclosing query/crowd stage
+detour,findPolysAroundCircle,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,findPolysAroundShape,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,initSlicedFindPath,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,updateSlicedFindPath,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour,finalizeSlicedFindPath,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,finalizeSlicedFindPathPartial,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,appendVertex,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,appendPortals,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,insertInterval,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour,getPolyWallSegments,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,tween,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,integrate,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,calcSmoothSteerDirection,A,N/A,,class-A leaf; needs runtime fixture (navmesh/agent) — exercised via enclosing query/crowd stage
+detour_crowd,calcStraightSteerDirection,A,N/A,,class-A leaf; needs runtime fixture (navmesh/agent) — exercised via enclosing query/crowd stage
+detour_crowd,getDistanceToGoal,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,addNeighbour,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,overOffmeshConnection,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,deinit,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,addAgent,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,removeAgent,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,requestMoveTarget,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,requestMoveVelocity,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,resetMoveTarget,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getActiveAgents,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,update,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,updateDebug,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getAgent,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getEditableAgent,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,updateAgentParameters,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getAgentCount,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,setObstacleAvoidanceParams,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getObstacleAvoidanceParams,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getFilter,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getPathQueueNavQuery,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getEditableFilter,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getQueryHalfExtents,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getVelocitySampleCount,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getGrid,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getPathQueue,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getNavMeshQuery,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getAgentIndex,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,addToPathQueue,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,addToOptQueue,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,requestMoveTargetReplan,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,checkPathValidity,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,updateMoveRequest,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,updateTopologyOptimization,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,reset,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getCenter,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getSegmentCount,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getSegment,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,addSegment,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,update,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,isValid,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,deinit,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,reset,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,normalizeSamples,A,N/A,,class-A leaf; needs runtime fixture (navmesh/agent) — exercised via enclosing query/crowd stage
+detour_crowd,normalizeArray,A,TIE,1.87,"benched head-to-head; analog(s) gated, original optimal / at timer floor"
+detour_crowd,sweepCircleCircle,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,isectRaySeg,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,normalize2D,A,TIE,1.78,"benched head-to-head; analog(s) gated, original optimal / at timer floor"
+detour_crowd,rotate2D,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,deinit,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,reset,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,addCircle,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,addSegment,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getObstacleCircleCount,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getObstacleCircle,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getObstacleSegmentCount,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getObstacleSegment,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,prepare,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,processSample,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,sampleVelocityGrid,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,sampleVelocityAdaptive,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,deinit,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,reset,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getPos,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getTarget,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getFirstPoly,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getLastPoly,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getPath,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getPathCount,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,setCorridor,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,findCorners,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,isValid,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,movePosition,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,moveTargetPosition,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,optimizePathVisibility,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,optimizePathTopology,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,fixPathStart,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,trimInvalidPath,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,moveOverOffmeshConnection,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,mergeCorridorStartMoved,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,mergeCorridorEndMoved,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,mergeCorridorStartShortcut,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,deinit,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,update,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,request,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,getRequestStatus,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getPathResult,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getNavQuery,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,init,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,deinit,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,clear,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,addItem,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,queryItems,C,COVERED-VIA-STAGE,,internal helper; cost inside enclosing stage
+detour_crowd,getItemCountAt,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getBounds,D,N/A,,lifecycle/alloc/dispatch — no analog
+detour_crowd,getCellSize,D,N/A,,lifecycle/alloc/dispatch — no analog

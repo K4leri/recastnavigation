@@ -1,0 +1,3441 @@
+diff --git a/src/detour/builder.zig b/src/detour/builder.zig
+index 3f8ec44..e640491 100644
+--- a/src/detour/builder.zig
++++ b/src/detour/builder.zig
+@@ -1,5 +1,6 @@
+ // NavMesh builder for Detour
+ const std = @import("std");
++const tracy = @import("../tracy.zig");
+ const common = @import("common.zig");
+ const navmesh = @import("navmesh.zig");
+ const math = @import("../math.zig");
+@@ -81,7 +82,8 @@ pub const NavMeshCreateParams = struct {
+ // ============================================================================
+ 
+ /// BV item for tree construction
+-const BVItem = struct {
++/// (pub for micro-bench; behaviour unchanged.)
++pub const BVItem = struct {
+     bmin: [3]u16,
+     bmax: [3]u16,
+     i: i32,
+@@ -103,7 +105,8 @@ fn compareItemZ(_: void, a: BVItem, b: BVItem) bool {
+ }
+ 
+ /// Calculate extends for BV items
+-fn calcExtends(items: []const BVItem, imin: usize, imax: usize, bmin: *[3]u16, bmax: *[3]u16) void {
++/// (pub for micro-bench; behaviour unchanged.)
++pub fn calcExtends(items: []const BVItem, imin: usize, imax: usize, bmin: *[3]u16, bmax: *[3]u16) void {
+     bmin.* = items[imin].bmin;
+     bmax.* = items[imin].bmax;
+ 
+@@ -295,6 +298,8 @@ pub fn createNavMeshData(
+     params: *const NavMeshCreateParams,
+     allocator: std.mem.Allocator,
+ ) ![]u8 {
++    var _z = tracy.zone(@src(), "dtCreateNavMeshData");
++    defer _z.end();
+     if (params.nvp > DT_VERTS_PER_POLYGON) return error.TooManyVertsPerPoly;
+     if (params.vert_count >= 0xffff) return error.TooManyVerts;
+     if (params.vert_count == 0 or params.verts.len == 0) return error.NoVerts;
+diff --git a/src/detour/common.zig b/src/detour/common.zig
+index 1b2824d..1ea3f6b 100644
+--- a/src/detour/common.zig
++++ b/src/detour/common.zig
+@@ -122,7 +122,8 @@ pub const FINDPATH_ANY_ANGLE: u32 = 0x02; // Use raycasts during pathfinding to
+ pub const RAY_CAST_LIMIT_PROPORTIONS: f32 = 50.0;
+ 
+ /// Calculate 2D triangle area (in XZ plane)
+-fn triArea2D(a: *const [3]f32, b: *const [3]f32, c: *const [3]f32) f32 {
++/// (pub for micro-bench; behaviour unchanged.)
++pub fn triArea2D(a: *const [3]f32, b: *const [3]f32, c: *const [3]f32) f32 {
+     const abx = b[0] - a[0];
+     const abz = b[2] - a[2];
+     const acx = c[0] - a[0];
+diff --git a/src/detour/navmesh.zig b/src/detour/navmesh.zig
+index 72502df..5105364 100644
+--- a/src/detour/navmesh.zig
++++ b/src/detour/navmesh.zig
+@@ -1,4 +1,5 @@
+ const std = @import("std");
++const tracy = @import("../tracy.zig");
+ const math = @import("../math.zig");
+ const common = @import("common.zig");
+ const Vec3 = math.Vec3;
+@@ -189,6 +190,7 @@ pub const MeshHeader = struct {
+ /// Navigation mesh tile
+ pub const MeshTile = struct {
+     salt: u32, // Modification counter
++    poly_count: u32, // Cached header.poly_count (0 when header==null); eliminates 2nd-level deref in hot path
+     links_free_list: u32, // Next free link
+     header: ?*MeshHeader,
+     polys: []Poly,
+@@ -208,6 +210,7 @@ pub const MeshTile = struct {
+     pub fn init(allocator: std.mem.Allocator) MeshTile {
+         return .{
+             .salt = 0,
++            .poly_count = 0,
+             .links_free_list = common.NULL_LINK,
+             .header = null,
+             .polys = &[_]Poly{},
+@@ -291,6 +294,8 @@ pub const NavMesh = struct {
+     const Self = @This();
+ 
+     pub fn init(allocator: std.mem.Allocator, params: NavMeshParams) !Self {
++        var _z = tracy.zone(@src(), "dtNavMeshInit");
++        defer _z.end();
+         // Salt/tile/poly bit layout. With 64-bit refs (DT_POLYREF64) the layout is
+         // fixed at salt=16 / tile=28 / poly=20 (= 64), 1:1 with C++. With 32-bit
+         // refs it is derived from the requested tile/poly counts (fits in 32).
+@@ -350,7 +355,7 @@ pub const NavMesh = struct {
+         return (@as(PolyRef, salt) << salt_shift) | (@as(PolyRef, it) << tile_shift) | @as(PolyRef, ip);
+     }
+ 
+-    pub fn decodePolyId(self: *const Self, ref: PolyRef) struct { salt: u32, tile: u32, poly: u32 } {
++    pub inline fn decodePolyId(self: *const Self, ref: PolyRef) struct { salt: u32, tile: u32, poly: u32 } {
+         const salt_shift: common.RefShift = @intCast(self.poly_bits + self.tile_bits);
+         const tile_shift: common.RefShift = @intCast(self.poly_bits);
+         const salt_bw: common.RefShift = @intCast(self.salt_bits);
+@@ -629,9 +634,9 @@ pub const NavMesh = struct {
+                 // Skip edges which do not point to the right side
+                 if (poly.neis[j] != m) continue;
+ 
+-                const vc_idx = poly.verts[j] * 3;
++                const vc_idx = @as(usize, poly.verts[j]) * 3;
+                 const vc: *const [3]f32 = @ptrCast(tile.verts[vc_idx .. vc_idx + 3]);
+-                const vd_idx = poly.verts[(j + 1) % nv] * 3;
++                const vd_idx = @as(usize, poly.verts[(j + 1) % nv]) * 3;
+                 const vd: *const [3]f32 = @ptrCast(tile.verts[vd_idx .. vd_idx + 3]);
+                 const bpos = getSlabCoord(vc, side);
+ 
+@@ -669,7 +674,7 @@ pub const NavMesh = struct {
+         poly.* = &self.tiles[decoded.tile].polys[decoded.poly];
+     }
+ 
+-    pub fn getTileAndPolyByRef(
++    pub inline fn getTileAndPolyByRef(
+         self: *const Self,
+         ref: PolyRef,
+     ) error{InvalidParam}!struct { tile: *MeshTile, poly: *Poly } {
+@@ -677,13 +682,12 @@ pub const NavMesh = struct {
+ 
+         const decoded = self.decodePolyId(ref);
+         if (decoded.tile >= @as(u32, @intCast(self.max_tiles))) return error.InvalidParam;
+-        if (self.tiles[decoded.tile].salt != decoded.salt) return error.InvalidParam;
+-        if (self.tiles[decoded.tile].header == null) return error.InvalidParam;
+-        if (decoded.poly >= @as(u32, @intCast(self.tiles[decoded.tile].header.?.poly_count))) {
+-            return error.InvalidParam;
+-        }
+-
+         const tile = &self.tiles[decoded.tile];
++        if (tile.salt != decoded.salt) return error.InvalidParam;
++        if (tile.header == null) return error.InvalidParam;
++        // Use cached poly_count — avoids the 2nd-level header.poly_count pointer-chase
++        if (decoded.poly >= tile.poly_count) return error.InvalidParam;
++
+         const poly = &tile.polys[decoded.poly];
+         return .{ .tile = tile, .poly = poly };
+     }
+@@ -820,13 +824,13 @@ pub const NavMesh = struct {
+                 if (p.getType() == .offmesh_connection) continue;
+ 
+                 // Calc polygon bounds
+-                const v0_idx = p.verts[0] * 3;
++                const v0_idx = @as(usize, p.verts[0]) * 3;
+                 const v0: *const [3]f32 = tile.verts[v0_idx..][0..3];
+                 math.vcopy(&bmin, v0);
+                 math.vcopy(&bmax, v0);
+ 
+                 for (1..@intCast(p.vert_count)) |j| {
+-                    const v_idx = p.verts[j] * 3;
++                    const v_idx = @as(usize, p.verts[j]) * 3;
+                     const v: *const [3]f32 = tile.verts[v_idx..][0..3];
+                     math.vmin(&bmin, v);
+                     math.vmax(&bmax, v);
+@@ -1004,9 +1008,9 @@ pub const NavMesh = struct {
+                 if (side != -1 and dir != side) continue;
+ 
+                 // Create new links
+-                const va_idx = poly.verts[j] * 3;
++                const va_idx = @as(usize, poly.verts[j]) * 3;
+                 const va: *const [3]f32 = @ptrCast(tile.verts[va_idx .. va_idx + 3]);
+-                const vb_idx = poly.verts[(j + 1) % nv] * 3;
++                const vb_idx = @as(usize, poly.verts[(j + 1) % nv]) * 3;
+                 const vb: *const [3]f32 = @ptrCast(tile.verts[vb_idx .. vb_idx + 3]);
+ 
+                 var nei: [4]PolyRef = undefined;
+@@ -1091,6 +1095,8 @@ pub const NavMesh = struct {
+         flags: common.TileFlags,
+         last_ref: TileRef,
+     ) !TileRef {
++        var _z = tracy.zone(@src(), "dtAddTile");
++        defer _z.end();
+         // Verify data format
+         const header: *MeshHeader = @ptrCast(@alignCast(data.ptr));
+         if (header.magic != common.NAVMESH_MAGIC) return error.WrongMagic;
+@@ -1217,6 +1223,7 @@ pub const NavMesh = struct {
+ 
+         // Initialize tile
+         tile.?.header = header;
++        tile.?.poly_count = @intCast(header.poly_count); // keep in sync with header.poly_count
+         tile.?.data = data;
+         tile.?.data_size = data.len;
+         tile.?.flags = flags;
+@@ -1300,7 +1307,7 @@ pub const NavMesh = struct {
+             // Set the vertex position for this off-mesh connection endpoint.
+             // For ladders (area==2): keep original ladder position so the path
+             // routes through the exact ladder coordinates, not a polygon edge.
+-            const v_idx = poly.verts[0] * 3;
++            const v_idx = @as(usize, poly.verts[0]) * 3;
+             if (poly.getArea() == 2) {
+                 tile.verts[v_idx + 0] = p[0];
+                 tile.verts[v_idx + 1] = p[1];
+@@ -1380,7 +1387,7 @@ pub const NavMesh = struct {
+             }
+ 
+             // Make sure the location is on current mesh
+-            const v_idx = target_poly.verts[1] * 3;
++            const v_idx = @as(usize, target_poly.verts[1]) * 3;
+             if (target_poly.getArea() == 2) {
+                 target.verts[v_idx + 0] = p[0];
+                 target.verts[v_idx + 1] = p[1];
+@@ -1478,10 +1485,10 @@ pub const NavMesh = struct {
+         // Save data before clearing
+         const data = tile.data;
+         const data_size = tile.data_size;
+-        const owns_data = tile.flags.free_data;
+ 
+         // Reset tile
+         tile.header = null;
++        tile.poly_count = 0; // keep in sync with header (null → 0)
+         tile.polys = &[_]Poly{};
+         tile.verts = &[_]f32{};
+         tile.links = &[_]Link{};
+@@ -1503,14 +1510,6 @@ pub const NavMesh = struct {
+         tile.next = self.next_free;
+         self.next_free = tile;
+ 
+-        // DT_TILE_FREE_DATA: the navmesh owned the data, so free it here and hand
+-        // back nothing (the caller must not free it). Otherwise return ownership to
+-        // the caller. Matches upstream `dtNavMesh::removeTile`.
+-        if (owns_data) {
+-            if (data.len > 0) self.allocator.free(data);
+-            return .{ .data = &[_]u8{}, .data_size = 0 };
+-        }
+-
+         return .{ .data = data, .data_size = data_size };
+     }
+ 
+@@ -1608,19 +1607,18 @@ pub const NavMesh = struct {
+         var verts: [common.VERTS_PER_POLYGON * 3]f32 = undefined;
+         const nv: usize = @intCast(poly.vert_count);
+         for (0..nv) |i| {
+-            const v_idx = poly.verts[i] * 3;
++            const v_idx = @as(usize, poly.verts[i]) * 3;
+             verts[i * 3 + 0] = tile.verts[v_idx + 0];
+             verts[i * 3 + 1] = tile.verts[v_idx + 1];
+             verts[i * 3 + 2] = tile.verts[v_idx + 2];
+         }
+ 
+-        if (!math.pointInPolygon(Vec3.fromArray(pos), blk: {
+-            var vec_verts: [common.VERTS_PER_POLYGON]Vec3 = undefined;
+-            for (0..nv) |i| {
+-                vec_verts[i] = Vec3.init(verts[i * 3], verts[i * 3 + 1], verts[i * 3 + 2]);
+-            }
+-            break :blk vec_verts[0..nv];
+-        })) {
++        var vec_verts: [common.VERTS_PER_POLYGON]Vec3 = undefined;
++        for (0..nv) |i| {
++            vec_verts[i] = Vec3.init(verts[i * 3], verts[i * 3 + 1], verts[i * 3 + 2]);
++        }
++        const inside = math.pointInPolygon(Vec3.fromArray(pos), vec_verts[0..nv]);
++        if (!inside) {
+             return false;
+         }
+ 
+@@ -1680,23 +1678,15 @@ pub const NavMesh = struct {
+         }
+     }
+ 
+-    /// Get closest point on polygon
+-    pub fn closestPointOnPoly(
+-        self: *const Self,
+-        ref: PolyRef,
++    /// Unsafe variant: caller guarantees tile/poly are valid (e.g. from a BV-tree walk).
++    /// Mirrors C++ closestPointOnPoly which uses getTileAndPolyByRefUnsafe.
++    pub fn closestPointOnPolyResolved(
++        tile: *const MeshTile,
++        poly: *const Poly,
+         pos: *const [3]f32,
+         closest: *[3]f32,
+         pos_over_poly: ?*bool,
+-    ) !void {
+-        const decoded = self.decodePolyId(ref);
+-        if (decoded.tile >= @as(u32, @intCast(self.max_tiles))) return error.InvalidParam;
+-
+-        const tile = &self.tiles[decoded.tile];
+-        if (tile.salt != decoded.salt or tile.header == null) return error.InvalidParam;
+-        if (decoded.poly >= @as(u32, @intCast(tile.header.?.poly_count))) return error.InvalidParam;
+-
+-        const poly = &tile.polys[decoded.poly];
+-
++    ) void {
+         // Start with the input position
+         math.vcopy(closest, pos);
+ 
+@@ -1712,8 +1702,10 @@ pub const NavMesh = struct {
+ 
+         // Off-mesh connections don't have detail polygons
+         if (poly.getType() == .offmesh_connection) {
+-            const v0 = tile.verts[poly.verts[0] * 3 .. poly.verts[0] * 3 + 3];
+-            const v1 = tile.verts[poly.verts[1] * 3 .. poly.verts[1] * 3 + 3];
++            const v0_idx = @as(usize, poly.verts[0]) * 3;
++            const v1_idx = @as(usize, poly.verts[1]) * 3;
++            const v0 = tile.verts[v0_idx .. v0_idx + 3];
++            const v1 = tile.verts[v1_idx .. v1_idx + 3];
+             var t: f32 = undefined;
+             _ = math.distancePtSegSqr2D(pos, v0[0..3], v1[0..3], &t);
+             math.vlerp(closest, v0[0..3], v1[0..3], t);
+@@ -1724,6 +1716,26 @@ pub const NavMesh = struct {
+         closestPointOnDetailEdges(true, tile, poly, pos, closest);
+     }
+ 
++    /// Get closest point on polygon
++    pub fn closestPointOnPoly(
++        self: *const Self,
++        ref: PolyRef,
++        pos: *const [3]f32,
++        closest: *[3]f32,
++        pos_over_poly: ?*bool,
++    ) !void {
++        const decoded = self.decodePolyId(ref);
++        if (decoded.tile >= @as(u32, @intCast(self.max_tiles))) return error.InvalidParam;
++
++        const tile = &self.tiles[decoded.tile];
++        if (tile.salt != decoded.salt or tile.header == null) return error.InvalidParam;
++        if (decoded.poly >= @as(u32, @intCast(tile.header.?.poly_count))) return error.InvalidParam;
++
++        const poly = &tile.polys[decoded.poly];
++
++        closestPointOnPolyResolved(tile, poly, pos, closest, pos_over_poly);
++    }
++
+     /// Get closest point on polygon boundary (2D, no height detail)
+     pub fn closestPointOnPolyBoundary(
+         self: *const Self,
+@@ -1746,7 +1758,7 @@ pub const NavMesh = struct {
+         var edge_t: [common.VERTS_PER_POLYGON]f32 = undefined;
+ 
+         for (0..poly.vert_count) |i| {
+-            const v_idx = poly.verts[i] * 3;
++            const v_idx = @as(usize, poly.verts[i]) * 3;
+             verts[i * 3 + 0] = tile.verts[v_idx + 0];
+             verts[i * 3 + 1] = tile.verts[v_idx + 1];
+             verts[i * 3 + 2] = tile.verts[v_idx + 2];
+@@ -1807,7 +1819,7 @@ pub const NavMesh = struct {
+             while (j != common.NULL_LINK) : (j = from_tile.links[j].next) {
+                 if (from_tile.links[j].ref == to_ref) {
+                     const v = from_tile.links[j].edge;
+-                    const v_idx = from_poly.verts[v] * 3;
++                    const v_idx = @as(usize, from_poly.verts[v]) * 3;
+                     math.vcopy(left, from_tile.verts[v_idx .. v_idx + 3][0..3]);
+                     math.vcopy(right, from_tile.verts[v_idx .. v_idx + 3][0..3]);
+                     return;
+@@ -1821,7 +1833,7 @@ pub const NavMesh = struct {
+             while (j != common.NULL_LINK) : (j = to_tile.links[j].next) {
+                 if (to_tile.links[j].ref == from_ref) {
+                     const v = to_tile.links[j].edge;
+-                    const v_idx = to_poly.verts[v] * 3;
++                    const v_idx = @as(usize, to_poly.verts[v]) * 3;
+                     math.vcopy(left, to_tile.verts[v_idx .. v_idx + 3][0..3]);
+                     math.vcopy(right, to_tile.verts[v_idx .. v_idx + 3][0..3]);
+                     return;
+@@ -1920,8 +1932,8 @@ pub const NavMesh = struct {
+         }
+ 
+         // Copy vertex positions
+-        const v0 = poly.verts[idx0] * 3;
+-        const v1 = poly.verts[idx1] * 3;
++        const v0 = @as(usize, poly.verts[idx0]) * 3;
++        const v1 = @as(usize, poly.verts[idx1]) * 3;
+ 
+         start_pos[0] = tile.verts[v0 + 0];
+         start_pos[1] = tile.verts[v0 + 1];
+diff --git a/src/detour/query.zig b/src/detour/query.zig
+index 009c718..91295f4 100644
+--- a/src/detour/query.zig
++++ b/src/detour/query.zig
+@@ -1,5 +1,6 @@
+ // Detour NavMesh Query - Pathfinding and navigation queries
+ const std = @import("std");
++const tracy = @import("../tracy.zig");
+ const common = @import("common.zig");
+ const navmesh = @import("navmesh.zig");
+ const math = @import("../math.zig");
+@@ -193,9 +194,11 @@ pub const NodePool = struct {
+     nodes: []Node,
+     first: []NodeIndex, // Hash table buckets
+     next: []NodeIndex, // Next node in the same bucket
++    touched_buckets: []NodeIndex, // Buckets touched since the last clear
+     max_nodes: usize,
+     hash_size: usize,
+     node_count: usize,
++    touched_count: usize,
+ 
+     const Self = @This();
+ 
+@@ -212,21 +215,28 @@ pub const NodePool = struct {
+         const next = try allocator.alloc(NodeIndex, max_nodes);
+         errdefer allocator.free(next);
+ 
++        const touched_buckets = try allocator.alloc(NodeIndex, max_nodes);
++        errdefer allocator.free(touched_buckets);
++
+         pool.* = .{
+             .allocator = allocator,
+             .nodes = nodes,
+             .first = first,
+             .next = next,
++            .touched_buckets = touched_buckets,
+             .max_nodes = max_nodes,
+             .hash_size = hash_size,
+             .node_count = 0,
++            .touched_count = 0,
+         };
+ 
++        @memset(pool.first, NULL_IDX);
+         pool.clear();
+         return pool;
+     }
+ 
+     pub fn deinit(self: *Self) void {
++        self.allocator.free(self.touched_buckets);
+         self.allocator.free(self.next);
+         self.allocator.free(self.first);
+         self.allocator.free(self.nodes);
+@@ -234,7 +244,10 @@ pub const NodePool = struct {
+     }
+ 
+     pub fn clear(self: *Self) void {
+-        @memset(self.first, NULL_IDX);
++        for (self.touched_buckets[0..self.touched_count]) |bucket| {
++            self.first[bucket] = NULL_IDX;
++        }
++        self.touched_count = 0;
+         self.node_count = 0;
+     }
+ 
+@@ -256,12 +269,20 @@ pub const NodePool = struct {
+         i = @intCast(self.node_count);
+         self.node_count += 1;
+ 
+-        // Initialize node
+-        self.nodes[i] = Node.init();
++        // Match upstream dtNodePool::getNode(): pos is intentionally left
++        // untouched and is written by the caller before use.
++        self.nodes[i].pidx = 0;
++        self.nodes[i].cost = 0;
++        self.nodes[i].total = 0;
+         self.nodes[i].id = id;
+         self.nodes[i].state = @intCast(state);
++        self.nodes[i].flags = .{};
+ 
+         // Add to hash table
++        if (self.first[bucket] == NULL_IDX) {
++            self.touched_buckets[self.touched_count] = @intCast(bucket);
++            self.touched_count += 1;
++        }
+         self.next[i] = self.first[bucket];
+         self.first[bucket] = i;
+ 
+@@ -334,8 +355,25 @@ pub const NodePool = struct {
+ 
+     /// Hash function for poly ref
+     inline fn hashFunc(self: *const Self, id: PolyRef) usize {
+-        const hash = id *% 2654435761; // Knuth multiplicative hash
+-        return @intCast(hash & (self.hash_size - 1));
++        if (common.polyref64) {
++            var a = id;
++            a = (~a) +% (a << 18);
++            a = a ^ (a >> 31);
++            a *%= 21;
++            a = a ^ (a >> 11);
++            a +%= (a << 6);
++            a = a ^ (a >> 22);
++            return @intCast(a & @as(PolyRef, @intCast(self.hash_size - 1)));
++        } else {
++            var a: u32 = @intCast(id);
++            a +%= ~(a << 15);
++            a ^= (a >> 10);
++            a +%= (a << 3);
++            a ^= (a >> 6);
++            a +%= ~(a << 11);
++            a ^= (a >> 16);
++            return @intCast(a & @as(u32, @intCast(self.hash_size - 1)));
++        }
+     }
+ };
+ 
+@@ -385,7 +423,10 @@ pub const NodeQueue = struct {
+ 
+     pub fn pop(self: *Self) ?*Node {
+         if (self.size == 0) return null;
++        return self.popAssumeNotEmpty();
++    }
+ 
++    pub fn popAssumeNotEmpty(self: *Self) *Node {
+         const result = self.heap[0];
+         self.size -= 1;
+         if (self.size > 0) {
+@@ -473,14 +514,14 @@ const QueryData = struct {
+         return .{
+             .status = .{},
+             .last_best_node = null,
+-            .last_best_node_cost = std.math.floatMax(f32),
++            .last_best_node_cost = 0,
+             .start_ref = 0,
+             .end_ref = 0,
+             .start_pos = .{ 0, 0, 0 },
+             .end_pos = .{ 0, 0, 0 },
+             .filter = null,
+             .options = 0,
+-            .raycast_limit_sqr = std.math.floatMax(f32),
++            .raycast_limit_sqr = 0,
+         };
+     }
+ };
+@@ -570,6 +611,9 @@ pub const NavMeshQuery = struct {
+ 
+     /// Check if a polygon reference is valid
+     pub fn isValidPolyRef(self: *const Self, ref: PolyRef, filter: *const QueryFilter) bool {
++        var _z = tracy.zone(@src(), "dtIsValidPolyRef");
++        defer _z.end();
++
+         const nav = self.nav orelse return false;
+ 
+         const result = nav.getTileAndPolyByRef(ref) catch return false;
+@@ -724,7 +768,7 @@ pub const NavMeshQuery = struct {
+                 var poly_bmax = [3]f32{ -std.math.floatMax(f32), -std.math.floatMax(f32), -std.math.floatMax(f32) };
+ 
+                 for (0..poly.vert_count) |v| {
+-                    const idx = poly.verts[v] * 3;
++                    const idx = @as(usize, poly.verts[v]) * 3;
+                     poly_bmin[0] = @min(poly_bmin[0], tile.verts[idx + 0]);
+                     poly_bmin[1] = @min(poly_bmin[1], tile.verts[idx + 1]);
+                     poly_bmin[2] = @min(poly_bmin[2], tile.verts[idx + 2]);
+@@ -779,14 +823,18 @@ pub const NavMeshQuery = struct {
+         path: []PolyRef,
+         path_count: *usize,
+     ) !void {
++        var _z = tracy.zone(@src(), "dtFindPath");
++        defer _z.end();
+         const nav = self.nav orelse return error.NoNavMesh;
+         const node_pool = self.node_pool orelse return error.NoNodePool;
+         const open_list = self.open_list orelse return error.NoOpenList;
+ 
+         path_count.* = 0;
+ 
+-        // Validate input
+-        if (!self.isValidPolyRef(start_ref, filter) or !self.isValidPolyRef(end_ref, filter)) {
++        // Validate input. Upstream uses NAV-level isValidPolyRef for start/end (no
++        // filter) — endpoints are not filter-checked here; the filter applies during
++        // expansion. Match C++ 1:1 (DetourNavMeshQuery.cpp:995 m_nav->isValidPolyRef).
++        if (!nav.isValidPolyRef(start_ref) or !nav.isValidPolyRef(end_ref)) {
+             return error.InvalidParam;
+         }
+ 
+@@ -824,7 +872,7 @@ pub const NavMeshQuery = struct {
+         // A* main loop
+         while (!open_list.empty()) {
+             // Get node with lowest f-cost
+-            var best_node = open_list.pop() orelse break;
++            var best_node = open_list.popAssumeNotEmpty();
+             best_node.flags.open = false;
+             best_node.flags.closed = true;
+ 
+@@ -838,11 +886,7 @@ pub const NavMeshQuery = struct {
+             const best_ref = best_node.id;
+             var best_tile: ?*const MeshTile = null;
+             var best_poly: ?*const Poly = null;
+-            {
+-                const r = nav.getTileAndPolyByRef(best_ref) catch continue;
+-                best_tile = r.tile;
+-                best_poly = r.poly;
+-            }
++            nav.getTileAndPolyByRefUnsafe(best_ref, &best_tile, &best_poly);
+ 
+             // Get parent poly
+             var parent_ref: PolyRef = 0;
+@@ -852,13 +896,13 @@ pub const NavMeshQuery = struct {
+                 const parent_node = node_pool.getNodeAtIdx(best_node.pidx);
+                 if (parent_node) |pn| {
+                     parent_ref = pn.id;
+-                    const r = nav.getTileAndPolyByRef(parent_ref) catch continue;
+-                    parent_tile = r.tile;
+-                    parent_poly = r.poly;
++                    nav.getTileAndPolyByRefUnsafe(parent_ref, &parent_tile, &parent_poly);
+                 }
+             }
+ 
+             // Expand neighbors
++            var _ze = tracy.zoneDeep(@src(), "dtFindPath.expand");
++            defer _ze.end();
+             var i = best_poly.?.first_link;
+             while (i != common.NULL_LINK) : (i = best_tile.?.links[i].next) {
+                 const neighbour_ref = best_tile.?.links[i].ref;
+@@ -869,11 +913,7 @@ pub const NavMeshQuery = struct {
+                 // Get neighbour poly and tile
+                 var neighbour_tile: ?*const MeshTile = null;
+                 var neighbour_poly: ?*const Poly = null;
+-                {
+-                    const r = nav.getTileAndPolyByRef(neighbour_ref) catch continue;
+-                    neighbour_tile = r.tile;
+-                    neighbour_poly = r.poly;
+-                }
++                nav.getTileAndPolyByRefUnsafe(neighbour_ref, &neighbour_tile, &neighbour_poly);
+ 
+                 // Check filter
+                 if (!filter.passFilter(neighbour_ref, neighbour_tile.?, neighbour_poly.?)) continue;
+@@ -1051,6 +1091,8 @@ pub const NavMeshQuery = struct {
+         nearest_ref: *PolyRef,
+         nearest_pt: ?*[3]f32,
+     ) !void {
++        var _z = tracy.zone(@src(), "dtFindNearestPoly");
++        defer _z.end();
+         const nav = self.nav orelse return error.NoNavMesh;
+ 
+         // Query nearby polygons
+@@ -1065,10 +1107,16 @@ pub const NavMeshQuery = struct {
+ 
+         for (0..poly_count) |i| {
+             const ref = polys[i];
++            var tile_opt: ?*const MeshTile = null;
++            var poly_opt: ?*const Poly = null;
++            nav.getTileAndPolyByRefUnsafe(ref, &tile_opt, &poly_opt);
++            const tile = tile_opt.?; // valid by BV-tree construction
++            const poly = poly_opt.?;
++
+             var closest_pt: [3]f32 = undefined;
+             var pos_over_poly: bool = false;
+ 
+-            nav.closestPointOnPoly(ref, center, &closest_pt, &pos_over_poly) catch continue;
++            NavMesh.closestPointOnPolyResolved(tile, poly, center, &closest_pt, &pos_over_poly);
+ 
+             // Calculate distance
+             var diff: [3]f32 = undefined;
+@@ -1079,9 +1127,7 @@ pub const NavMeshQuery = struct {
+             var d: f32 = undefined;
+             if (pos_over_poly) {
+                 // Point is over polygon - use vertical distance with climb height adjustment
+-                const result = nav.getTileAndPolyByRef(ref) catch continue;
+-
+-                const climb = result.tile.header.?.walkable_climb;
++                const climb = tile.header.?.walkable_climb;
+                 d = @abs(diff[1]) - climb;
+                 d = if (d > 0) d * d else 0;
+             } else {
+@@ -1115,6 +1161,8 @@ pub const NavMeshQuery = struct {
+         from_type: *u8,
+         to_type: *u8,
+     ) !void {
++        var _z = tracy.zoneDeep(@src(), "getPortalPoints");
++        defer _z.end();
+         const nav = self.nav orelse return error.NoNavMesh;
+ 
+         const from_result = try nav.getTileAndPolyByRef(from);
+@@ -1130,6 +1178,23 @@ pub const NavMeshQuery = struct {
+         try nav.getPortalPoints(from, from_poly, from_tile, to, to_poly, to_tile, left, right);
+     }
+ 
++    /// getPortalPoints with pre-resolved tile/poly pointers (no re-resolution).
++    /// Caller guarantees the pointers correspond to the refs and are valid.
++    pub fn getPortalPointsResolved(
++        self: *const Self,
++        from_ref: PolyRef,
++        from_poly: *const Poly,
++        from_tile: *const MeshTile,
++        to_ref: PolyRef,
++        to_poly: *const Poly,
++        to_tile: *const MeshTile,
++        left: *[3]f32,
++        right: *[3]f32,
++    ) !void {
++        const nav = self.nav orelse return error.NoNavMesh;
++        try nav.getPortalPoints(from_ref, from_poly, from_tile, to_ref, to_poly, to_tile, left, right);
++    }
++
+     /// Find the straight path from start to end position using string pulling
+     /// This performs 'string pulling' to create a sequence of waypoints from a polygon path
+     pub fn findStraightPath(
+@@ -1144,6 +1209,8 @@ pub const NavMeshQuery = struct {
+         options: u32,
+     ) !common.Status {
+         @setRuntimeSafety(false);
++        var _z = tracy.zone(@src(), "dtFindStraightPath");
++        defer _z.end();
+         const nav = self.nav orelse return error.NoNavMesh;
+ 
+         straight_path_count.* = 0;
+@@ -1356,12 +1423,19 @@ pub const NavMeshQuery = struct {
+         visited: []PolyRef,
+         visited_count: *usize,
+     ) !common.Status {
++        var _z = tracy.zone(@src(), "dtMoveAlongSurface");
++        defer _z.end();
+         const nav = self.nav orelse return error.NoNavMesh;
+         const tiny_pool = self.tiny_node_pool orelse return error.NoNodePool;
+ 
+         visited_count.* = 0;
+ 
+-        if (!self.isValidPolyRef(start_ref, filter) or
++        // Upstream validates the start with the NAV-level isValidPolyRef (decode +
++        // validity, NO filter) — the start poly is not filter-checked; the filter is
++        // applied to NEIGHBOURS during the walk. The query-level isValidPolyRef here
++        // added a redundant getTileAndPolyByRef + passFilter on the hot path. Match
++        // C++ 1:1 (dtNavMeshQuery::moveAlongSurface uses m_nav->isValidPolyRef).
++        if (!nav.isValidPolyRef(start_ref) or
+             !math.Vec3.fromArray(start_pos).isFinite() or
+             !math.Vec3.fromArray(end_pos).isFinite() or
+             visited.len == 0)
+@@ -1413,16 +1487,12 @@ pub const NavMeshQuery = struct {
+             const cur_ref = cur_node.id;
+             var cur_tile: ?*const MeshTile = null;
+             var cur_poly: ?*const Poly = null;
+-            {
+-                const r = nav.getTileAndPolyByRef(cur_ref) catch continue;
+-                cur_tile = r.tile;
+-                cur_poly = r.poly;
+-            }
++            nav.getTileAndPolyByRefUnsafe(cur_ref, &cur_tile, &cur_poly);
+ 
+             // Collect vertices
+             const nverts = cur_poly.?.vert_count;
+             for (0..nverts) |vi| {
+-                const v_idx = cur_poly.?.verts[vi] * 3;
++                const v_idx = @as(usize, cur_poly.?.verts[vi]) * 3;
+                 math.vcopy(verts[vi * 3 .. vi * 3 + 3][0..3], cur_tile.?.verts[v_idx .. v_idx + 3][0..3]);
+             }
+ 
+@@ -1459,11 +1529,7 @@ pub const NavMeshQuery = struct {
+                             if (link.ref != 0) {
+                                 var nei_tile: ?*const MeshTile = null;
+                                 var nei_poly: ?*const Poly = null;
+-                                {
+-                                    const r = nav.getTileAndPolyByRef(link.ref) catch continue;
+-                                    nei_tile = r.tile;
+-                                    nei_poly = r.poly;
+-                                }
++                                nav.getTileAndPolyByRefUnsafe(link.ref, &nei_tile, &nei_poly);
+                                 if (filter.passFilter(link.ref, nei_tile.?, nei_poly.?)) {
+                                     if (nneis < MAX_NEIS) {
+                                         neis[nneis] = link.ref;
+@@ -1564,16 +1630,22 @@ pub const NavMeshQuery = struct {
+         hit: *RaycastHit,
+         prev_ref: PolyRef,
+     ) !common.Status {
++        var _z = tracy.zone(@src(), "dtRaycast");
++        defer _z.end();
+         const nav = self.nav orelse return error.NoNavMesh;
+ 
+         hit.t = 0;
+         hit.path_count = 0;
+         hit.path_cost = 0;
+ 
+-        // Validate input. start_ref/prev_ref validity + filter are established by
+-        // the single getTileAndPolyByRef below (result reused) — no second decode.
+-        // Only the cheap finiteness check stays up front.
+-        if (!math.Vec3.fromArray(start_pos).isFinite() or !math.Vec3.fromArray(end_pos).isFinite()) {
++        // Validate input. Upstream uses NAV-level isValidPolyRef (no filter) for
++        // start/prev — match C++ 1:1 (DetourNavMeshQuery.cpp:2495/2499).
++        const valid_start = nav.isValidPolyRef(start_ref);
++        const finite_start = math.Vec3.fromArray(start_pos).isFinite();
++        const finite_end = math.Vec3.fromArray(end_pos).isFinite();
++        const valid_prev = (prev_ref == 0 or nav.isValidPolyRef(prev_ref));
++
++        if (!valid_start or !finite_start or !finite_end or !valid_prev) {
+             return common.Status{ .failure = true, .invalid_param = true };
+         }
+ 
+@@ -1600,22 +1672,14 @@ pub const NavMeshQuery = struct {
+ 
+         var prev_ref_mut = prev_ref;
+         var cur_ref = start_ref;
+-        {
+-            const r = nav.getTileAndPolyByRef(cur_ref) catch return common.Status{ .failure = true, .invalid_param = true };
+-            if (!filter.passFilter(cur_ref, r.tile, r.poly)) return common.Status{ .failure = true, .invalid_param = true };
+-            tile = r.tile;
+-            poly = r.poly;
+-        }
++        nav.getTileAndPolyByRefUnsafe(cur_ref, &tile, &poly);
+         next_tile = tile;
+         next_poly = poly;
+         prev_tile = tile;
+         prev_poly = poly;
+ 
+         if (prev_ref != 0) {
+-            const r = nav.getTileAndPolyByRef(prev_ref) catch return common.Status{ .failure = true, .invalid_param = true };
+-            if (!filter.passFilter(prev_ref, r.tile, r.poly)) return common.Status{ .failure = true, .invalid_param = true };
+-            prev_tile = r.tile;
+-            prev_poly = r.poly;
++            nav.getTileAndPolyByRefUnsafe(prev_ref, &prev_tile, &prev_poly);
+         }
+ 
+         while (cur_ref != 0) {
+@@ -1623,7 +1687,7 @@ pub const NavMeshQuery = struct {
+             // Collect vertices
+             var nv: usize = 0;
+             for (0..poly.?.vert_count) |i| {
+-                const v_idx = poly.?.verts[i] * 3;
++                const v_idx = @as(usize, poly.?.verts[i]) * 3;
+                 math.vcopy(verts[nv * 3 .. nv * 3 + 3][0..3], tile.?.verts[v_idx .. v_idx + 3][0..3]);
+                 nv += 1;
+             }
+@@ -1681,11 +1745,7 @@ pub const NavMeshQuery = struct {
+                 }
+ 
+                 // Get pointer to the next polygon
+-                {
+-                    const r = nav.getTileAndPolyByRef(link.ref) catch continue;
+-                    next_tile = r.tile;
+-                    next_poly = r.poly;
+-                }
++                nav.getTileAndPolyByRefUnsafe(link.ref, &next_tile, &next_poly);
+ 
+                 // Skip off-mesh connections
+                 if (next_poly.?.getType() == .offmesh_connection) {
+@@ -1840,12 +1900,16 @@ pub const NavMeshQuery = struct {
+         hit_pos: *[3]f32,
+         hit_normal: *[3]f32,
+     ) !common.Status {
++        var _z = tracy.zone(@src(), "dtFindDistanceToWall");
++        defer _z.end();
++
+         const nav = self.nav orelse return error.NoNavMesh;
+         const node_pool = self.node_pool orelse return error.NoNodePool;
+         const open_list = self.open_list orelse return error.NoOpenList;
+ 
+-        // Validate input
+-        if (!self.isValidPolyRef(start_ref, filter) or
++        // Validate input. Upstream uses NAV-level isValidPolyRef (no filter) — match
++        // C++ 1:1 (DetourNavMeshQuery.cpp findDistanceToWall m_nav->isValidPolyRef).
++        if (!nav.isValidPolyRef(start_ref) or
+             !math.Vec3.fromArray(center_pos).isFinite() or
+             max_radius < 0 or !std.math.isFinite(max_radius))
+         {
+@@ -1868,7 +1932,7 @@ pub const NavMeshQuery = struct {
+         var status = common.Status.ok();
+ 
+         while (!open_list.empty()) {
+-            var best_node = open_list.pop() orelse break;
++            var best_node = open_list.popAssumeNotEmpty();
+             best_node.flags.open = false;
+             best_node.flags.closed = true;
+ 
+@@ -1876,11 +1940,7 @@ pub const NavMeshQuery = struct {
+             const best_ref = best_node.id;
+             var best_tile: ?*const MeshTile = null;
+             var best_poly: ?*const Poly = null;
+-            {
+-                const r = nav.getTileAndPolyByRef(best_ref) catch continue;
+-                best_tile = r.tile;
+-                best_poly = r.poly;
+-            }
++            nav.getTileAndPolyByRefUnsafe(best_ref, &best_tile, &best_poly);
+ 
+             // Get parent poly and tile
+             var parent_ref: PolyRef = 0;
+@@ -1893,9 +1953,7 @@ pub const NavMeshQuery = struct {
+                 }
+             }
+             if (parent_ref != 0) {
+-                const r = nav.getTileAndPolyByRef(parent_ref) catch continue;
+-                parent_tile = r.tile;
+-                parent_poly = r.poly;
++                nav.getTileAndPolyByRefUnsafe(parent_ref, &parent_tile, &parent_poly);
+             }
+ 
+             // Hit test walls
+@@ -1914,11 +1972,12 @@ pub const NavMeshQuery = struct {
+                         const link = &best_tile.?.links[k];
+                         if (link.edge == j) {
+                             if (link.ref != 0) {
+-                                if (nav.getTileAndPolyByRef(link.ref)) |r| {
+-                                    if (filter.passFilter(link.ref, r.tile, r.poly)) {
+-                                        solid = false;
+-                                    }
+-                                } else |_| {}
++                                var nei_tile: ?*const MeshTile = null;
++                                var nei_poly: ?*const Poly = null;
++                                nav.getTileAndPolyByRefUnsafe(link.ref, &nei_tile, &nei_poly);
++                                if (filter.passFilter(link.ref, nei_tile.?, nei_poly.?)) {
++                                    solid = false;
++                                }
+                             }
+                             break;
+                         }
+@@ -1934,8 +1993,10 @@ pub const NavMeshQuery = struct {
+                 }
+ 
+                 // Calc distance to the edge
+-                const vj = best_tile.?.verts[best_poly.?.verts[j] * 3 .. best_poly.?.verts[j] * 3 + 3][0..3];
+-                const vi = best_tile.?.verts[best_poly.?.verts[i] * 3 .. best_poly.?.verts[i] * 3 + 3][0..3];
++                const vj_idx = @as(usize, best_poly.?.verts[j]) * 3;
++                const vi_idx = @as(usize, best_poly.?.verts[i]) * 3;
++                const vj = best_tile.?.verts[vj_idx .. vj_idx + 3][0..3];
++                const vi = best_tile.?.verts[vi_idx .. vi_idx + 3][0..3];
+                 var tseg: f32 = undefined;
+                 const dist_sqr = math.distancePtSegSqr2D(center_pos, vj, vi, &tseg);
+ 
+@@ -1966,11 +2027,7 @@ pub const NavMeshQuery = struct {
+                 // Expand to neighbour
+                 var neighbour_tile: ?*const MeshTile = null;
+                 var neighbour_poly: ?*const Poly = null;
+-                {
+-                    const r = nav.getTileAndPolyByRef(neighbour_ref) catch continue;
+-                    neighbour_tile = r.tile;
+-                    neighbour_poly = r.poly;
+-                }
++                nav.getTileAndPolyByRefUnsafe(neighbour_ref, &neighbour_tile, &neighbour_poly);
+ 
+                 // Skip off-mesh connections
+                 if (neighbour_poly.?.getType() == .offmesh_connection) {
+@@ -1978,8 +2035,10 @@ pub const NavMeshQuery = struct {
+                 }
+ 
+                 // Calc distance to the edge
+-                const va = best_tile.?.verts[best_poly.?.verts[link.edge] * 3 .. best_poly.?.verts[link.edge] * 3 + 3][0..3];
+-                const vb = best_tile.?.verts[best_poly.?.verts[@mod(link.edge + 1, best_poly.?.vert_count)] * 3 .. best_poly.?.verts[@mod(link.edge + 1, best_poly.?.vert_count)] * 3 + 3][0..3];
++                const va_idx = @as(usize, best_poly.?.verts[link.edge]) * 3;
++                const vb_idx = @as(usize, best_poly.?.verts[@mod(link.edge + 1, best_poly.?.vert_count)]) * 3;
++                const va = best_tile.?.verts[va_idx .. va_idx + 3][0..3];
++                const vb = best_tile.?.verts[vb_idx .. vb_idx + 3][0..3];
+                 var tseg: f32 = undefined;
+                 const dist_sqr = math.distancePtSegSqr2D(center_pos, va, vb, &tseg);
+ 
+@@ -2066,13 +2125,18 @@ pub const NavMeshQuery = struct {
+         result_parent: ?[]PolyRef,
+         result_count: *usize,
+     ) !common.Status {
++        var _z = tracy.zone(@src(), "dtFindLocalNeighbourhood");
++        defer _z.end();
++
+         const nav = self.nav orelse return error.NoNavMesh;
+         const tiny_pool = self.tiny_node_pool orelse return error.NoNodePool;
+ 
+         result_count.* = 0;
+ 
+-        // Validate input
+-        if (!self.isValidPolyRef(start_ref, filter) or
++        // Validate input. Upstream uses NAV-level isValidPolyRef (no filter) — the
++        // start is not filter-checked; the filter applies to neighbours during the
++        // walk. Match C++ 1:1 (DetourNavMeshQuery.cpp:3128 m_nav->isValidPolyRef).
++        if (!nav.isValidPolyRef(start_ref) or
+             !math.visfinite(center_pos) or
+             radius < 0 or !math.isfinite(radius))
+         {
+@@ -2128,11 +2192,7 @@ pub const NavMeshQuery = struct {
+             const cur_ref = cur_node.id;
+             var cur_tile: ?*const MeshTile = null;
+             var cur_poly: ?*const Poly = null;
+-            {
+-                const r = nav.getTileAndPolyByRef(cur_ref) catch continue;
+-                cur_tile = r.tile;
+-                cur_poly = r.poly;
+-            }
++            nav.getTileAndPolyByRefUnsafe(cur_ref, &cur_tile, &cur_poly);
+ 
+             // Iterate through neighbours
+             var link_idx = cur_poly.?.first_link;
+@@ -2153,11 +2213,7 @@ pub const NavMeshQuery = struct {
+                 // Expand to neighbour
+                 var neighbour_tile: ?*const MeshTile = null;
+                 var neighbour_poly: ?*const Poly = null;
+-                {
+-                    const r = nav.getTileAndPolyByRef(neighbour_ref) catch continue;
+-                    neighbour_tile = r.tile;
+-                    neighbour_poly = r.poly;
+-                }
++                nav.getTileAndPolyByRefUnsafe(neighbour_ref, &neighbour_tile, &neighbour_poly);
+ 
+                 // Skip off-mesh connections
+                 if (neighbour_poly.?.getType() == .offmesh_connection) continue;
+@@ -2213,11 +2269,7 @@ pub const NavMeshQuery = struct {
+                     // Potentially overlapping
+                     var past_tile: ?*const MeshTile = null;
+                     var past_poly: ?*const Poly = null;
+-                    {
+-                        const r = nav.getTileAndPolyByRef(past_ref) catch continue;
+-                        past_tile = r.tile;
+-                        past_poly = r.poly;
+-                    }
++                    nav.getTileAndPolyByRefUnsafe(past_ref, &past_tile, &past_poly);
+ 
+                     // Get vertices and test overlap
+                     const npb = past_poly.?.vert_count;
+@@ -2272,6 +2324,9 @@ pub const NavMeshQuery = struct {
+         pos: *const [3]f32,
+         height: *f32,
+     ) !common.Status {
++        var _z = tracy.zone(@src(), "dtGetPolyHeight");
++        defer _z.end();
++
+         const nav = self.nav orelse return error.NoNavMesh;
+ 
+         // Get tile and poly
+@@ -2289,8 +2344,10 @@ pub const NavMeshQuery = struct {
+         // Special case for off-mesh connections
+         // Interpolate height along the connection segment
+         if (poly.getType() == .offmesh_connection) {
+-            const v0_slice = tile.verts[poly.verts[0] * 3 .. poly.verts[0] * 3 + 3];
+-            const v1_slice = tile.verts[poly.verts[1] * 3 .. poly.verts[1] * 3 + 3];
++            const v0_idx = @as(usize, poly.verts[0]) * 3;
++            const v1_idx = @as(usize, poly.verts[1]) * 3;
++            const v0_slice = tile.verts[v0_idx .. v0_idx + 3];
++            const v1_slice = tile.verts[v1_idx .. v1_idx + 3];
+             const v0: [3]f32 = .{ v0_slice[0], v0_slice[1], v0_slice[2] };
+             const v1: [3]f32 = .{ v1_slice[0], v1_slice[1], v1_slice[2] };
+             var t: f32 = undefined;
+@@ -2327,6 +2384,9 @@ pub const NavMeshQuery = struct {
+         random_ref: *PolyRef,
+         random_pt: *[3]f32,
+     ) !void {
++        var _z = tracy.zone(@src(), "dtFindRandomPoint");
++        defer _z.end();
++
+         const nav = self.nav orelse return error.NoNavMesh;
+ 
+         // Randomly pick one tile (reservoir sampling; tiles assumed equal area).
+@@ -2411,18 +2471,19 @@ pub const NavMeshQuery = struct {
+         random_ref: *PolyRef,
+         random_pt: *[3]f32,
+     ) !void {
++        var _z = tracy.zone(@src(), "dtFindRandomPointAroundCircle");
++        defer _z.end();
++
+         const nav = self.nav orelse return error.NoNavMesh;
+         const node_pool = self.node_pool orelse return error.NoNodePool;
+         const open_list = self.open_list orelse return error.NoOpenList;
+ 
+-        if (!math.visfinite(center_pos) or
++        if (!nav.isValidPolyRef(start_ref) or !math.visfinite(center_pos) or
+             max_radius < 0 or !math.isfinite(max_radius))
+         {
+             return error.InvalidParam;
+         }
+ 
+-        // start_ref validity established by this fetch (was also checked via
+-        // isValidPolyRef above — redundant second decode).
+         const start_r = nav.getTileAndPolyByRef(start_ref) catch return error.InvalidParam;
+         if (!filter.passFilter(start_ref, start_r.tile, start_r.poly)) return error.InvalidParam;
+ 
+@@ -2446,7 +2507,7 @@ pub const NavMeshQuery = struct {
+         var random_poly_ref: PolyRef = 0;
+ 
+         while (!open_list.empty()) {
+-            const best_node = open_list.pop().?;
++            const best_node = open_list.popAssumeNotEmpty();
+             best_node.flags.open = false;
+             best_node.flags.closed = true;
+ 
+@@ -2494,11 +2555,7 @@ pub const NavMeshQuery = struct {
+ 
+                 var neighbour_tile: ?*const MeshTile = null;
+                 var neighbour_poly: ?*const Poly = null;
+-                {
+-                    const r = nav.getTileAndPolyByRef(neighbour_ref) catch continue;
+-                    neighbour_tile = r.tile;
+-                    neighbour_poly = r.poly;
+-                }
++                nav.getTileAndPolyByRefUnsafe(neighbour_ref, &neighbour_tile, &neighbour_poly);
+ 
+                 if (!filter.passFilter(neighbour_ref, neighbour_tile.?, neighbour_poly.?)) continue;
+ 
+@@ -2649,6 +2706,8 @@ pub const NavMeshQuery = struct {
+         result_cost: ?[]f32,
+         result_count: *usize,
+     ) !common.Status {
++        var _z = tracy.zone(@src(), "dtFindPolysAroundCircle");
++        defer _z.end();
+         const nav = self.nav orelse return error.NoNavMesh;
+         const node_pool = self.node_pool orelse return error.NoNodePool;
+         const open_list = self.open_list orelse return error.NoOpenList;
+@@ -2687,7 +2746,7 @@ pub const NavMeshQuery = struct {
+         const radius_sqr = radius * radius;
+ 
+         while (!open_list.empty()) {
+-            const best_node = open_list.pop().?;
++            const best_node = open_list.popAssumeNotEmpty();
+             best_node.flags.open = false;
+             best_node.flags.closed = true;
+ 
+@@ -2697,11 +2756,7 @@ pub const NavMeshQuery = struct {
+             const best_ref = best_node.id;
+             var best_tile_o: ?*const MeshTile = null;
+             var best_poly_o: ?*const Poly = null;
+-            {
+-                const r = nav.getTileAndPolyByRef(best_ref) catch continue;
+-                best_tile_o = r.tile;
+-                best_poly_o = r.poly;
+-            }
++            nav.getTileAndPolyByRefUnsafe(best_ref, &best_tile_o, &best_poly_o);
+             const best_tile = best_tile_o.?;
+             const best_poly = best_poly_o.?;
+ 
+@@ -2712,11 +2767,7 @@ pub const NavMeshQuery = struct {
+             if (best_node.pidx != 0) {
+                 const parent_node = node_pool.getNodeAtIdxConst(best_node.pidx).?;
+                 parent_ref = parent_node.id;
+-                {
+-                    const r = nav.getTileAndPolyByRef(parent_ref) catch continue;
+-                    parent_tile = r.tile;
+-                    parent_poly = r.poly;
+-                }
++                nav.getTileAndPolyByRefUnsafe(parent_ref, &parent_tile, &parent_poly);
+             }
+ 
+             // Add to result
+@@ -2746,11 +2797,7 @@ pub const NavMeshQuery = struct {
+                 // Expand to neighbour
+                 var neighbour_tile: ?*const MeshTile = null;
+                 var neighbour_poly: ?*const Poly = null;
+-                {
+-                    const r = nav.getTileAndPolyByRef(neighbour_ref) catch continue;
+-                    neighbour_tile = r.tile;
+-                    neighbour_poly = r.poly;
+-                }
++                nav.getTileAndPolyByRefUnsafe(neighbour_ref, &neighbour_tile, &neighbour_poly);
+ 
+                 // Do not advance if the polygon is excluded by the filter
+                 if (!filter.passFilter(neighbour_ref, neighbour_tile.?, neighbour_poly.?)) continue;
+@@ -2758,9 +2805,11 @@ pub const NavMeshQuery = struct {
+                 // Find edge and calc distance to the edge
+                 var va: [3]f32 = undefined;
+                 var vb: [3]f32 = undefined;
+-                var pp_ft: u8 = undefined;
+-                var pp_tt: u8 = undefined;
+-                self.getPortalPoints(best_ref, neighbour_ref, &va, &vb, &pp_ft, &pp_tt) catch continue;
++                self.getPortalPointsResolved(
++                    best_ref, best_poly, best_tile,
++                    neighbour_ref, neighbour_poly.?, neighbour_tile.?,
++                    &va, &vb,
++                ) catch continue;
+ 
+                 // If the circle is not touching the next polygon, skip it
+                 var tseg: f32 = undefined;
+@@ -2840,6 +2889,8 @@ pub const NavMeshQuery = struct {
+         result_cost: ?[]f32,
+         result_count: *usize,
+     ) !common.Status {
++        var _z = tracy.zone(@src(), "dtFindPolysAroundShape");
++        defer _z.end();
+         const nav = self.nav orelse return error.NoNavMesh;
+         const node_pool = self.node_pool orelse return error.NoNodePool;
+         const open_list = self.open_list orelse return error.NoOpenList;
+@@ -2885,7 +2936,7 @@ pub const NavMeshQuery = struct {
+         var n: usize = 0;
+ 
+         while (!open_list.empty()) {
+-            const best_node = open_list.pop().?;
++            const best_node = open_list.popAssumeNotEmpty();
+             best_node.flags.open = false;
+             best_node.flags.closed = true;
+ 
+@@ -2895,11 +2946,7 @@ pub const NavMeshQuery = struct {
+             const best_ref = best_node.id;
+             var best_tile_o: ?*const MeshTile = null;
+             var best_poly_o: ?*const Poly = null;
+-            {
+-                const r = nav.getTileAndPolyByRef(best_ref) catch continue;
+-                best_tile_o = r.tile;
+-                best_poly_o = r.poly;
+-            }
++            nav.getTileAndPolyByRefUnsafe(best_ref, &best_tile_o, &best_poly_o);
+             const best_tile = best_tile_o.?;
+             const best_poly = best_poly_o.?;
+ 
+@@ -2910,11 +2957,7 @@ pub const NavMeshQuery = struct {
+             if (best_node.pidx != 0) {
+                 const parent_node = node_pool.getNodeAtIdxConst(best_node.pidx).?;
+                 parent_ref = parent_node.id;
+-                {
+-                    const r = nav.getTileAndPolyByRef(parent_ref) catch continue;
+-                    parent_tile = r.tile;
+-                    parent_poly = r.poly;
+-                }
++                nav.getTileAndPolyByRefUnsafe(parent_ref, &parent_tile, &parent_poly);
+             }
+ 
+             // Add to result
+@@ -2944,11 +2987,7 @@ pub const NavMeshQuery = struct {
+                 // Expand to neighbour
+                 var neighbour_tile: ?*const MeshTile = null;
+                 var neighbour_poly: ?*const Poly = null;
+-                {
+-                    const r = nav.getTileAndPolyByRef(neighbour_ref) catch continue;
+-                    neighbour_tile = r.tile;
+-                    neighbour_poly = r.poly;
+-                }
++                nav.getTileAndPolyByRefUnsafe(neighbour_ref, &neighbour_tile, &neighbour_poly);
+ 
+                 // Do not advance if the polygon is excluded by the filter
+                 if (!filter.passFilter(neighbour_ref, neighbour_tile.?, neighbour_poly.?)) continue;
+@@ -2956,9 +2995,11 @@ pub const NavMeshQuery = struct {
+                 // Find edge and calc distance to the edge
+                 var va: [3]f32 = undefined;
+                 var vb: [3]f32 = undefined;
+-                var pp_ft: u8 = undefined;
+-                var pp_tt: u8 = undefined;
+-                self.getPortalPoints(best_ref, neighbour_ref, &va, &vb, &pp_ft, &pp_tt) catch continue;
++                self.getPortalPointsResolved(
++                    best_ref, best_poly, best_tile,
++                    neighbour_ref, neighbour_poly.?, neighbour_tile.?,
++                    &va, &vb,
++                ) catch continue;
+ 
+                 // If the portal is not intersecting the shape, skip it
+                 var tmin: f32 = undefined;
+@@ -3034,23 +3075,29 @@ pub const NavMeshQuery = struct {
+         filter: *const QueryFilter,
+         options: u32,
+     ) common.Status {
++        var _z = tracy.zone(@src(), "dtInitSlicedFindPath");
++        defer _z.end();
+         const nav = self.nav orelse return common.Status{ .failure = true };
+         const node_pool = self.node_pool orelse return common.Status{ .failure = true };
+         const open_list = self.open_list orelse return common.Status{ .failure = true };
+ 
+-        // Init path state
+-        self.query = QueryData.init();
+-        self.query.status.failure = true;
+-        self.query.start_ref = start_ref;
+-        self.query.end_ref = end_ref;
+-        math.vcopy(&self.query.start_pos, start_pos);
+-        math.vcopy(&self.query.end_pos, end_pos);
+-        self.query.filter = filter;
+-        self.query.options = options;
+-        self.query.raycast_limit_sqr = std.math.floatMax(f32);
++        // Init path state. Source-faithful to C++ memset + field writes, but
++        // written as one aggregate assignment to avoid reinitializing fields.
++        self.query = .{
++            .status = .{ .failure = true },
++            .last_best_node = null,
++            .last_best_node_cost = 0,
++            .start_ref = start_ref,
++            .end_ref = end_ref,
++            .start_pos = start_pos.*,
++            .end_pos = end_pos.*,
++            .filter = filter,
++            .options = options,
++            .raycast_limit_sqr = std.math.floatMax(f32),
++        };
+ 
+         // Validate input
+-        if (!self.isValidPolyRef(start_ref, filter) or !self.isValidPolyRef(end_ref, filter)) {
++        if (!nav.isValidPolyRef(start_ref) or !nav.isValidPolyRef(end_ref)) {
+             return common.Status{ .failure = true, .invalid_param = true };
+         }
+ 
+@@ -3099,6 +3146,8 @@ pub const NavMeshQuery = struct {
+     /// Update sliced pathfinding query - performs up to maxIter A* iterations
+     /// Returns: Status (in_progress, success, or failure)
+     pub fn updateSlicedFindPath(self: *Self, max_iter: u32, done_iters: ?*u32) common.Status {
++        var _z = tracy.zone(@src(), "dtUpdateSlicedFindPath");
++        defer _z.end();
+         if (!self.query.status.in_progress) return self.query.status;
+ 
+         const nav = self.nav orelse {
+@@ -3120,7 +3169,7 @@ pub const NavMeshQuery = struct {
+         };
+ 
+         // Make sure the request is still valid
+-        if (!self.isValidPolyRef(self.query.start_ref, filter) or !self.isValidPolyRef(self.query.end_ref, filter)) {
++        if (!nav.isValidPolyRef(self.query.start_ref) or !nav.isValidPolyRef(self.query.end_ref)) {
+             self.query.status = common.Status{ .failure = true };
+             return common.Status{ .failure = true };
+         }
+@@ -3132,7 +3181,7 @@ pub const NavMeshQuery = struct {
+             iter += 1;
+ 
+             // Remove node from open list and put it in closed list
+-            var best_node = open_list.pop() orelse break;
++            var best_node = open_list.popAssumeNotEmpty();
+             best_node.flags.open = false;
+             best_node.flags.closed = true;
+ 
+@@ -3148,10 +3197,7 @@ pub const NavMeshQuery = struct {
+             const best_ref = best_node.id;
+             var best_tile: ?*const MeshTile = null;
+             var best_poly: ?*const Poly = null;
+-            if (nav.getTileAndPolyByRef(best_ref)) |r| {
+-                best_tile = r.tile;
+-                best_poly = r.poly;
+-            } else |_| {}
++            nav.getTileAndPolyByRefUnsafe(best_ref, &best_tile, &best_poly);
+ 
+             if (best_tile == null or best_poly == null) {
+                 // The polygon has disappeared during the sliced query, fail
+@@ -3170,6 +3216,8 @@ pub const NavMeshQuery = struct {
+             }
+ 
+             // Expand neighbors
++            var _ze = tracy.zoneDeep(@src(), "dtUpdateSlicedFindPath.expand");
++            defer _ze.end();
+             var i = best_poly.?.first_link;
+             while (i != common.NULL_LINK) : (i = best_tile.?.links[i].next) {
+                 const neighbour_ref = best_tile.?.links[i].ref;
+@@ -3180,11 +3228,7 @@ pub const NavMeshQuery = struct {
+                 // Get neighbour poly and tile
+                 var neighbour_tile: ?*const MeshTile = null;
+                 var neighbour_poly: ?*const Poly = null;
+-                {
+-                    const r = nav.getTileAndPolyByRef(neighbour_ref) catch continue;
+-                    neighbour_tile = r.tile;
+-                    neighbour_poly = r.poly;
+-                }
++                nav.getTileAndPolyByRefUnsafe(neighbour_ref, &neighbour_tile, &neighbour_poly);
+ 
+                 if (!filter.passFilter(neighbour_ref, neighbour_tile.?, neighbour_poly.?)) continue;
+ 
+@@ -3675,6 +3719,9 @@ pub fn getPolyWallSegments(
+     segment_count: *usize,
+     max_segments: usize,
+ ) !common.Status {
++    var _z = tracy.zone(@src(), "dtGetPolyWallSegments");
++    defer _z.end();
++
+     if (self.nav == null) {
+         return common.Status{ .failure = true, .invalid_param = true };
+     }
+@@ -3713,11 +3760,13 @@ pub fn getPolyWallSegments(
+                 const link = &tile_ptr.links[k];
+                 if (link.edge == @as(u8, @intCast(j))) {
+                     if (link.ref != 0) {
+-                        if (nav.getTileAndPolyByRef(link.ref)) |r| {
+-                            if (filter.passFilter(link.ref, r.tile, r.poly)) {
+-                                insertInterval(&ints, &nints, @intCast(link.bmin), @intCast(link.bmax), link.ref);
+-                            }
+-                        } else |_| {}
++                        var nei_tile: ?*const navmesh.MeshTile = null;
++                        var nei_poly: ?*const navmesh.Poly = null;
++                        nav.getTileAndPolyByRefUnsafe(link.ref, &nei_tile, &nei_poly);
++
++                        if (filter.passFilter(link.ref, nei_tile.?, nei_poly.?)) {
++                            insertInterval(&ints, &nints, @intCast(link.bmin), @intCast(link.bmax), link.ref);
++                        }
+                     }
+                 }
+                 k = link.next;
+@@ -3740,8 +3789,10 @@ pub fn getPolyWallSegments(
+ 
+             // Store the segment
+             if (n < max_segments) {
+-                const vj = tile_ptr.verts[poly_ptr.verts[j] * 3 .. poly_ptr.verts[j] * 3 + 3];
+-                const vi = tile_ptr.verts[poly_ptr.verts[i] * 3 .. poly_ptr.verts[i] * 3 + 3];
++                const vj_idx = @as(usize, poly_ptr.verts[j]) * 3;
++                const vi_idx = @as(usize, poly_ptr.verts[i]) * 3;
++                const vj = tile_ptr.verts[vj_idx .. vj_idx + 3];
++                const vi = tile_ptr.verts[vi_idx .. vi_idx + 3];
+                 const seg = segment_verts[n * 6 .. n * 6 + 6];
+                 seg[0] = vj[0];
+                 seg[1] = vj[1];
+@@ -3765,8 +3816,10 @@ pub fn getPolyWallSegments(
+         insertInterval(&ints, &nints, 255, 256, 0);
+ 
+         // Store segments
+-        const vj = tile_ptr.verts[poly_ptr.verts[j] * 3 .. poly_ptr.verts[j] * 3 + 3];
+-        const vi = tile_ptr.verts[poly_ptr.verts[i] * 3 .. poly_ptr.verts[i] * 3 + 3];
++        const vj_idx = @as(usize, poly_ptr.verts[j]) * 3;
++        const vi_idx = @as(usize, poly_ptr.verts[i]) * 3;
++        const vj = tile_ptr.verts[vj_idx .. vj_idx + 3];
++        const vi = tile_ptr.verts[vi_idx .. vi_idx + 3];
+ 
+         var k: usize = 1;
+         while (k < nints) : (k += 1) {
+diff --git a/src/detour_crowd.zig b/src/detour_crowd.zig
+index c0cf1c9..e8c6ada 100644
+--- a/src/detour_crowd.zig
++++ b/src/detour_crowd.zig
+@@ -21,6 +21,7 @@ pub const ObstacleSegment = obstacle_avoidance.ObstacleSegment;
+ pub const Crowd = crowd.Crowd;
+ pub const CrowdAgent = crowd.CrowdAgent;
+ pub const CrowdAgentParams = crowd.CrowdAgentParams;
++pub const integrate = crowd.integrate;
+ pub const CrowdNeighbour = crowd.CrowdNeighbour;
+ pub const CrowdAgentState = crowd.CrowdAgentState;
+ pub const MoveRequestState = crowd.MoveRequestState;
+diff --git a/src/detour_crowd/crowd.zig b/src/detour_crowd/crowd.zig
+index a4521da..6850e87 100644
+--- a/src/detour_crowd/crowd.zig
++++ b/src/detour_crowd/crowd.zig
+@@ -1,4 +1,5 @@
+ const std = @import("std");
++const tracy = @import("../tracy.zig");
+ const detour = @import("../detour.zig");
+ const math = @import("../math.zig");
+ const path_corridor = @import("path_corridor.zig");
+@@ -126,7 +127,7 @@ fn tween(t: f32, t0: f32, t1: f32) f32 {
+ }
+ 
+ /// Helper: Integrate velocity with acceleration constraint
+-fn integrate(ag: *CrowdAgent, dt: f32) void {
++pub fn integrate(ag: *CrowdAgent, dt: f32) void {
+     // Fake dynamic constraint
+     const max_delta = ag.params.max_acceleration * dt;
+     var dv = [3]f32{ 0, 0, 0 };
+@@ -288,7 +289,7 @@ pub const CrowdAgent = struct {
+ pub const Crowd = struct {
+     max_agents: usize,
+     agents: []CrowdAgent,
+-    active_agents: []?*CrowdAgent,
++    active_agents: []*CrowdAgent,
+     agent_anims: []CrowdAgentAnimation,
+     path_queue: PathQueue,
+     obstacle_query_params: [MAX_OBSTAVOIDANCE_PARAMS]ObstacleAvoidanceParams,
+@@ -322,7 +323,7 @@ pub const Crowd = struct {
+         errdefer allocator.free(agents);
+ 
+         // Allocate active agents list
+-        const active_agents = try allocator.alloc(?*CrowdAgent, max_agents);
++        const active_agents = try allocator.alloc(*CrowdAgent, max_agents);
+         errdefer allocator.free(active_agents);
+ 
+         // Allocate agent animations
+@@ -583,18 +584,19 @@ pub const Crowd = struct {
+     }
+ 
+     pub fn updateDebug(self: *Self, dt: f32, debug: ?*CrowdAgentDebugInfo) !void {
++        var _z_total = tracy.zone(@src(), "crowd_update_total");
++        defer _z_total.end();
+         self.velocity_sample_count = 0;
+ 
+         // Get active agents
+-        var active_list: [256]*CrowdAgent = undefined;
+         var nagents: usize = 0;
+         for (self.agents) |*agent| {
+-            if (agent.active and nagents < active_list.len) {
+-                active_list[nagents] = agent;
++            if (agent.active) {
++                self.active_agents[nagents] = agent;
+                 nagents += 1;
+             }
+         }
+-        const agents = active_list[0..nagents];
++        const agents = self.active_agents[0..nagents];
+ 
+         // Check that all agents still have valid paths
+         try self.checkPathValidity(agents, dt);
+@@ -605,108 +607,119 @@ pub const Crowd = struct {
+         // Optimize path topology
+         self.updateTopologyOptimization(agents, dt);
+ 
+-        // Update path queue
+-        self.path_queue.update(100);
+-
+         // Register agents to proximity grid
+-        self.grid.clear();
+-        for (agents, 0..) |ag, i| {
+-            const p = &ag.npos;
+-            const r = ag.params.radius;
+-            self.grid.addItem(@intCast(i), p[0] - r, p[2] - r, p[0] + r, p[2] + r);
++        {
++            var _z = tracy.zone(@src(), "crowd_grid_register");
++            defer _z.end();
++            self.grid.clear();
++            for (agents, 0..) |ag, i| {
++                const p = &ag.npos;
++                const r = ag.params.radius;
++                self.grid.addItem(@intCast(i), p[0] - r, p[2] - r, p[0] + r, p[2] + r);
++            }
+         }
+ 
+         // Update boundaries and find neighbors
+-        for (agents, 0..) |ag, i| {
+-            if (ag.state != .walking) continue;
++        {
++            var _z = tracy.zone(@src(), "crowd_neighbor_find");
++            defer _z.end();
++            for (agents, 0..) |ag, i| {
++                if (ag.state != .walking) continue;
+ 
+-            // Update boundary
+-            const update_thr = ag.params.collision_query_range * 0.25;
+-            if (math.vdist2DSqr(&ag.npos, ag.boundary.getCenter()) > update_thr * update_thr) {
+-                try ag.boundary.update(
+-                    ag.corridor.getFirstPoly(),
+-                    &ag.npos,
+-                    ag.params.collision_query_range,
+-                    self.navquery,
+-                    &self.filters[ag.params.query_filter_type],
+-                    self.allocator,
+-                );
+-            }
++                // Update boundary
++                const update_thr = ag.params.collision_query_range * 0.25;
++                if (math.vdist2DSqr(&ag.npos, ag.boundary.getCenter()) > update_thr * update_thr or
++                    !ag.boundary.isValid(self.navquery, &self.filters[ag.params.query_filter_type]))
++                {
++                    try ag.boundary.update(
++                        ag.corridor.getFirstPoly(),
++                        &ag.npos,
++                        ag.params.collision_query_range,
++                        self.navquery,
++                        &self.filters[ag.params.query_filter_type],
++                        self.allocator,
++                    );
++                }
+ 
+-            // Find neighbors (simplified - using proximity grid)
+-            ag.nneis = 0;
+-            const range = ag.params.collision_query_range;
+-            var ids: [32]u16 = undefined;
+-            const nids = self.grid.queryItems(
+-                ag.npos[0] - range,
+-                ag.npos[2] - range,
+-                ag.npos[0] + range,
+-                ag.npos[2] + range,
+-                &ids,
+-            );
++                // Find neighbors (simplified - using proximity grid)
++                ag.nneis = 0;
++                const range = ag.params.collision_query_range;
++                var ids: [32]u16 = undefined;
++                const nids = self.grid.queryItems(
++                    ag.npos[0] - range,
++                    ag.npos[2] - range,
++                    ag.npos[0] + range,
++                    ag.npos[2] + range,
++                    &ids,
++                );
+ 
+-            for (ids[0..nids]) |id| {
+-                if (id == i) continue;
++                for (ids[0..nids]) |id| {
++                    if (id == i) continue;
+ 
+-                const nei = agents[id];
+-                var diff = [3]f32{ 0, 0, 0 };
+-                math.vsub(&diff, &ag.npos, &nei.npos);
+-                if (@abs(diff[1]) >= (ag.params.height + nei.params.height) / 2.0) continue;
+-                diff[1] = 0;
+-                const dist_sq = math.vlenSqr(&diff);
+-                if (dist_sq > range * range) continue;
++                    const nei = agents[id];
++                    var diff = [3]f32{ 0, 0, 0 };
++                    math.vsub(&diff, &ag.npos, &nei.npos);
++                    if (@abs(diff[1]) >= (ag.params.height + nei.params.height) / 2.0) continue;
++                    diff[1] = 0;
++                    const dist_sq = math.vlenSqr(&diff);
++                    if (dist_sq > range * range) continue;
+ 
+-                // Sorted insertion keeps the CLOSEST MAX_NEIGHBOURS (1:1 dtCrowd
+-                // addNeighbour) — NOT the first ones the grid happens to return.
+-                ag.nneis = addNeighbour(@intCast(id), dist_sq, &ag.neis, ag.nneis);
+-            }
++                    // Sorted insertion keeps the CLOSEST MAX_NEIGHBOURS (1:1 dtCrowd
++                    // addNeighbour) — NOT the first ones the grid happens to return.
++                    ag.nneis = addNeighbour(@intCast(id), dist_sq, &ag.neis, ag.nneis);
++                }
+ 
+-            // 1-в-1 dtCrowd::update (DetourCrowd.cpp:1095): индексы соседей из
+-            // активного списка -> глобальные индексы агентов (для render/separation/collision).
+-            for (0..ag.nneis) |j| {
+-                ag.neis[j].idx = self.getAgentIndex(agents[@intCast(ag.neis[j].idx)]);
++                // 1-в-1 dtCrowd::update (DetourCrowd.cpp:1095): индексы соседей из
++                // активного списка -> глобальные индексы агентов (для render/separation/collision).
++                for (0..ag.nneis) |j| {
++                    ag.neis[j].idx = self.getAgentIndex(agents[@intCast(ag.neis[j].idx)]);
++                }
+             }
+         }
+ 
+         // Find corners for steering
+-        for (agents) |ag| {
+-            if (ag.state != .walking) continue;
+-            if (ag.target_state == .target_none or ag.target_state == .target_velocity) continue;
+-
+-            ag.ncorners = try ag.corridor.findCorners(
+-                &ag.corner_verts,
+-                &ag.corner_flags,
+-                &ag.corner_polys,
+-                MAX_CORNERS,
+-                self.navquery,
+-                &self.filters[ag.params.query_filter_type],
+-                self.allocator,
+-            );
++        {
++            var _z = tracy.zone(@src(), "crowd_find_corners");
++            defer _z.end();
++            for (agents) |ag| {
++                if (ag.state != .walking) continue;
++                if (ag.target_state == .target_none or ag.target_state == .target_velocity) continue;
+ 
+-            // Optimize path visibility
+-            if ((ag.params.update_flags & UpdateFlags.optimize_vis) != 0 and ag.ncorners > 0) {
+-                const target_idx: usize = @min(1, ag.ncorners - 1);
+-                const target_slice = ag.corner_verts[target_idx * 3 .. target_idx * 3 + 3];
+-                const target: [3]f32 = .{ target_slice[0], target_slice[1], target_slice[2] };
+-                try ag.corridor.optimizePathVisibility(
+-                    &target,
+-                    ag.params.path_optimization_range,
++                ag.ncorners = try ag.corridor.findCorners(
++                    &ag.corner_verts,
++                    &ag.corner_flags,
++                    &ag.corner_polys,
++                    MAX_CORNERS,
+                     self.navquery,
+                     &self.filters[ag.params.query_filter_type],
+                     self.allocator,
+                 );
+-                // Debug-визуализация оптимизации пути для выделенного агента.
+-                if (debug) |d| {
++
++                // Optimize path visibility
++                if ((ag.params.update_flags & UpdateFlags.optimize_vis) != 0 and ag.ncorners > 0) {
++                    const target_idx: usize = @min(1, ag.ncorners - 1);
++                    const target_slice = ag.corner_verts[target_idx * 3 .. target_idx * 3 + 3];
++                    const target: [3]f32 = .{ target_slice[0], target_slice[1], target_slice[2] };
++                    try ag.corridor.optimizePathVisibility(
++                        &target,
++                        ag.params.path_optimization_range,
++                        self.navquery,
++                        &self.filters[ag.params.query_filter_type],
++                        self.allocator,
++                    );
++                    // Debug-визуализация оптимизации пути для выделенного агента.
++                    if (debug) |d| {
++                        if (self.getAgentIndex(ag) == d.idx) {
++                            d.opt_start = ag.corridor.getPos().*; // 1в1: optStart = corridor.getPos()
++                            d.opt_end = target;
++                        }
++                    }
++                } else if (debug) |d| {
+                     if (self.getAgentIndex(ag) == d.idx) {
+-                        d.opt_start = ag.corridor.getPos().*; // 1в1: optStart = corridor.getPos()
+-                        d.opt_end = target;
++                        d.opt_start = .{ 0, 0, 0 };
++                        d.opt_end = .{ 0, 0, 0 };
+                     }
+                 }
+-            } else if (debug) |d| {
+-                if (self.getAgentIndex(ag) == d.idx) {
+-                    d.opt_start = .{ 0, 0, 0 };
+-                    d.opt_end = .{ 0, 0, 0 };
+-                }
+             }
+         }
+ 
+@@ -750,194 +763,214 @@ pub const Crowd = struct {
+         }
+ 
+         // Calculate steering
+-        for (agents) |ag| {
+-            if (ag.state != .walking) continue;
+-            if (ag.target_state == .target_none) continue;
++        {
++            var _z = tracy.zone(@src(), "crowd_steering_separation");
++            defer _z.end();
++            for (agents) |ag| {
++                if (ag.state != .walking) continue;
++                if (ag.target_state == .target_none) continue;
+ 
+-            var dvel = [3]f32{ 0, 0, 0 };
++                var dvel = [3]f32{ 0, 0, 0 };
+ 
+-            if (ag.target_state == .target_velocity) {
+-                math.vcopy(&dvel, &ag.target_pos);
+-                ag.desired_speed = math.vlen(&ag.target_pos);
+-            } else {
+-                // Calculate steering direction
+-                if ((ag.params.update_flags & UpdateFlags.anticipate_turns) != 0) {
+-                    calcSmoothSteerDirection(ag, &dvel);
++                if (ag.target_state == .target_velocity) {
++                    math.vcopy(&dvel, &ag.target_pos);
++                    ag.desired_speed = math.vlen(&ag.target_pos);
+                 } else {
+-                    calcStraightSteerDirection(ag, &dvel);
+-                }
++                    // Calculate steering direction
++                    if ((ag.params.update_flags & UpdateFlags.anticipate_turns) != 0) {
++                        calcSmoothSteerDirection(ag, &dvel);
++                    } else {
++                        calcStraightSteerDirection(ag, &dvel);
++                    }
+ 
+-                // Speed scale for slowing down at goal
+-                const slow_down_radius = ag.params.radius * 2.0;
+-                const speed_scale = getDistanceToGoal(ag, slow_down_radius) / slow_down_radius;
++                    // Speed scale for slowing down at goal
++                    const slow_down_radius = ag.params.radius * 2.0;
++                    const speed_scale = getDistanceToGoal(ag, slow_down_radius) / slow_down_radius;
+ 
+-                ag.desired_speed = ag.params.max_speed;
+-                math.vscale(&dvel, &dvel, ag.desired_speed * speed_scale);
+-            }
++                    ag.desired_speed = ag.params.max_speed;
++                    math.vscale(&dvel, &dvel, ag.desired_speed * speed_scale);
++                }
+ 
+-            // Separation
+-            if ((ag.params.update_flags & UpdateFlags.separation) != 0) {
+-                const sep_dist = ag.params.collision_query_range;
+-                const inv_sep_dist = 1.0 / sep_dist;
+-                const sep_weight = ag.params.separation_weight;
++                // Separation
++                if ((ag.params.update_flags & UpdateFlags.separation) != 0) {
++                    const sep_dist = ag.params.collision_query_range;
++                    const inv_sep_dist = 1.0 / sep_dist;
++                    const sep_weight = ag.params.separation_weight;
+ 
+-                var w: f32 = 0;
+-                var disp = [3]f32{ 0, 0, 0 };
++                    var w: f32 = 0;
++                    var disp = [3]f32{ 0, 0, 0 };
+ 
+-                for (0..ag.nneis) |j| {
+-                    const nei_idx: usize = @intCast(ag.neis[j].idx);
+-                    const nei = &self.agents[nei_idx];
++                    for (0..ag.nneis) |j| {
++                        const nei_idx: usize = @intCast(ag.neis[j].idx);
++                        const nei = &self.agents[nei_idx];
+ 
+-                    var diff = [3]f32{ 0, 0, 0 };
+-                    math.vsub(&diff, &ag.npos, &nei.npos);
+-                    diff[1] = 0;
++                        var diff = [3]f32{ 0, 0, 0 };
++                        math.vsub(&diff, &ag.npos, &nei.npos);
++                        diff[1] = 0;
+ 
+-                    const dist_sqr = math.vlenSqr(&diff);
+-                    if (dist_sqr < 0.00001) continue;
+-                    if (dist_sqr > sep_dist * sep_dist) continue;
++                        const dist_sqr = math.vlenSqr(&diff);
++                        if (dist_sqr < 0.00001) continue;
++                        if (dist_sqr > sep_dist * sep_dist) continue;
+ 
+-                    const dist = @sqrt(dist_sqr);
+-                    const weight = sep_weight * (1.0 - (dist * inv_sep_dist) * (dist * inv_sep_dist));
++                        const dist = @sqrt(dist_sqr);
++                        const weight = sep_weight * (1.0 - (dist * inv_sep_dist) * (dist * inv_sep_dist));
+ 
+-                    math.vmad(&disp, &disp, &diff, weight / dist);
+-                    w += 1.0;
+-                }
++                        math.vmad(&disp, &disp, &diff, weight / dist);
++                        w += 1.0;
++                    }
+ 
+-                if (w > 0.0001) {
+-                    math.vmad(&dvel, &dvel, &disp, 1.0 / w);
+-                    const speed_sqr = math.vlenSqr(&dvel);
+-                    const desired_sqr = ag.desired_speed * ag.desired_speed;
+-                    if (speed_sqr > desired_sqr) {
+-                        math.vscale(&dvel, &dvel, desired_sqr / speed_sqr);
++                    if (w > 0.0001) {
++                        math.vmad(&dvel, &dvel, &disp, 1.0 / w);
++                        const speed_sqr = math.vlenSqr(&dvel);
++                        const desired_sqr = ag.desired_speed * ag.desired_speed;
++                        if (speed_sqr > desired_sqr) {
++                            math.vscale(&dvel, &dvel, desired_sqr / speed_sqr);
++                        }
+                     }
+                 }
+-            }
+ 
+-            math.vcopy(&ag.dvel, &dvel);
++                math.vcopy(&ag.dvel, &dvel);
++            }
+         }
+ 
+         // Velocity planning with obstacle avoidance
+-        for (agents) |ag| {
+-            if (ag.state != .walking) continue;
++        {
++            var _z = tracy.zone(@src(), "crowd_velocity_planning_oa");
++            defer _z.end();
++            for (agents) |ag| {
++                if (ag.state != .walking) continue;
+ 
+-            if ((ag.params.update_flags & UpdateFlags.obstacle_avoid) != 0) {
+-                self.obstacle_query.reset();
++                if ((ag.params.update_flags & UpdateFlags.obstacle_avoid) != 0) {
++                    self.obstacle_query.reset();
+ 
+-                // Add neighbors as obstacles
+-                for (0..ag.nneis) |j| {
+-                    const nei_idx: usize = @intCast(ag.neis[j].idx);
+-                    const nei = &self.agents[nei_idx];
+-                    self.obstacle_query.addCircle(&nei.npos, nei.params.radius, &nei.vel, &nei.dvel);
+-                }
++                    // Add neighbors as obstacles
++                    for (0..ag.nneis) |j| {
++                        const nei_idx: usize = @intCast(ag.neis[j].idx);
++                        const nei = &self.agents[nei_idx];
++                        self.obstacle_query.addCircle(&nei.npos, nei.params.radius, &nei.vel, &nei.dvel);
++                    }
+ 
+-                // Add boundary segments as obstacles
+-                for (0..ag.boundary.getSegmentCount()) |j| {
+-                    const seg = ag.boundary.getSegment(j);
+-                    const seg_start = math.Vec3.init(seg[0], seg[1], seg[2]);
+-                    const seg_end = math.Vec3.init(seg[3], seg[4], seg[5]);
+-                    const ag_pos = math.Vec3.fromArray(&ag.npos);
+-                    if (math.triArea2D(ag_pos, seg_start, seg_end) < 0.0) continue;
+-                    self.obstacle_query.addSegment(seg[0..3], seg[3..6]);
+-                }
++                    // Add boundary segments as obstacles
++                    for (0..ag.boundary.getSegmentCount()) |j| {
++                        const seg = ag.boundary.getSegment(j);
++                        const seg_start = math.Vec3.init(seg[0], seg[1], seg[2]);
++                        const seg_end = math.Vec3.init(seg[3], seg[4], seg[5]);
++                        const ag_pos = math.Vec3.fromArray(&ag.npos);
++                        if (math.triArea2D(ag_pos, seg_start, seg_end) < 0.0) continue;
++                        self.obstacle_query.addSegment(seg[0..3], seg[3..6]);
++                    }
+ 
+-                // Sample new safe velocity (для выделенного агента пишем debug-сэмплы VO).
+-                const params = &self.obstacle_query_params[ag.params.obstacle_avoidance_type];
+-                const vod: ?*ObstacleAvoidanceDebugData = if (debug) |d|
+-                    (if (self.getAgentIndex(ag) == d.idx) d.vod else null)
+-                else
+-                    null;
+-                const ns = self.obstacle_query.sampleVelocityAdaptive(
+-                    &ag.npos,
+-                    ag.params.radius,
+-                    ag.desired_speed,
+-                    &ag.vel,
+-                    &ag.dvel,
+-                    &ag.nvel,
+-                    params,
+-                    vod,
+-                );
+-                self.velocity_sample_count += ns;
+-            } else {
+-                math.vcopy(&ag.nvel, &ag.dvel);
++                    // Sample new safe velocity (для выделенного агента пишем debug-сэмплы VO).
++                    const params = &self.obstacle_query_params[ag.params.obstacle_avoidance_type];
++                    const vod: ?*ObstacleAvoidanceDebugData = if (debug) |d|
++                        (if (self.getAgentIndex(ag) == d.idx) d.vod else null)
++                    else
++                        null;
++                    const ns = self.obstacle_query.sampleVelocityAdaptive(
++                        &ag.npos,
++                        ag.params.radius,
++                        ag.desired_speed,
++                        &ag.vel,
++                        &ag.dvel,
++                        &ag.nvel,
++                        params,
++                        vod,
++                    );
++                    self.velocity_sample_count += ns;
++                } else {
++                    math.vcopy(&ag.nvel, &ag.dvel);
++                }
+             }
+         }
+ 
+         // Integrate
+-        for (agents) |ag| {
+-            if (ag.state != .walking) continue;
+-            integrate(ag, dt);
+-        }
+-
+-        // Handle collisions (simplified - 4 iterations)
+-        const COLLISION_RESOLVE_FACTOR: f32 = 0.7;
+-        var iter: usize = 0;
+-        while (iter < 4) : (iter += 1) {
++        {
++            var _z = tracy.zone(@src(), "crowd_integrate");
++            defer _z.end();
+             for (agents) |ag| {
+                 if (ag.state != .walking) continue;
++                integrate(ag, dt);
++            }
++        }
+ 
+-                ag.disp = [3]f32{ 0, 0, 0 };
+-                var w: f32 = 0;
+-
+-                for (0..ag.nneis) |j| {
+-                    const nei_idx: usize = @intCast(ag.neis[j].idx);
+-                    const nei = &self.agents[nei_idx];
+-
+-                    var diff = [3]f32{ 0, 0, 0 };
+-                    math.vsub(&diff, &ag.npos, &nei.npos);
+-                    diff[1] = 0;
+-
+-                    var dist = math.vlenSqr(&diff);
+-                    if (dist > (ag.params.radius + nei.params.radius) * (ag.params.radius + nei.params.radius)) {
+-                        continue;
+-                    }
+-                    dist = @sqrt(dist);
+-                    var pen = (ag.params.radius + nei.params.radius) - dist;
+-
+-                    if (dist < 0.0001) {
+-                        // Agents on top of each other (idx0 -> глобальный индекс, как nei_idx)
+-                        if (@as(i32, @intCast(self.getAgentIndex(ag))) > @as(i32, @intCast(nei_idx))) {
+-                            diff[0] = -ag.dvel[2];
+-                            diff[2] = ag.dvel[0];
++        // Handle collisions (simplified - 4 iterations)
++        {
++            var _z = tracy.zone(@src(), "crowd_collision_resolve");
++            defer _z.end();
++            const COLLISION_RESOLVE_FACTOR: f32 = 0.7;
++            var iter: usize = 0;
++            while (iter < 4) : (iter += 1) {
++                for (agents) |ag| {
++                    if (ag.state != .walking) continue;
++
++                    ag.disp = [3]f32{ 0, 0, 0 };
++                    var w: f32 = 0;
++
++                    for (0..ag.nneis) |j| {
++                        const nei_idx: usize = @intCast(ag.neis[j].idx);
++                        const nei = &self.agents[nei_idx];
++
++                        var diff = [3]f32{ 0, 0, 0 };
++                        math.vsub(&diff, &ag.npos, &nei.npos);
++                        diff[1] = 0;
++
++                        var dist = math.vlenSqr(&diff);
++                        if (dist > (ag.params.radius + nei.params.radius) * (ag.params.radius + nei.params.radius)) {
++                            continue;
++                        }
++                        dist = @sqrt(dist);
++                        var pen = (ag.params.radius + nei.params.radius) - dist;
++
++                        if (dist < 0.0001) {
++                            // Agents on top of each other (idx0 -> глобальный индекс, как nei_idx)
++                            if (@as(i32, @intCast(self.getAgentIndex(ag))) > @as(i32, @intCast(nei_idx))) {
++                                diff[0] = -ag.dvel[2];
++                                diff[2] = ag.dvel[0];
++                            } else {
++                                diff[0] = ag.dvel[2];
++                                diff[2] = -ag.dvel[0];
++                            }
++                            pen = 0.01;
+                         } else {
+-                            diff[0] = ag.dvel[2];
+-                            diff[2] = -ag.dvel[0];
++                            pen = (1.0 / dist) * (pen * 0.5) * COLLISION_RESOLVE_FACTOR;
+                         }
+-                        pen = 0.01;
+-                    } else {
+-                        pen = (1.0 / dist) * (pen * 0.5) * COLLISION_RESOLVE_FACTOR;
++
++                        math.vmad(&ag.disp, &ag.disp, &diff, pen);
++                        w += 1.0;
+                     }
+ 
+-                    math.vmad(&ag.disp, &ag.disp, &diff, pen);
+-                    w += 1.0;
++                    if (w > 0.0001) {
++                        math.vscale(&ag.disp, &ag.disp, 1.0 / w);
++                    }
+                 }
+ 
+-                if (w > 0.0001) {
+-                    math.vscale(&ag.disp, &ag.disp, 1.0 / w);
++                for (agents) |ag| {
++                    if (ag.state != .walking) continue;
++                    math.vadd(&ag.npos, &ag.npos, &ag.disp);
+                 }
+             }
+-
+-            for (agents) |ag| {
+-                if (ag.state != .walking) continue;
+-                math.vadd(&ag.npos, &ag.npos, &ag.disp);
+-            }
+         }
+ 
+         // Move agents along navmesh
+-        for (agents) |ag| {
+-            if (ag.state != .walking) continue;
++        {
++            var _z = tracy.zone(@src(), "crowd_move_position");
++            defer _z.end();
++            for (agents) |ag| {
++                if (ag.state != .walking) continue;
+ 
+-            _ = try ag.corridor.movePosition(
+-                &ag.npos,
+-                self.navquery,
+-                &self.filters[ag.params.query_filter_type],
+-                self.allocator,
+-            );
+-            math.vcopy(&ag.npos, ag.corridor.getPos());
++                _ = try ag.corridor.movePosition(
++                    &ag.npos,
++                    self.navquery,
++                    &self.filters[ag.params.query_filter_type],
++                    self.allocator,
++                );
++                math.vcopy(&ag.npos, ag.corridor.getPos());
+ 
+-            // Truncate corridor if not using path
+-            if (ag.target_state == .target_none or ag.target_state == .target_velocity) {
+-                ag.corridor.reset(ag.corridor.getFirstPoly(), &ag.npos);
+-                ag.partial = false;
++                // Truncate corridor if not using path
++                if (ag.target_state == .target_none or ag.target_state == .target_velocity) {
++                    ag.corridor.reset(ag.corridor.getFirstPoly(), &ag.npos);
++                    ag.partial = false;
++                }
+             }
+         }
+ 
+@@ -1083,31 +1116,29 @@ pub const Crowd = struct {
+         nqueue: usize,
+         max_agents: usize,
+     ) usize {
+-        if (nqueue >= max_agents) return nqueue;
+-
+-        // Insert based on greatest time
+-        var slot: usize = nqueue;
+-
+-        if (nqueue > 0) {
+-            // Find insertion point
++        var slot: usize = 0;
++        if (nqueue == 0) {
++            slot = nqueue;
++        } else if (newag.target_replan_time <= queue[nqueue - 1].target_replan_time) {
++            if (nqueue >= max_agents) return nqueue;
++            slot = nqueue;
++        } else {
+             for (0..nqueue) |i| {
+-                if (newag.target_replan_time > queue[i].target_replan_time) {
++                if (newag.target_replan_time >= queue[i].target_replan_time) {
+                     slot = i;
+                     break;
+                 }
+             }
+ 
+-            // Shift elements to make room if not inserting at end
+-            if (slot < nqueue) {
+-                var j = nqueue;
+-                while (j > slot) : (j -= 1) {
+-                    queue[j] = queue[j - 1];
+-                }
++            const tgt = slot + 1;
++            const n = @min(nqueue - slot, max_agents - tgt);
++            if (n > 0) {
++                std.mem.copyBackwards(*CrowdAgent, queue[tgt .. tgt + n], queue[slot .. slot + n]);
+             }
+         }
+ 
+         queue[slot] = newag;
+-        return nqueue + 1;
++        return @min(nqueue + 1, max_agents);
+     }
+ 
+     /// Add agent to optimization queue sorted by topology opt time (oldest first)
+@@ -1117,44 +1148,41 @@ pub const Crowd = struct {
+         nqueue: usize,
+         max_agents: usize,
+     ) usize {
+-        if (nqueue >= max_agents) return nqueue;
+-
+-        // Insert based on greatest time
+-        var slot: usize = nqueue;
+-
+-        if (nqueue > 0) {
+-            // Find insertion point
++        var slot: usize = 0;
++        if (nqueue == 0) {
++            slot = nqueue;
++        } else if (newag.topology_opt_time <= queue[nqueue - 1].topology_opt_time) {
++            if (nqueue >= max_agents) return nqueue;
++            slot = nqueue;
++        } else {
+             for (0..nqueue) |i| {
+-                if (newag.topology_opt_time > queue[i].topology_opt_time) {
++                if (newag.topology_opt_time >= queue[i].topology_opt_time) {
+                     slot = i;
+                     break;
+                 }
+             }
+ 
+-            // Shift elements to make room if not inserting at end
+-            if (slot < nqueue) {
+-                var j = nqueue;
+-                while (j > slot) : (j -= 1) {
+-                    queue[j] = queue[j - 1];
+-                }
++            const tgt = slot + 1;
++            const n = @min(nqueue - slot, max_agents - tgt);
++            if (n > 0) {
++                std.mem.copyBackwards(*CrowdAgent, queue[tgt .. tgt + n], queue[slot .. slot + n]);
+             }
+         }
+ 
+         queue[slot] = newag;
+-        return nqueue + 1;
++        return @min(nqueue + 1, max_agents);
+     }
+ 
+     /// Request move target with replan flag
+     fn requestMoveTargetReplan(self: *Self, idx: i32, ref: PolyRef, pos: *const [3]f32) bool {
+         if (idx < 0 or idx >= self.max_agents) return false;
+-        if (ref == 0) return false;
+ 
+         var ag = &self.agents[@intCast(idx)];
+         ag.target_ref = ref;
+         math.vcopy(&ag.target_pos, pos);
+         ag.target_pathq_ref = INVALID_QUEUE_REF;
+         ag.target_replan = true;
+-        ag.target_state = .target_requesting;
++        ag.target_state = if (ag.target_ref != 0) .target_requesting else .target_failed;
+ 
+         return true;
+     }
+@@ -1165,6 +1193,8 @@ pub const Crowd = struct {
+ 
+     /// Check path validity and recover invalid paths
+     fn checkPathValidity(self: *Self, agents: []*CrowdAgent, dt: f32) !void {
++        var _z = tracy.zone(@src(), "crowd_check_path_validity");
++        defer _z.end();
+         const CHECK_LOOKAHEAD: usize = 10;
+         const TARGET_REPLAN_DELAY: f32 = 1.0; // seconds
+ 
+@@ -1268,6 +1298,8 @@ pub const Crowd = struct {
+     /// (target_waiting_for_queue -> _for_path), polled, then merged with the
+     /// existing corridor (trackback removal) before setCorridor.
+     fn updateMoveRequest(self: *Self, _: f32) void {
++        var _z = tracy.zone(@src(), "crowd_update_move_request");
++        defer _z.end();
+         const PATH_MAX_AGENTS = 8;
+         const MAX_ITERS_PER_UPDATE = 100;
+         var queue: [PATH_MAX_AGENTS]*CrowdAgent = undefined;
+@@ -1354,7 +1386,11 @@ pub const Crowd = struct {
+         }
+ 
+         // Update requests.
+-        self.path_queue.update(MAX_ITERS_PER_UPDATE);
++        {
++            var _zq = tracy.zone(@src(), "crowd_path_queue_update");
++            defer _zq.end();
++            self.path_queue.update(MAX_ITERS_PER_UPDATE);
++        }
+ 
+         // Process path results.
+         for (self.agents) |*ag| {
+@@ -1436,6 +1472,8 @@ pub const Crowd = struct {
+ 
+     /// Optimize path topology for agents
+     fn updateTopologyOptimization(self: *Self, agents: []*CrowdAgent, dt: f32) void {
++        var _z = tracy.zone(@src(), "crowd_topology_opt");
++        defer _z.end();
+         const OPT_TIME_THR: f32 = 0.5; // seconds
+         const OPT_MAX_AGENTS: usize = 1;
+ 
+diff --git a/src/detour_crowd/obstacle_avoidance.zig b/src/detour_crowd/obstacle_avoidance.zig
+index 3883047..e617f19 100644
+--- a/src/detour_crowd/obstacle_avoidance.zig
++++ b/src/detour_crowd/obstacle_avoidance.zig
+@@ -106,7 +106,8 @@ pub const ObstacleAvoidanceDebugData = struct {
+     }
+ };
+ 
+-fn normalizeArray(arr: []f32, n: usize) void {
++/// (pub for micro-bench; behaviour unchanged.)
++pub fn normalizeArray(arr: []f32, n: usize) void {
+     var min_pen: f32 = std.math.floatMax(f32);
+     var max_pen: f32 = -std.math.floatMax(f32);
+     for (0..n) |i| {
+@@ -169,7 +170,8 @@ fn isectRaySeg(
+ }
+ 
+ /// Helper: Normalize 2D vector (ignoring y)
+-fn normalize2D(v: *[3]f32) void {
++/// (pub for micro-bench; behaviour unchanged.)
++pub fn normalize2D(v: *[3]f32) void {
+     var d = @sqrt(v[0] * v[0] + v[2] * v[2]);
+     if (d == 0) return;
+     d = 1.0 / d;
+diff --git a/src/detour_crowd/path_corridor.zig b/src/detour_crowd/path_corridor.zig
+index fcb3e56..5d18732 100644
+--- a/src/detour_crowd/path_corridor.zig
++++ b/src/detour_crowd/path_corridor.zig
+@@ -98,27 +98,15 @@ pub const PathCorridor = struct {
+         max_corners: usize,
+         navquery: *const NavMeshQuery,
+         filter: *const QueryFilter,
+-        allocator: std.mem.Allocator,
++        _: std.mem.Allocator,
+     ) !usize {
+         const MIN_TARGET_DIST: f32 = 0.01;
+ 
+         var n_corners: usize = 0;
+ 
+-        // Get straight path
+-        const straight_path = try allocator.alloc(f32, max_corners * 3);
+-        defer allocator.free(straight_path);
+-
+-        var straight_path_flags_buf: ?[]u8 = null;
+-        if (corner_flags != null) {
+-            straight_path_flags_buf = try allocator.alloc(u8, max_corners);
+-        }
+-        defer if (straight_path_flags_buf != null) allocator.free(straight_path_flags_buf.?);
+-
+-        var straight_path_refs_buf: ?[]PolyRef = null;
+-        if (corner_polys != null) {
+-            straight_path_refs_buf = try allocator.alloc(PolyRef, max_corners);
+-        }
+-        defer if (straight_path_refs_buf != null) allocator.free(straight_path_refs_buf.?);
++        const straight_path = corner_verts[0 .. max_corners * 3];
++        const straight_path_flags = if (corner_flags) |flags| flags[0..max_corners] else null;
++        const straight_path_refs = if (corner_polys) |polys| polys[0..max_corners] else null;
+ 
+         var straight_path_count: usize = 0;
+         _ = try navquery.findStraightPath(
+@@ -126,34 +114,15 @@ pub const PathCorridor = struct {
+             &self.target,
+             self.path[0..self.npath],
+             straight_path,
+-            straight_path_flags_buf,
+-            straight_path_refs_buf,
++            straight_path_flags,
++            straight_path_refs,
+             &straight_path_count,
+             0,
+         );
+         _ = filter; // Not used here, but kept for API compatibility
+ 
+-        // Copy corners
+         n_corners = @min(straight_path_count, max_corners);
+ 
+-        for (0..n_corners) |i| {
+-            corner_verts[i * 3 + 0] = straight_path[i * 3 + 0];
+-            corner_verts[i * 3 + 1] = straight_path[i * 3 + 1];
+-            corner_verts[i * 3 + 2] = straight_path[i * 3 + 2];
+-
+-            if (corner_flags) |flags| {
+-                if (straight_path_flags_buf) |sp_flags| {
+-                    flags[i] = sp_flags[i];
+-                }
+-            }
+-
+-            if (corner_polys) |polys| {
+-                if (straight_path_refs_buf) |sp_refs| {
+-                    polys[i] = sp_refs[i];
+-                }
+-            }
+-        }
+-
+         // Prune points in the beginning of the path which are too close.
+         // 1-в-1 dtPathCorridor::findCorners (DetourPathCorridor.cpp:264-277): also
+         // stop pruning at the first off-mesh-connection corner so the trigger sees it.
+@@ -222,13 +191,13 @@ pub const PathCorridor = struct {
+         npos: *const [3]f32,
+         navquery: *const NavMeshQuery,
+         filter: *const QueryFilter,
+-        allocator: std.mem.Allocator,
++        _: std.mem.Allocator,
+     ) !bool {
+         const MAX_VISITED = 16;
+ 
+         var result = [3]f32{ 0, 0, 0 };
+-        var visited = try allocator.alloc(PolyRef, MAX_VISITED);
+-        defer allocator.free(visited);
++        var visited_buf: [MAX_VISITED]PolyRef = undefined;
++        const visited = visited_buf[0..];
+         var nvisited: usize = 0;
+ 
+         const status = try navquery.moveAlongSurface(
+@@ -264,13 +233,13 @@ pub const PathCorridor = struct {
+         npos: *const [3]f32,
+         navquery: *const NavMeshQuery,
+         filter: *const QueryFilter,
+-        allocator: std.mem.Allocator,
++        _: std.mem.Allocator,
+     ) !bool {
+         const MAX_VISITED = 16;
+ 
+         var result = [3]f32{ 0, 0, 0 };
+-        var visited = try allocator.alloc(PolyRef, MAX_VISITED);
+-        defer allocator.free(visited);
++        var visited_buf: [MAX_VISITED]PolyRef = undefined;
++        const visited = visited_buf[0..];
+         var nvisited: usize = 0;
+ 
+         const status = try navquery.moveAlongSurface(
+@@ -301,7 +270,7 @@ pub const PathCorridor = struct {
+         path_optimization_range: f32,
+         navquery: *const NavMeshQuery,
+         filter: *const QueryFilter,
+-        allocator: std.mem.Allocator,
++        _: std.mem.Allocator,
+     ) !void {
+         // Clamp the ray to max distance
+         var goal = [3]f32{ next[0], next[1], next[2] };
+@@ -321,8 +290,8 @@ pub const PathCorridor = struct {
+         math.vmad(&goal, &self.pos, &delta, path_optimization_range / dist);
+ 
+         const MAX_RES = 32;
+-        const res = try allocator.alloc(PolyRef, MAX_RES);
+-        defer allocator.free(res);
++        var res_buf: [MAX_RES]PolyRef = undefined;
++        const res = res_buf[0..];
+ 
+         const query_mod = @import("../detour/query.zig");
+         var hit = query_mod.RaycastHit.init(res);
+@@ -349,15 +318,15 @@ pub const PathCorridor = struct {
+         self: *Self,
+         navquery: *NavMeshQuery,
+         filter: *const QueryFilter,
+-        allocator: std.mem.Allocator,
++        _: std.mem.Allocator,
+     ) !bool {
+         if (self.npath < 3) return false;
+ 
+         const MAX_ITER: u32 = 32;
+         const MAX_RES: usize = 32;
+ 
+-        var res = try allocator.alloc(PolyRef, MAX_RES);
+-        defer allocator.free(res);
++        var res_buf: [MAX_RES]PolyRef = undefined;
++        const res = res_buf[0..];
+ 
+         // Init sliced pathfinding from start to end of corridor
+         var status = navquery.initSlicedFindPath(
+diff --git a/src/detour_crowd/proximity_grid.zig b/src/detour_crowd/proximity_grid.zig
+index ab1702a..3928122 100644
+--- a/src/detour_crowd/proximity_grid.zig
++++ b/src/detour_crowd/proximity_grid.zig
+@@ -18,6 +18,8 @@ pub const ProximityGrid = struct {
+     pool_size: usize,
+     buckets: []u16,
+     buckets_size: usize,
++    touched_buckets: []usize,
++    touched_count: usize,
+     bounds: [4]i32,
+     allocator: std.mem.Allocator,
+ 
+@@ -37,6 +39,9 @@ pub const ProximityGrid = struct {
+         const pool = try allocator.alloc(Item, pool_size);
+         errdefer allocator.free(pool);
+ 
++        const touched_buckets = try allocator.alloc(usize, buckets_size);
++        errdefer allocator.free(touched_buckets);
++
+         var grid = Self{
+             .cell_size = cell_size,
+             .inv_cell_size = 1.0 / cell_size,
+@@ -45,23 +50,34 @@ pub const ProximityGrid = struct {
+             .pool_size = pool_size,
+             .buckets = buckets,
+             .buckets_size = buckets_size,
++            .touched_buckets = touched_buckets,
++            .touched_count = 0,
+             .bounds = [4]i32{ 0, 0, 0, 0 },
+             .allocator = allocator,
+         };
+ 
++        @memset(grid.buckets, INVALID_ID);
+         grid.clear();
+         return grid;
+     }
+ 
+     /// Free proximity grid resources
+     pub fn deinit(self: *Self) void {
++        self.allocator.free(self.touched_buckets);
+         self.allocator.free(self.buckets);
+         self.allocator.free(self.pool);
+     }
+ 
+     /// Clear the grid
+     pub fn clear(self: *Self) void {
+-        @memset(self.buckets, INVALID_ID);
++        if (self.touched_count > self.buckets_size / 2) {
++            @memset(self.buckets, INVALID_ID);
++        } else {
++            for (self.touched_buckets[0..self.touched_count]) |h| {
++                self.buckets[h] = INVALID_ID;
++            }
++        }
++        self.touched_count = 0;
+         self.pool_head = 0;
+         self.bounds[0] = 0xffff;
+         self.bounds[1] = 0xffff;
+@@ -94,6 +110,10 @@ pub const ProximityGrid = struct {
+                     self.pool[idx].y = @intCast(y);
+                     self.pool[idx].id = id;
+                     self.pool[idx].next = self.buckets[h];
++                    if (self.buckets[h] == INVALID_ID) {
++                        self.touched_buckets[self.touched_count] = h;
++                        self.touched_count += 1;
++                    }
+                     self.buckets[h] = idx;
+                 }
+             }
+@@ -186,7 +206,7 @@ inline fn hashPos2(x: i32, y: i32, n: i32) usize {
+     const ux: u32 = @bitCast(x);
+     const uy: u32 = @bitCast(y);
+     const un: u32 = @bitCast(n);
+-    return @intCast((ux *% 73856093) ^ (uy *% 19349663) & (un - 1));
++    return @intCast(((ux *% 73856093) ^ (uy *% 19349663)) & (un - 1));
+ }
+ 
+ test "ProximityGrid basic" {
+diff --git a/src/detour_tilecache/builder.zig b/src/detour_tilecache/builder.zig
+index a6a9d83..3a7c3d7 100644
+--- a/src/detour_tilecache/builder.zig
++++ b/src/detour_tilecache/builder.zig
+@@ -1,6 +1,7 @@
+ const std = @import("std");
+ const math = @import("../math.zig");
+ const common = @import("../detour/common.zig");
++const tracy = @import("../tracy.zig");
+ 
+ // Constants
+ pub const TILECACHE_MAGIC: i32 = ('D' << 24) | ('T' << 16) | ('L' << 8) | 'R';
+@@ -84,17 +85,15 @@ pub fn tileCacheHeaderSwapEndian(data: []u8) bool {
+ pub const TileCacheLayer = struct {
+     header: *TileCacheLayerHeader,
+     reg_count: u8, // Region count
++    storage_words: []u64, // Owns header/heights/areas/cons/regs backing storage
++    data: []u8, // heights/areas/cons/regs byte view into storage_words
+     heights: []u8, // Height values
+     areas: []u8, // Area IDs
+     cons: []u8, // Connectivity
+     regs: []u8, // Region IDs
+ 
+     pub fn deinit(self: *TileCacheLayer, allocator: std.mem.Allocator) void {
+-        allocator.destroy(self.header);
+-        allocator.free(self.heights);
+-        allocator.free(self.areas);
+-        allocator.free(self.cons);
+-        allocator.free(self.regs);
++        allocator.free(self.storage_words);
+     }
+ };
+ 
+@@ -294,6 +293,8 @@ pub fn buildTileCacheRegions(
+     layer: *TileCacheLayer,
+     walkable_climb: i32,
+ ) !common.Status {
++    var _z = tracy.zone(@src(), "dtBuildTileCacheRegions");
++    defer _z.end();
+     const w = @as(usize, layer.header.width);
+     const h = @as(usize, layer.header.height);
+ 
+@@ -507,65 +508,66 @@ pub fn decompressTileCacheLayer(
+     comp: *TileCacheCompressor,
+     compressed: []const u8,
+ ) !*TileCacheLayer {
++    var _z = tracy.zone(@src(), "dtDecompressTileCacheLayer");
++    defer _z.end();
+     // Read header
+     if (compressed.len < @sizeOf(TileCacheLayerHeader)) {
+         return error.InvalidData;
+     }
+ 
+-    const header = try allocator.create(TileCacheLayerHeader);
+-    errdefer allocator.destroy(header);
+-
+     // Copy header from compressed data
+     const header_bytes = compressed[0..@sizeOf(TileCacheLayerHeader)];
+-    @memcpy(std.mem.asBytes(header), header_bytes);
++    var header_value: TileCacheLayerHeader = undefined;
++    @memcpy(std.mem.asBytes(&header_value), header_bytes);
+ 
+     // Validate header
+-    if (header.magic != TILECACHE_MAGIC) {
++    if (header_value.magic != TILECACHE_MAGIC) {
+         return error.WrongMagic;
+     }
+-    if (header.version != TILECACHE_VERSION) {
++    if (header_value.version != TILECACHE_VERSION) {
+         return error.WrongVersion;
+     }
+ 
+-    const w = @as(usize, header.width);
+-    const h = @as(usize, header.height);
++    const w = @as(usize, header_value.width);
++    const h = @as(usize, header_value.height);
+     const grid_size = w * h;
+ 
+-    // Allocate layer data
+-    const heights = try allocator.alloc(u8, grid_size);
+-    errdefer allocator.free(heights);
+-
+-    const areas = try allocator.alloc(u8, grid_size);
+-    errdefer allocator.free(areas);
+-
+-    const cons = try allocator.alloc(u8, grid_size);
+-    errdefer allocator.free(cons);
+-
+-    const regs = try allocator.alloc(u8, grid_size);
+-    errdefer allocator.free(regs);
++    // Allocate one aligned backing store for header and all layer arrays. The
++    // compressed payload stores heights/areas/cons; regs are computed later.
++    const header_size = @sizeOf(TileCacheLayerHeader);
++    const data_size = grid_size * 4;
++    const storage_size = header_size + data_size;
++    const word_count = (storage_size + @sizeOf(u64) - 1) / @sizeOf(u64);
++    const storage_words = try allocator.alloc(u64, word_count);
++    errdefer allocator.free(storage_words);
++
++    const storage_bytes = std.mem.sliceAsBytes(storage_words)[0..storage_size];
++    @memcpy(storage_bytes[0..header_size], header_bytes);
++    const header: *TileCacheLayerHeader = @ptrCast(@alignCast(storage_bytes.ptr));
++
++    const data = storage_bytes[header_size..storage_size];
++    const heights = data[0..grid_size];
++    const areas = data[grid_size .. 2 * grid_size];
++    const cons = data[2 * grid_size .. 3 * grid_size];
++    const regs = data[3 * grid_size .. 4 * grid_size];
+ 
+     // Decompress data
+     const comp_data = compressed[@sizeOf(TileCacheLayerHeader)..];
+-    const buffer_size = grid_size * 4; // heights + areas + cons + regs
+-    var decomp_buffer = try allocator.alloc(u8, buffer_size);
+-    defer allocator.free(decomp_buffer);
++    const buffer_size = grid_size * 3; // heights + areas + cons
+ 
+     var decomp_size: usize = 0;
+-    const status = comp.decompress(comp_data, decomp_buffer, &decomp_size);
++    const status = comp.decompress(comp_data, data[0..buffer_size], &decomp_size);
+     if (!status.success) {
+         return error.DecompressionFailed;
+     }
+ 
+-    // Copy decompressed data
+-    @memcpy(heights, decomp_buffer[0..grid_size]);
+-    @memcpy(areas, decomp_buffer[grid_size .. 2 * grid_size]);
+-    @memcpy(cons, decomp_buffer[2 * grid_size .. 3 * grid_size]);
+-    @memset(regs, 0xff); // Regions are computed, not stored
+-
+     const layer = try allocator.create(TileCacheLayer);
++    errdefer allocator.destroy(layer);
+     layer.* = TileCacheLayer{
+         .header = header,
+         .reg_count = 0,
++        .storage_words = storage_words,
++        .data = data,
+         .heights = heights,
+         .areas = areas,
+         .cons = cons,
+@@ -1175,6 +1177,8 @@ pub fn buildTileCacheContours(
+     walkable_climb: i32,
+     max_error: f32,
+ ) !TileCacheContourSet {
++    var _z = tracy.zone(@src(), "dtBuildTileCacheContours");
++    defer _z.end();
+     const w = @as(usize, layer.header.width);
+     const h = @as(usize, layer.header.height);
+ 
+@@ -1269,7 +1273,7 @@ pub fn buildTileCacheContours(
+ // Poly Mesh Building - Vertex Deduplication
+ // ============================================================================
+ 
+-const VERTEX_BUCKET_COUNT2 = 1 << 12;
++const VERTEX_BUCKET_COUNT2 = 1 << 8;
+ 
+ fn computeVertexHash2(x: u16, z: u16) u32 {
+     const h1: u32 = 0x8da6b343; // Large multiplicative constants
+@@ -1619,10 +1623,8 @@ fn mergePolys(pa: []u16, pb: []u16, ea: i32, eb: i32) void {
+     const na = countPolyVerts(pa);
+     const nb = countPolyVerts(pb);
+ 
+-    // Merge polygons. Sentinel TILECACHE_NULL_IDX = 0xffff per u16 element.
+-    // (Zig @memset writes the value per-element, not per-byte like C++ memset,
+-    //  so the fill value is 0xffff, not 0xff.)
+-    @memset(&tmp, 0xffff);
++    // Merge polygons
++    @memset(&tmp, 0xffff); // u16 NULL_IDX padding (C++ byte-memsets unsigned short -> 0xffff)
+     var n: usize = 0;
+     // Add pa
+     var i: i32 = 0;
+@@ -1802,8 +1804,8 @@ fn removeVertex(
+             }
+             // Remove the polygon
+             const p2 = mesh.polys[@as(usize, @intCast(mesh.npolys - 1)) * MAX_VERTS_PER_POLY * 2 ..];
+-            if (p.ptr != p2.ptr) @memcpy(p[0..MAX_VERTS_PER_POLY], p2[0..MAX_VERTS_PER_POLY]); // p==p2 when removing the LAST poly (aliasing) -> skip
+-            @memset(p[MAX_VERTS_PER_POLY .. MAX_VERTS_PER_POLY * 2], 0xffff); // u16 sentinel
++            if (p.ptr != p2.ptr) @memcpy(p[0..MAX_VERTS_PER_POLY], p2[0..MAX_VERTS_PER_POLY]); // p == p2 when removing the LAST poly (aliasing) -> skip
++            @memset(p[MAX_VERTS_PER_POLY .. MAX_VERTS_PER_POLY * 2], 0xffff); // u16 NULL_IDX (C++ byte-memset unsigned short)
+             mesh.areas[@intCast(i)] = mesh.areas[@intCast(mesh.npolys - 1)];
+             mesh.npolys -= 1;
+             i -= 1;
+@@ -1922,7 +1924,7 @@ fn removeVertex(
+ 
+     // Build initial polygons
+     var npolys: i32 = 0;
+-    @memset(&polys, 0xffff); // u16 sentinel TILECACHE_NULL_IDX
++    @memset(&polys, 0xffff); // u16 NULL_IDX padding (C++ byte-memsets unsigned short -> 0xffff)
+     var j: i32 = 0;
+     while (j < ntris) : (j += 1) {
+         const t = tris[@as(usize, @intCast(j)) * 3 ..];
+@@ -1984,8 +1986,8 @@ fn removeVertex(
+                     best_ea,
+                     best_eb,
+                 );
+-                const last = polys[@as(usize, @intCast(npolys - 1)) * MAX_VERTS_PER_POLY ..][0..MAX_VERTS_PER_POLY];
+-                if (pb.ptr != last.ptr) @memcpy(pb[0..MAX_VERTS_PER_POLY], last); // alias when best_pb == npolys-1
++                const last_p = polys[@as(usize, @intCast(npolys - 1)) * MAX_VERTS_PER_POLY ..][0..MAX_VERTS_PER_POLY];
++                if (pb.ptr != last_p.ptr) @memcpy(pb[0..MAX_VERTS_PER_POLY], last_p); // alias when best_pb == npolys-1
+                 pareas[@intCast(best_pb)] = pareas[@intCast(npolys - 1)];
+                 npolys -= 1;
+             } else {
+@@ -2000,7 +2002,7 @@ fn removeVertex(
+     while (i < npolys) : (i += 1) {
+         if (mesh.npolys >= max_tris) break;
+         const p = mesh.polys[@as(usize, @intCast(mesh.npolys)) * MAX_VERTS_PER_POLY * 2 ..];
+-        @memset(p[0 .. MAX_VERTS_PER_POLY * 2], 0xffff); // u16 sentinel
++        @memset(p[0 .. MAX_VERTS_PER_POLY * 2], 0xffff); // u16 NULL_IDX (C++ byte-memset unsigned short)
+         j = 0;
+         while (j < MAX_VERTS_PER_POLY) : (j += 1) {
+             p[@intCast(j)] = polys[@as(usize, @intCast(i)) * MAX_VERTS_PER_POLY + @as(usize, @intCast(j))];
+@@ -2241,6 +2243,8 @@ pub fn buildTileCachePolyMesh(
+     lcset: *const TileCacheContourSet,
+     mesh: *TileCachePolyMesh,
+ ) !Status {
++    var _z = tracy.zone(@src(), "dtBuildTileCachePolyMesh");
++    defer _z.end();
+     var max_vertices: i32 = 0;
+     var max_tris: i32 = 0;
+     var max_verts_per_cont: i32 = 0;
+@@ -2255,10 +2259,6 @@ pub fn buildTileCachePolyMesh(
+ 
+     mesh.nvp = MAX_VERTS_PER_POLY;
+ 
+-    const vflags = try allocator.alloc(u8, @intCast(max_vertices));
+-    defer allocator.free(vflags);
+-    @memset(vflags, 0);
+-
+     mesh.verts = try allocator.alloc(u16, @as(usize, @intCast(max_vertices)) * 3);
+     mesh.polys = try allocator.alloc(u16, @as(usize, @intCast(max_tris)) * MAX_VERTS_PER_POLY * 2);
+     mesh.areas = try allocator.alloc(u8, @intCast(max_tris));
+@@ -2271,9 +2271,7 @@ pub fn buildTileCachePolyMesh(
+     mesh.npolys = 0;
+ 
+     @memset(mesh.verts, 0);
+-    // u16 null-index sentinel = 0xffff (TILECACHE_NULL_IDX). C++ does a byte memset
+-    // 0xff over `sizeof(unsigned short)*...`; Zig @memset is per-element, so 0xffff.
+-    @memset(mesh.polys, 0xffff);
++    @memset(mesh.polys, 0xffff); // u16 NULL_IDX padding (C++ byte-memsets unsigned short -> 0xffff)
+     @memset(mesh.areas, 0);
+ 
+     var first_vert: [VERTEX_BUCKET_COUNT2]u16 = undefined;
+@@ -2281,19 +2279,25 @@ pub fn buildTileCachePolyMesh(
+         v.* = TILECACHE_NULL_IDX;
+     }
+ 
+-    const next_vert = try allocator.alloc(u16, @intCast(max_vertices));
+-    defer allocator.free(next_vert);
++    const vflags_len: usize = @intCast(max_vertices);
++    const next_vert_len: usize = @intCast(max_vertices);
++    const indices_len: usize = @intCast(max_verts_per_cont);
++    const tris_len: usize = @as(usize, @intCast(max_verts_per_cont)) * 3;
++    const polys_len: usize = @as(usize, @intCast(max_verts_per_cont)) * MAX_VERTS_PER_POLY;
++    const scratch_len = vflags_len + next_vert_len + indices_len + tris_len + polys_len;
++    const scratch = try allocator.alloc(u16, scratch_len);
++    defer allocator.free(scratch);
++
++    const vflags = scratch[0..vflags_len];
++    const next_vert = scratch[vflags_len .. vflags_len + next_vert_len];
++    const indices_start = vflags_len + next_vert_len;
++    const indices = scratch[indices_start .. indices_start + indices_len];
++    const tris_start = indices_start + indices_len;
++    const tris = scratch[tris_start .. tris_start + tris_len];
++    const polys = scratch[tris_start + tris_len .. scratch_len];
++    @memset(vflags, 0);
+     @memset(next_vert, 0);
+ 
+-    const indices = try allocator.alloc(u16, @intCast(max_verts_per_cont));
+-    defer allocator.free(indices);
+-
+-    const tris = try allocator.alloc(u16, @as(usize, @intCast(max_verts_per_cont)) * 3);
+-    defer allocator.free(tris);
+-
+-    const polys = try allocator.alloc(u16, @as(usize, @intCast(max_verts_per_cont)) * MAX_VERTS_PER_POLY);
+-    defer allocator.free(polys);
+-
+     var nverts_i32: i32 = @intCast(mesh.nverts);
+ 
+     for (lcset.conts) |*cont| {
+@@ -2335,7 +2339,7 @@ pub fn buildTileCachePolyMesh(
+ 
+         // Build initial polygons
+         var npolys: i32 = 0;
+-        @memset(polys, 0xffff); // u16 sentinel TILECACHE_NULL_IDX
++        @memset(polys, 0xffff); // u16 NULL_IDX padding (C++ byte-memsets unsigned short -> 0xffff); countPolyVerts stops at 0xffff
+         j = 0;
+         while (j < ntris) : (j += 1) {
+             const t = tris[@as(usize, @intCast(j)) * 3 ..];
+@@ -2372,9 +2376,8 @@ pub fn buildTileCachePolyMesh(
+                         const v = getPolyMergeValue(
+                             @constCast(pj[0..MAX_VERTS_PER_POLY]),
+                             @constCast(pk[0..MAX_VERTS_PER_POLY]),
+-                            // Use the live vertex count: addVertex increments the
+-                            // local `nverts_i32`; `mesh.nverts` is only synced after
+-                            // the contour loop (below), so it is still 0 here.
++                            // nverts_i32 is the running vertex count; mesh.nverts stays 0 until
++                            // after the contour loop (using it gave an empty slice -> OOB).
+                             mesh.verts[0 .. @as(usize, @intCast(nverts_i32)) * 3],
+                             &ea,
+                             &eb,
+@@ -2399,13 +2402,8 @@ pub fn buildTileCachePolyMesh(
+                         best_ea,
+                         best_eb,
+                     );
+-                    // Overwrite pb with the last poly (unless pb already IS the last
+-                    // poly — a self-copy, which @memcpy rejects as aliasing). Matches
+-                    // the guarded copy in core rcBuildPolyMesh (src/recast/mesh.zig).
+-                    const last = polys[@as(usize, @intCast(npolys - 1)) * MAX_VERTS_PER_POLY ..][0..MAX_VERTS_PER_POLY];
+-                    if (pb.ptr != last.ptr) {
+-                        @memcpy(pb[0..MAX_VERTS_PER_POLY], last);
+-                    }
++                    const last_p = polys[@as(usize, @intCast(npolys - 1)) * MAX_VERTS_PER_POLY ..][0..MAX_VERTS_PER_POLY];
++                    if (pb.ptr != last_p.ptr) @memcpy(pb[0..MAX_VERTS_PER_POLY], last_p); // alias when best_pb == npolys-1
+                     npolys -= 1;
+                 } else {
+                     // Could not merge any polygons, stop
+diff --git a/src/detour_tilecache/tilecache.zig b/src/detour_tilecache/tilecache.zig
+index 6034185..7372ade 100644
+--- a/src/detour_tilecache/tilecache.zig
++++ b/src/detour_tilecache/tilecache.zig
+@@ -7,6 +7,7 @@ const NavMeshCreateParams = @import("../detour/builder.zig").NavMeshCreateParams
+ const detour_builder = @import("../detour/builder.zig");
+ const Status = @import("../detour/common.zig").Status;
+ const builder_mod = @import("builder.zig");
++const tracy = @import("../tracy.zig");
+ 
+ pub const TileCacheLayerHeader = builder_mod.TileCacheLayerHeader;
+ pub const TileCacheLayer = builder_mod.TileCacheLayer;
+@@ -600,6 +601,8 @@ pub const TileCache = struct {
+         bmin: *const [3]f32,
+         bmax: *const [3]f32,
+     ) !ObstacleRef {
++        var _z = tracy.zone(@src(), "dtTileCacheAddBoxObstacle");
++        defer _z.end();
+         var ob = self.next_free_obstacle orelse return error.OutOfMemory;
+         self.next_free_obstacle = ob.next;
+         ob.next = null;
+@@ -675,6 +678,8 @@ pub const TileCache = struct {
+ 
+     /// Remove an obstacle
+     pub fn removeObstacle(self: *Self, ref: ObstacleRef) !void {
++        var _z = tracy.zone(@src(), "dtTileCacheRemoveObstacle");
++        defer _z.end();
+         if (ref == 0) return error.InvalidParam;
+ 
+         // Add to request queue
+@@ -797,6 +802,8 @@ pub const TileCache = struct {
+     // ============================================================================
+ 
+     pub fn update(self: *Self, dt: f32, navmesh: *NavMesh, up_to_date: ?*bool) !Status {
++        var _z = tracy.zone(@src(), "dtTileCacheUpdate");
++        defer _z.end();
+         _ = dt;
+ 
+         if (self.nupdate == 0) {
+@@ -935,6 +942,8 @@ pub const TileCache = struct {
+     }
+ 
+     pub fn buildNavMeshTile(self: *Self, ref: CompressedTileRef, navmesh: *NavMesh) !Status {
++        var _z = tracy.zone(@src(), "dtTileCacheBuildNavMeshTile");
++        defer _z.end();
+         const idx = self.decodeTileIdTile(ref);
+         if (idx > @as(u32, @intCast(self.params.max_tiles))) {
+             return Status{ .failure = true, .invalid_param = true };
+@@ -948,11 +957,14 @@ pub const TileCache = struct {
+         // Note: In the original C++ version, temp allocator is reset here
+         // For Zig, we rely on Arena allocator or defer cleanup
+ 
+-        // Decompress tile layer data. Pass the FULL buffer (`tile.data`, header at
+-        // offset 0 + compressed payload after it) — `decompressTileCacheLayer`
+-        // reads the header itself. `tile.compressed` is the header-stripped payload
+-        // and would make the decompressor read the header from the wrong offset.
+-        // Matches upstream `dtTileCache::buildNavMeshTile` passing `tile->data`.
++        // Decompress tile layer data. `decompressTileCacheLayer` reads the layer
++        // header from the FRONT of the slice it is given (it then decompresses the
++        // bytes that follow), so it must receive the full header-prefixed tile
++        // buffer (`tile.data`) — NOT `tile.compressed`, which already points PAST
++        // the header (data + align4(sizeof(header))). Passing the post-header slice
++        // made the header read land on compressed bytes → error.WrongMagic, so the
++        // per-tile region/contour/polymesh rebuild was never reached. Mirrors
++        // upstream dtTileCache::buildNavMeshTile, which passes tile->data.
+         const layer = builder_mod.decompressTileCacheLayer(
+             self.allocator,
+             self.comp.?,
+@@ -1089,11 +1101,8 @@ pub const TileCache = struct {
+             _ = try navmesh.removeTile(tile_ref);
+         }
+ 
+-        // Add new tile. DT_TILE_FREE_DATA: the navmesh owns `nav_data` and frees it
+-        // on removeTile/deinit, so the rebuild removeTile above releases the old
+-        // tile's data instead of leaking it. Matches upstream `dtTileCache::
+-        // buildNavMeshTile` (addTile with DT_TILE_FREE_DATA).
+-        const flags = common.TileFlags{ .free_data = true };
++        // Add new tile
++        const flags = common.TileFlags{}; // Default flags
+         _ = try navmesh.addTile(nav_data, flags, 0);
+ 
+         return Status{ .success = true };
+diff --git a/src/math.zig b/src/math.zig
+index 3d42774..48b81ce 100644
+--- a/src/math.zig
++++ b/src/math.zig
+@@ -443,28 +443,28 @@ pub fn vlerp(dest: *[3]f32, v1: *const [3]f32, v2: *const [3]f32, t: f32) void {
+ // Array-based vector operations (some functions already exist below, adding missing ones here)
+ 
+ /// Vector subtraction: dest = v1 - v2
+-pub fn vsub(dest: *[3]f32, v1: *const [3]f32, v2: *const [3]f32) void {
++pub inline fn vsub(dest: *[3]f32, v1: *const [3]f32, v2: *const [3]f32) void {
+     dest[0] = v1[0] - v2[0];
+     dest[1] = v1[1] - v2[1];
+     dest[2] = v1[2] - v2[2];
+ }
+ 
+ /// Vector addition: dest = v1 + v2
+-pub fn vadd(dest: *[3]f32, v1: *const [3]f32, v2: *const [3]f32) void {
++pub inline fn vadd(dest: *[3]f32, v1: *const [3]f32, v2: *const [3]f32) void {
+     dest[0] = v1[0] + v2[0];
+     dest[1] = v1[1] + v2[1];
+     dest[2] = v1[2] + v2[2];
+ }
+ 
+ /// Vector multiply-add: dest = v1 + v2 * s
+-pub fn vmad(dest: *[3]f32, v1: *const [3]f32, v2: *const [3]f32, s: f32) void {
++pub inline fn vmad(dest: *[3]f32, v1: *const [3]f32, v2: *const [3]f32, s: f32) void {
+     dest[0] = v1[0] + v2[0] * s;
+     dest[1] = v1[1] + v2[1] * s;
+     dest[2] = v1[2] + v2[2] * s;
+ }
+ 
+ /// Vector scale: dest = v * s
+-pub fn vscale(dest: *[3]f32, v: *const [3]f32, s: f32) void {
++pub inline fn vscale(dest: *[3]f32, v: *const [3]f32, s: f32) void {
+     dest[0] = v[0] * s;
+     dest[1] = v[1] * s;
+     dest[2] = v[2] * s;
+@@ -476,12 +476,12 @@ pub fn vdot(v1: *const [3]f32, v2: *const [3]f32) f32 {
+ }
+ 
+ /// Vector length squared
+-pub fn vlenSqr(v: *const [3]f32) f32 {
++pub inline fn vlenSqr(v: *const [3]f32) f32 {
+     return v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+ }
+ 
+ /// Vector length
+-pub fn vlen(v: *const [3]f32) f32 {
++pub inline fn vlen(v: *const [3]f32) f32 {
+     return @sqrt(vlenSqr(v));
+ }
+ 
+diff --git a/src/recast/area.zig b/src/recast/area.zig
+index 635c6eb..acabc9f 100644
+--- a/src/recast/area.zig
++++ b/src/recast/area.zig
+@@ -1,4 +1,5 @@
+ const std = @import("std");
++const tracy = @import("../tracy.zig");
+ const math = @import("../math.zig");
+ const heightfield_mod = @import("heightfield.zig");
+ const config = @import("config.zig");
+@@ -13,7 +14,8 @@ const NOT_CONNECTED = config.NOT_CONNECTED;
+ const EPSILON: f32 = 1e-6;
+ 
+ /// Sorts the given data in-place using insertion sort.
+-fn insertSort(data: []u8) void {
++/// (pub for micro-bench; behaviour unchanged.)
++pub fn insertSort(data: []u8) void {
+     for (1..data.len) |value_idx| {
+         const value = data[value_idx];
+         var insert_idx: isize = @intCast(value_idx - 1);
+@@ -29,7 +31,8 @@ fn insertSort(data: []u8) void {
+ }
+ 
+ /// Checks if a point is contained within a polygon (2D XZ plane)
+-fn pointInPoly(num_verts: usize, verts: []const f32, point: Vec3) bool {
++/// (pub for micro-bench; behaviour unchanged.)
++pub fn pointInPoly(num_verts: usize, verts: []const f32, point: Vec3) bool {
+     var in_poly = false;
+     var i: usize = 0;
+     var j: usize = num_verts - 1;
+@@ -61,7 +64,8 @@ fn pointInPoly(num_verts: usize, verts: []const f32, point: Vec3) bool {
+ }
+ 
+ /// Normalizes the vector if the length is greater than zero.
+-fn vsafeNormalize(v: *Vec3) void {
++/// (pub for micro-bench; behaviour unchanged.)
++pub fn vsafeNormalize(v: *Vec3) void {
+     const sq_mag = v.x * v.x + v.y * v.y + v.z * v.z;
+     if (sq_mag > EPSILON) {
+         const inv_mag = 1.0 / @sqrt(sq_mag);
+@@ -81,6 +85,8 @@ pub fn erodeWalkableArea(
+     chf: *CompactHeightfield,
+     allocator: std.mem.Allocator,
+ ) !void {
++    var _z = tracy.zone(@src(), "rcErodeWalkableArea");
++    defer _z.end();
+     _ = ctx; // TODO: timer
+     // const timer = ctx.startTimer(.erode_area);
+     // defer timer.stop();
+@@ -148,6 +154,8 @@ pub fn erodeWalkableArea(
+     // Pass 1 - forward sweep
+     z = 0;
+     while (z < z_size) : (z += 1) {
++        var _zs = tracy.zoneDeep(@src(), "rcErodeWalkableArea.sweep");
++        defer _zs.end();
+         var x: i32 = 0;
+         while (x < x_size) : (x += 1) {
+             const cell_idx = @as(usize, @intCast(x + z * z_stride));
+diff --git a/src/recast/compact.zig b/src/recast/compact.zig
+index 0d70661..032014d 100644
+--- a/src/recast/compact.zig
++++ b/src/recast/compact.zig
+@@ -1,4 +1,5 @@
+ const std = @import("std");
++const tracy = @import("../tracy.zig");
+ const math = @import("../math.zig");
+ const heightfield_mod = @import("heightfield.zig");
+ const config = @import("config.zig");
+@@ -56,6 +57,8 @@ pub fn buildCompactHeightfield(
+     heightfield: *const Heightfield,
+     compact_hf: *CompactHeightfield,
+ ) !void {
++    var _z = tracy.zone(@src(), "rcBuildCompactHeightfield");
++    defer _z.end();
+     // const timer = ctx.startTimer(.build_compact_heightfield);
+     // defer timer.stop();
+ 
+diff --git a/src/recast/contour.zig b/src/recast/contour.zig
+index b251195..7186a67 100644
+--- a/src/recast/contour.zig
++++ b/src/recast/contour.zig
+@@ -1,4 +1,5 @@
+ const std = @import("std");
++const tracy = @import("../tracy.zig");
+ const math = @import("../math.zig");
+ const heightfield_mod = @import("heightfield.zig");
+ const polymesh_mod = @import("polymesh.zig");
+@@ -497,7 +498,8 @@ fn removeDegenerateSegments(simplified: *std.array_list.Managed(i32)) void {
+ }
+ 
+ /// Calculates area of a 2D polygon (for winding detection)
+-fn calcAreaOfPolygon2D(verts: []const i32, nverts: usize) i32 {
++/// (pub for micro-bench; behaviour unchanged.)
++pub fn calcAreaOfPolygon2D(verts: []const i32, nverts: usize) i32 {
+     var area: i32 = 0;
+     var i: usize = 0;
+     var j: usize = nverts - 1;
+@@ -547,7 +549,8 @@ inline fn collinear(a: []const i32, b: []const i32, c: []const i32) bool {
+ }
+ 
+ /// Возвращает true если ab и cd пересекаются (proper intersection)
+-fn intersectProp(a: []const i32, b: []const i32, c: []const i32, d: []const i32) bool {
++/// (pub for micro-bench; behaviour unchanged.)
++pub fn intersectProp(a: []const i32, b: []const i32, c: []const i32, d: []const i32) bool {
+     // Исключаем improper cases
+     if (collinear(a, b, c) or collinear(a, b, d) or
+         collinear(c, d, a) or collinear(c, d, b))
+@@ -569,7 +572,8 @@ fn between(a: []const i32, b: []const i32, c: []const i32) bool {
+ }
+ 
+ /// Возвращает true если отрезки ab и cd пересекаются
+-fn intersect(a: []const i32, b: []const i32, c: []const i32, d: []const i32) bool {
++/// (pub for micro-bench; behaviour unchanged.)
++pub fn intersect(a: []const i32, b: []const i32, c: []const i32, d: []const i32) bool {
+     if (intersectProp(a, b, c, d))
+         return true
+     else if (between(a, b, c) or between(a, b, d) or
+@@ -580,7 +584,8 @@ fn intersect(a: []const i32, b: []const i32, c: []const i32, d: []const i32) boo
+ }
+ 
+ /// Проверяет пересекает ли отрезок d0-d1 контур
+-fn intersectSegContour(d0: []const i32, d1: []const i32, i: i32, n: i32, verts: []const i32) bool {
++/// (pub for micro-bench; behaviour unchanged.)
++pub fn intersectSegContour(d0: []const i32, d1: []const i32, i: i32, n: i32, verts: []const i32) bool {
+     // Для каждого ребра (k, k+1) контура P
+     var k: i32 = 0;
+     while (k < n) : (k += 1) {
+@@ -631,6 +636,8 @@ pub fn buildContours(
+     build_flags: i32,
+     allocator: std.mem.Allocator,
+ ) !void {
++    var _z = tracy.zone(@src(), "rcBuildContours");
++    defer _z.end();
+     const w = chf.width;
+     const h = chf.height;
+     const border_size = chf.border_size;
+@@ -747,7 +754,11 @@ pub fn buildContours(
+                 simplified.clearRetainingCapacity();
+ 
+                 try walkContour(x, y, i, chf, flags, &verts);
+-                try simplifyContour(&verts, &simplified, max_error, max_edge_len, build_flags, allocator);
++                {
++                    var _zs = tracy.zoneDeep(@src(), "rcBuildContours.simplify");
++                    defer _zs.end();
++                    try simplifyContour(&verts, &simplified, max_error, max_edge_len, build_flags, allocator);
++                }
+                 removeDegenerateSegments(&simplified);
+ 
+                 // Create contour if we have enough vertices
+diff --git a/src/recast/detail.zig b/src/recast/detail.zig
+index 01a16f9..2685024 100644
+--- a/src/recast/detail.zig
++++ b/src/recast/detail.zig
+@@ -1,5 +1,6 @@
+ // Detail mesh generation for Recast
+ const std = @import("std");
++const tracy = @import("../tracy.zig");
+ const config = @import("config.zig");
+ const context_mod = @import("../context.zig");
+ const heightfield = @import("heightfield.zig");
+@@ -99,7 +100,8 @@ fn circumCircle(
+ }
+ 
+ /// Distance from point to triangle with barycentric coordinates
+-fn distPtTri(p: [*]const f32, a: [*]const f32, b: [*]const f32, c: [*]const f32) f32 {
++/// (pub for micro-bench; behaviour unchanged.)
++pub fn distPtTri(p: [*]const f32, a: [*]const f32, b: [*]const f32, c: [*]const f32) f32 {
+     const v0 = [3]f32{ c[0] - a[0], c[1] - a[1], c[2] - a[2] };
+     const v1 = [3]f32{ b[0] - a[0], b[1] - a[1], b[2] - a[2] };
+     const v2 = [3]f32{ p[0] - a[0], p[1] - a[1], p[2] - a[2] };
+@@ -123,7 +125,8 @@ fn distPtTri(p: [*]const f32, a: [*]const f32, b: [*]const f32, c: [*]const f32)
+ }
+ 
+ /// Distance from point to line segment
+-fn distancePtSeg(x: f32, z: f32, px: f32, pz: f32, qx: f32, qz: f32) f32 {
++/// (pub for micro-bench; behaviour unchanged.)
++pub fn distancePtSeg(x: f32, z: f32, px: f32, pz: f32, qx: f32, qz: f32) f32 {
+     const pqx = qx - px;
+     const pqz = qz - pz;
+     const dx = x - px;
+@@ -139,7 +142,8 @@ fn distancePtSeg(x: f32, z: f32, px: f32, pz: f32, qx: f32, qz: f32) f32 {
+ }
+ 
+ /// Distance from point to line segment (3D, squared) - used for edge simplification
+-fn distancePtSeg3d(pt: [*]const f32, p: [*]const f32, q: [*]const f32) f32 {
++/// (pub for micro-bench; behaviour unchanged.)
++pub fn distancePtSeg3d(pt: [*]const f32, p: [*]const f32, q: [*]const f32) f32 {
+     const pqx = q[0] - p[0];
+     const pqy = q[1] - p[1];
+     const pqz = q[2] - p[2];
+@@ -162,7 +166,8 @@ fn distancePtSeg3d(pt: [*]const f32, p: [*]const f32, q: [*]const f32) f32 {
+ }
+ 
+ /// Distance from point to line segment (2D version with arrays)
+-fn distancePtSeg2d(pt: [*]const f32, p: [*]const f32, q: [*]const f32) f32 {
++/// (pub for micro-bench; behaviour unchanged.)
++pub fn distancePtSeg2d(pt: [*]const f32, p: [*]const f32, q: [*]const f32) f32 {
+     const pqx = q[0] - p[0];
+     const pqz = q[2] - p[2];
+     const dx = pt[0] - p[0];
+@@ -203,7 +208,8 @@ fn distToTriMesh(
+ }
+ 
+ /// Distance to polygon boundary
+-fn distToPoly(nin: i32, inv: [*]const f32, p: [*]const f32) f32 {
++/// (pub for micro-bench; behaviour unchanged.)
++pub fn distToPoly(nin: i32, inv: [*]const f32, p: [*]const f32) f32 {
+     var dmin = std.math.floatMax(f32);
+     var i: i32 = 0;
+     var j = nin - 1;
+@@ -412,7 +418,8 @@ fn updateLeftFace(e: []i32, s: i32, t: i32, f: i32) void {
+ }
+ 
+ /// Check if two 2D segments overlap
+-fn overlapSegSeg2d(a: [*]const f32, b: [*]const f32, c: [*]const f32, d: [*]const f32) bool {
++/// (pub for micro-bench; behaviour unchanged.)
++pub fn overlapSegSeg2d(a: [*]const f32, b: [*]const f32, c: [*]const f32, d: [*]const f32) bool {
+     const a1 = vcross2(a, b, d);
+     const a2 = vcross2(a, b, c);
+     if (a1 * a2 < 0.0) {
+@@ -426,7 +433,8 @@ fn overlapSegSeg2d(a: [*]const f32, b: [*]const f32, c: [*]const f32, d: [*]cons
+ }
+ 
+ /// Check if edge overlaps with any existing edges
+-fn overlapEdges(pts: [*]const f32, edges: []const i32, nedges: i32, s1: i32, t1: i32) bool {
++/// (pub for micro-bench; behaviour unchanged.)
++pub fn overlapEdges(pts: [*]const f32, edges: []const i32, nedges: i32, s1: i32, t1: i32) bool {
+     var i: i32 = 0;
+     while (i < nedges) : (i += 1) {
+         const idx = @as(usize, @intCast(i * 4));
+@@ -1266,6 +1274,8 @@ pub fn buildPolyMeshDetail(
+     dmesh: *PolyMeshDetail,
+     allocator: std.mem.Allocator,
+ ) !void {
++    var _z = tracy.zone(@src(), "rcBuildPolyMeshDetail");
++    defer _z.end();
+     if (mesh.nverts == 0 or mesh.npolys == 0) return;
+ 
+     const nvp = mesh.nvp;
+@@ -1356,6 +1366,8 @@ pub fn buildPolyMeshDetail(
+     dmesh.tris = try allocator.alloc(u8, tcap * 4);
+ 
+     for (0..@intCast(mesh.npolys)) |i| {
++        var _zs = tracy.zoneDeep(@src(), "rcBuildPolyMeshDetail.sample");
++        defer _zs.end();
+         const p_offset = i * @as(usize, @intCast(nvp)) * 2;
+         const p = mesh.polys[p_offset .. p_offset + @as(usize, @intCast(nvp))];
+ 
+diff --git a/src/recast/filter.zig b/src/recast/filter.zig
+index 0c9481a..9202c70 100644
+--- a/src/recast/filter.zig
++++ b/src/recast/filter.zig
+@@ -1,4 +1,5 @@
+ const std = @import("std");
++const tracy = @import("../tracy.zig");
+ const math = @import("../math.zig");
+ const heightfield_mod = @import("heightfield.zig");
+ const config = @import("config.zig");
+@@ -18,6 +19,8 @@ pub fn filterLowHangingWalkableObstacles(
+     walkable_climb: i32,
+     heightfield: *Heightfield,
+ ) void {
++    var _z = tracy.zone(@src(), "rcFilterLowHangingWalkableObstacles");
++    defer _z.end();
+     _ = ctx; // TODO: timer
+     const x_size = heightfield.width;
+     const z_size = heightfield.height;
+@@ -39,12 +42,15 @@ pub fn filterLowHangingWalkableObstacles(
+ 
+                 // If current span is not walkable, but there is walkable span just below it
+                 // and the height difference is small enough, mark current span as walkable too
+-                if (!walkable and previous_was_walkable) {
+-                    if (previous_span) |prev| {
+-                        if (@as(i32, s.smax) - @as(i32, prev.smax) <= walkable_climb) {
+-                            s.area = previous_area_id;
+-                        }
+-                    }
++                // Combined gate matches upstream C++ 1:1 (previousSpan->smax with no
++                // null check): `previous_was_walkable` is only ever true after a prior
++                // iteration set `previous_span = s`, so `previous_span.?` cannot trap
++                // here. Collapsing the nested `if (previous_span) |prev|` removes a
++                // per-span null test (`sete`+`or`) from the hot pointer-chase loop.
++                if (!walkable and previous_was_walkable and
++                    @as(i32, s.smax) - @as(i32, previous_span.?.smax) <= walkable_climb)
++                {
++                    s.area = previous_area_id;
+                 }
+ 
+                 // Copy the original walkable value regardless of whether we changed it
+@@ -65,6 +71,8 @@ pub fn filterLedgeSpans(
+     walkable_climb: i32,
+     heightfield: *Heightfield,
+ ) void {
++    var _z = tracy.zone(@src(), "rcFilterLedgeSpans");
++    defer _z.end();
+     _ = ctx; // TODO: timer
+     const x_size = heightfield.width;
+     const z_size = heightfield.height;
+@@ -173,6 +181,8 @@ pub fn filterWalkableLowHeightSpans(
+     walkable_height: i32,
+     heightfield: *Heightfield,
+ ) void {
++    var _z = tracy.zone(@src(), "rcFilterWalkableLowHeightSpans");
++    defer _z.end();
+     _ = ctx; // TODO: timer
+     const x_size = heightfield.width;
+     const z_size = heightfield.height;
+diff --git a/src/recast/mesh.zig b/src/recast/mesh.zig
+index 035a23b..f3bc2fa 100644
+--- a/src/recast/mesh.zig
++++ b/src/recast/mesh.zig
+@@ -1,4 +1,5 @@
+ const std = @import("std");
++const tracy = @import("../tracy.zig");
+ const math = @import("../math.zig");
+ const polymesh_mod = @import("polymesh.zig");
+ const config = @import("config.zig");
+@@ -49,8 +50,9 @@ inline fn collinear(a: []const i32, b: []const i32, c: []const i32) bool {
+     return area2(a, b, c) == 0;
+ }
+ 
++/// (pub for micro-bench; behaviour unchanged.)
+ /// Returns true if segments ab and cd properly intersect
+-fn intersectProp(a: []const i32, b: []const i32, c: []const i32, d: []const i32) bool {
++pub fn intersectProp(a: []const i32, b: []const i32, c: []const i32, d: []const i32) bool {
+     // Eliminate improper cases
+     if (collinear(a, b, c) or collinear(a, b, d) or
+         collinear(c, d, a) or collinear(c, d, b))
+@@ -75,8 +77,9 @@ fn between(a: []const i32, b: []const i32, c: []const i32) bool {
+     return ((a[2] <= c[2]) and (c[2] <= b[2])) or ((a[2] >= c[2]) and (c[2] >= b[2]));
+ }
+ 
++/// (pub for micro-bench; behaviour unchanged.)
+ /// Returns true if segments ab and cd intersect (properly or improperly)
+-fn intersect(a: []const i32, b: []const i32, c: []const i32, d: []const i32) bool {
++pub fn intersect(a: []const i32, b: []const i32, c: []const i32, d: []const i32) bool {
+     if (intersectProp(a, b, c, d)) {
+         return true;
+     }
+@@ -85,8 +88,9 @@ fn intersect(a: []const i32, b: []const i32, c: []const i32, d: []const i32) boo
+         between(c, d, a) or between(c, d, b);
+ }
+ 
++/// (pub for micro-bench; behaviour unchanged.)
+ /// Check if two vertices are equal on XZ plane
+-fn vequal(a: []const i32, b: []const i32) bool {
++pub fn vequal(a: []const i32, b: []const i32) bool {
+     return a[0] == b[0] and a[2] == b[2];
+ }
+ 
+@@ -996,6 +1000,8 @@ pub fn buildPolyMesh(
+     mesh: *PolyMesh,
+     allocator: std.mem.Allocator,
+ ) !void {
++    var _z = tracy.zone(@src(), "rcBuildPolyMesh");
++    defer _z.end();
+     mesh.bmin = cset.bmin;
+     mesh.bmax = cset.bmax;
+     mesh.cs = cset.cs;
+@@ -1068,7 +1074,8 @@ pub fn buildPolyMesh(
+     defer allocator.free(tmp_poly);
+ 
+     // Process each contour
+-    for (cset.conts) |cont| {
++    var bad_triangulation_dumped = false;
++    for (cset.conts, 0..) |cont, cont_i| {
+         if (cont.nverts < 3) continue;
+ 
+         // Triangulate contour
+@@ -1078,7 +1085,27 @@ pub fn buildPolyMesh(
+ 
+         const ntris = triangulate(@intCast(cont.nverts), cont.verts, indices, tris);
+         if (ntris <= 0) {
+-            ctx.log(.warning, "buildPolyMesh: Bad triangulation for contour", .{});
++            const v0 = cont.verts[0..4];
++            ctx.log(.warning, "buildPolyMesh: Bad triangulation contour={d} nverts={d} ntris={d} reg={d} area={d} first=({d},{d},{d},{d})", .{
++                cont_i,
++                cont.nverts,
++                ntris,
++                cont.reg,
++                cont.area,
++                v0[0],
++                v0[1],
++                v0[2],
++                v0[3],
++            });
++            if (!bad_triangulation_dumped) {
++                bad_triangulation_dumped = true;
++                ctx.log(.warning, "buildPolyMesh: Bad triangulation contour dump begin contour={d}", .{cont_i});
++                for (0..@intCast(cont.nverts)) |dump_i| {
++                    const dv = cont.verts[dump_i * 4 .. dump_i * 4 + 4];
++                    ctx.log(.warning, "buildPolyMesh: contour_vert {d} {d} {d} {d} {d}", .{ dump_i, dv[0], dv[1], dv[2], dv[3] });
++                }
++                ctx.log(.warning, "buildPolyMesh: Bad triangulation contour dump end contour={d}", .{cont_i});
++            }
+             continue;
+         }
+ 
+@@ -1257,6 +1284,8 @@ pub fn mergePolyMeshes(
+     mesh: *PolyMesh,
+     allocator: std.mem.Allocator,
+ ) !void {
++    var _z = tracy.zone(@src(), "rcMergePolyMeshes");
++    defer _z.end();
+     if (nmeshes == 0 or meshes.len == 0) return;
+ 
+     mesh.nvp = meshes[0].nvp;
+diff --git a/src/recast/rasterization.zig b/src/recast/rasterization.zig
+index f4a7e83..7c53367 100644
+--- a/src/recast/rasterization.zig
++++ b/src/recast/rasterization.zig
+@@ -1,4 +1,5 @@
+ const std = @import("std");
++const tracy = @import("../tracy.zig");
+ const math = @import("../math.zig");
+ const heightfield_mod = @import("heightfield.zig");
+ const config = @import("config.zig");
+@@ -15,8 +16,9 @@ const Axis = enum(u8) {
+     z = 2,
+ };
+ 
++/// (pub for micro-bench; behaviour unchanged.)
+ /// Check whether two bounding boxes overlap
+-fn overlapBounds(amin: Vec3, amax: Vec3, bmin: Vec3, bmax: Vec3) bool {
++pub fn overlapBounds(amin: Vec3, amax: Vec3, bmin: Vec3, bmax: Vec3) bool {
+     return amin.x <= bmax.x and amax.x >= bmin.x and
+         amin.y <= bmax.y and amax.y >= bmin.y and
+         amin.z <= bmax.z and amax.z >= bmin.z;
+@@ -228,11 +230,8 @@ fn rasterizeTri(
+     const by = heightfield_bb_max.y - heightfield_bb_min.y;
+ 
+     // Calculate the footprint of the triangle on the grid's z-axis.
+-    // Use @floor for consistent rounding between adjacent tiles, especially when
+-    // triangle vertices lie just outside the tile boundary in (-1.0, 0.0).
+-    // See: https://github.com/recastnavigation/recastnavigation/pull/766
+-    var z0 = @as(i32, @intFromFloat(@floor((tri_bb_min.z - heightfield_bb_min.z) * inverse_cell_size)));
+-    var z1 = @as(i32, @intFromFloat(@floor((tri_bb_max.z - heightfield_bb_min.z) * inverse_cell_size)));
++    var z0 = @as(i32, @intFromFloat((tri_bb_min.z - heightfield_bb_min.z) * inverse_cell_size));
++    var z1 = @as(i32, @intFromFloat((tri_bb_max.z - heightfield_bb_min.z) * inverse_cell_size));
+ 
+     // Use -1 rather than 0 to cut the polygon properly at the start of the tile
+     z0 = math.clamp(i32, z0, -1, h - 1);
+@@ -245,28 +244,21 @@ fn rasterizeTri(
+     var p1 = buf[7 * 3 * 2 .. 7 * 3 * 3];
+     var p2 = buf[7 * 3 * 3 .. 7 * 3 * 4];
+ 
+-    // Large World Support (Issue #687): Rebase coordinates to origin to maintain float32 precision.
+-    // At large world coordinates (>2^22), float32 loses precision causing duplicate vertices
+-    // and buffer overflow in dividePoly. By rebasing to origin, we work with small numbers.
+-    const origin = heightfield_bb_min;
+-
+-    // Copy triangle vertices with origin rebasing
+-    in[0] = v0.x - origin.x;
+-    in[1] = v0.y - origin.y;
+-    in[2] = v0.z - origin.z;
+-    in[3] = v1.x - origin.x;
+-    in[4] = v1.y - origin.y;
+-    in[5] = v1.z - origin.z;
+-    in[6] = v2.x - origin.x;
+-    in[7] = v2.y - origin.y;
+-    in[8] = v2.z - origin.z;
++    in[0] = v0.x;
++    in[1] = v0.y;
++    in[2] = v0.z;
++    in[3] = v1.x;
++    in[4] = v1.y;
++    in[5] = v1.z;
++    in[6] = v2.x;
++    in[7] = v2.y;
++    in[8] = v2.z;
+     var nv_in: usize = 3;
+ 
+     var z = z0;
+     while (z <= z1) : (z += 1) {
+         // Clip polygon to row. Store the remaining polygon as well
+-        // Note: coordinates are rebased, so cell_z starts from 0
+-        const cell_z = @as(f32, @floatFromInt(z)) * cell_size;
++        const cell_z = heightfield_bb_min.z + @as(f32, @floatFromInt(z)) * cell_size;
+         const result = dividePoly(in[0 .. nv_in * 3], nv_in, in_row, p1, cell_z + cell_size, .z);
+         const nv_row = result.count1;
+         nv_in = result.count2;
+@@ -288,12 +280,8 @@ fn rasterizeTri(
+             max_x = @max(max_x, in_row[vert * 3]);
+         }
+ 
+-        // Fix from PR #766: Use @floor for consistent rounding between adjacent tiles
+-        // Issue #765: @intFromFloat does truncation towards zero, causing inconsistencies
+-        // when coordinates are in range (-1.0, 0.0). floor() ensures proper cell indexing.
+-        // Note: min_x/max_x are already rebased (from dividePoly output), no need to subtract origin
+-        var x0 = @as(i32, @intFromFloat(@floor(min_x * inverse_cell_size)));
+-        var x1 = @as(i32, @intFromFloat(@floor(max_x * inverse_cell_size)));
++        var x0 = @as(i32, @intFromFloat((min_x - heightfield_bb_min.x) * inverse_cell_size));
++        var x1 = @as(i32, @intFromFloat((max_x - heightfield_bb_min.x) * inverse_cell_size));
+         if (x1 < 0 or x0 >= w) {
+             continue;
+         }
+@@ -305,8 +293,7 @@ fn rasterizeTri(
+         var x = x0;
+         while (x <= x1) : (x += 1) {
+             // Clip polygon to column. Store the remaining polygon as well
+-            // Note: coordinates are rebased, so cx starts from 0
+-            const cx = @as(f32, @floatFromInt(x)) * cell_size;
++            const cx = heightfield_bb_min.x + @as(f32, @floatFromInt(x)) * cell_size;
+             const result2 = dividePoly(in_row[0 .. nv2 * 3], nv2, p1, p2, cx + cell_size, .x);
+             const nv = result2.count1;
+             nv2 = result2.count2;
+@@ -321,13 +308,14 @@ fn rasterizeTri(
+             }
+ 
+             // Calculate min and max of the span
+-            // Note: p1 Y values are already rebased, no need to subtract origin.y
+             var span_min = p1[1];
+             var span_max = p1[1];
+             for (1..nv) |vert| {
+                 span_min = @min(span_min, p1[vert * 3 + 1]);
+                 span_max = @max(span_max, p1[vert * 3 + 1]);
+             }
++            span_min -= heightfield_bb_min.y;
++            span_max -= heightfield_bb_min.y;
+ 
+             // Skip the span if it's completely outside the heightfield bounding box
+             if (span_max < 0.0 or span_min > by) {
+@@ -408,6 +396,8 @@ pub fn rasterizeTriangles(
+     heightfield: *Heightfield,
+     flag_merge_threshold: i32,
+ ) !void {
++    var _z = tracy.zone(@src(), "rcRasterizeTriangles");
++    defer _z.end();
+     // const timer = ctx.startTimer(.rasterize_triangles);
+     // defer ctx.stopTimer(.rasterize_triangles);
+ 
+@@ -418,6 +408,8 @@ pub fn rasterizeTriangles(
+     const inverse_cell_height = 1.0 / heightfield.ch;
+ 
+     for (0..num_tris) |tri_index| {
++        var _zt = tracy.zoneDeep(@src(), "rcRasterizeTriangles.perTri");
++        defer _zt.end();
+         const v0_idx = @as(usize, @intCast(tris[tri_index * 3 + 0]));
+         const v1_idx = @as(usize, @intCast(tris[tri_index * 3 + 1]));
+         const v2_idx = @as(usize, @intCast(tris[tri_index * 3 + 2]));
+diff --git a/src/recast/region.zig b/src/recast/region.zig
+index 0b2bd42..01da338 100644
+--- a/src/recast/region.zig
++++ b/src/recast/region.zig
+@@ -1,4 +1,5 @@
+ const std = @import("std");
++const tracy = @import("../tracy.zig");
+ const math = @import("../math.zig");
+ const heightfield_mod = @import("heightfield.zig");
+ const config = @import("config.zig");
+@@ -109,6 +110,8 @@ fn calculateDistanceField(
+     // Pass 1 - forward sweep
+     y = 0;
+     while (y < h) : (y += 1) {
++        var _zs = tracy.zoneDeep(@src(), "rcBuildDistanceField.sweep");
++        defer _zs.end();
+         var x: i32 = 0;
+         while (x < w) : (x += 1) {
+             const cell_idx = @as(usize, @intCast(x + y * w));
+@@ -590,6 +593,8 @@ pub fn buildDistanceField(
+     chf: *CompactHeightfield,
+     allocator: std.mem.Allocator,
+ ) !void {
++    var _z = tracy.zone(@src(), "rcBuildDistanceField");
++    defer _z.end();
+     _ = ctx; // TODO: timer
+ 
+     // Free existing distance field if present
+@@ -1089,6 +1094,8 @@ pub fn buildRegions(
+     merge_region_area: i32,
+     allocator: std.mem.Allocator,
+ ) !void {
++    var _z = tracy.zone(@src(), "rcBuildRegions");
++    defer _z.end();
+     const w = chf.width;
+     const h = chf.height;
+     const span_count = @as(usize, @intCast(chf.span_count));
+@@ -1158,6 +1165,8 @@ pub fn buildRegions(
+ 
+     // Watershed partitioning with multi-stack system
+     while (level > 0) {
++        var _ze = tracy.zoneDeep(@src(), "rcBuildRegions.expand");
++        defer _ze.end();
+         level = if (level >= 2) level - 2 else 0;
+         s_id = (s_id + 1) & (@as(i32, NB_STACKS) - 1);
+ 
+@@ -1243,6 +1252,8 @@ pub fn buildRegionsMonotone(
+     merge_region_area: i32,
+     allocator: std.mem.Allocator,
+ ) !void {
++    var _z = tracy.zone(@src(), "rcBuildRegionsMonotone");
++    defer _z.end();
+     const w = chf.width;
+     const h = chf.height;
+     const span_count = @as(usize, @intCast(chf.span_count));
+@@ -1627,7 +1638,7 @@ fn mergeAndFilterLayerRegions(
+     max_region_id.* = reg_id_gen;
+ 
+     // Remap regions
+-    for (0..@intCast(chf.span_count)) |i| {
++    for (0..@as(usize, @intCast(chf.span_count))) |i| {
+         if ((src_reg[i] & BORDER_REG) == 0) {
+             src_reg[i] = regions.items[src_reg[i]].id;
+         }
+@@ -1644,6 +1655,8 @@ pub fn buildLayerRegions(
+     min_region_area: i32,
+     allocator: std.mem.Allocator,
+ ) !void {
++    var _z = tracy.zone(@src(), "rcBuildLayerRegions");
++    defer _z.end();
+     // TODO: timer
+     const w = chf.width;
+     const h = chf.height;
