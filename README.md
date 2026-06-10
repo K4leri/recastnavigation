@@ -6,8 +6,6 @@ tile cache for dynamic obstacles.
 
 English | [Русский](README.ru.md)
 
-<sub>This is the **Zig** port. A matching **C++** reference (upstream Recast + the same benchmark harness) lives at [recastnavigation-bench](https://github.com/K4leri/recastnavigation-bench) — used for the [benchmarks](#benchmarks) below.</sub>
-
 ![zig-recast demo](docs/recast_demo.png)
 
 The screenshot above is the bundled GUI demo (`zig build run-demo`), a Zig/dvui

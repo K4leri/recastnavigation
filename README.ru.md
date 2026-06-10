@@ -6,8 +6,6 @@
 
 [English](README.md) | Русский
 
-<sub>Это **Zig**-порт. Парная **C++**-версия (upstream Recast + тот же бенч-харнесс) — [recastnavigation-bench](https://github.com/K4leri/recastnavigation-bench), используется для [бенчмарков](#бенчмарки) ниже.</sub>
-
 ![демо zig-recast](docs/recast_demo.png)
 
 На скриншоте — встроенное GUI-демо (`zig build run-demo`), переписанные на
