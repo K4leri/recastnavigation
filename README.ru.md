@@ -110,10 +110,6 @@ var config = recast.RecastConfig{
 
 Конвейеры выпекания Recast, запросов Detour, толпы и tile cache реализованы и
 проверяются unit- и integration-тестами (`zig build test`, сейчас зелёные).
-Известные намеренные отклонения от оригинала задокументированы в
-`.agent/core-changes-justification.md` — например, сравнение ledge-спанов
-следует текущему upstream `main` (оспаривается открытым upstream-PR), а ряд
-serialization/endian-хелперов существует в основном для полноты.
 
 ## Бенчмарки
 

@@ -20,10 +20,7 @@ fidelity, and adds Zig conventions on top: explicit allocators, error unions
 instead of boolean returns, and `defer`-based cleanup.
 
 The Recast bake, Detour queries, crowd, and tile cache pipelines are fully
-ported and covered by the unit + integration suites (`zig build test`). A few
-upstream corners are handled deliberately differently — tracked in
-`.agent/core-changes-justification.md` (e.g. the ledge-span comparison follows
-current upstream `main`, which is disputed by an open upstream PR).
+ported and covered by the unit + integration suites (`zig build test`).
 
 ## Modules
 
