@@ -99,7 +99,7 @@ the API — each builds **and runs** in CI (`zig build examples` builds all,
 
 ## Benchmarks
 
-Zig core vs the upstream [C++ recastnavigation reference](https://github.com/K4leri/recastnavigation-bench),
+[Zig core](https://github.com/K4leri/recastnavigation/tree/benchmark) vs the upstream [C++ recastnavigation reference](https://github.com/K4leri/recastnavigation-bench),
 measured fairly: identical dense game maps, one shared deterministic input contract,
 C++ built `/arch:AVX2` + strict IEEE float. Each function is timed **K=15 runs/side,
 interleaved**, reported as the **median Zig÷C++ time with a 95 % bootstrap CI**;
@@ -120,8 +120,9 @@ bit-identical or was rejected by the identity gate). **No SIMD** (`@Vector` is
 intentionally out of scope).
 
 Full per-zone tables, confidence intervals, and methodology are in
-[`docs/perf-audit/`](docs/perf-audit/). Numbers are measured on the benchmark
-branch (Tracy instrumentation + optimization experiments live there; the shipping
+[`docs/perf-audit/`](docs/perf-audit/). Numbers are measured on the
+[`benchmark` branch](https://github.com/K4leri/recastnavigation/tree/benchmark)
+(Tracy instrumentation + optimization experiments live there; the shipping
 `master` core carries only the proven, output-identical wins).
 
 ## Roadmap
