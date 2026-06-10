@@ -47,3 +47,7 @@ ref_harness.cpp
 
 # reference test-case fixtures must be tracked (used by integration tests)
 !test_data/TestCases/*.txt
+
+# release: large/local-only artifacts (not shipped)
+test_data/sponza.obj
+compass_artifact_*.md

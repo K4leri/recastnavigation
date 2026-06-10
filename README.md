@@ -19,9 +19,11 @@ its updates. The port keeps the original `i32` core fields and data layout for
 fidelity, and adds Zig conventions on top: explicit allocators, error unions
 instead of boolean returns, and `defer`-based cleanup.
 
-It is an active port (version `0.1.x`), not a finished 1.0. The core pipelines
-work and are covered by tests, but some upstream corners are deliberately
-simplified or still being filled in — see [Status](#status).
+The Recast bake, Detour queries, crowd, and tile cache pipelines are fully
+ported and covered by the unit + integration suites (`zig build test`). A few
+upstream corners are handled deliberately differently — tracked in
+`.agent/core-changes-justification.md` (e.g. the ledge-span comparison follows
+current upstream `main`, which is disputed by an open upstream PR).
 
 ## Modules
 
@@ -58,64 +60,30 @@ RecastDemo tools — NavMesh Tester, Crowd, Tile, and the debug overlays.
 zig build run-demo
 ```
 
-## Library usage
-
-Add the dependency to your `build.zig.zon` and import the module. The build
-pipeline is namespaced — the `recast` half (alias it `rc`) bakes a mesh, the
-`detour` half (alias it `dt`) queries it; the common types (`Vec3`, `Context`,
-`RecastConfig`, `Heightfield`, …) are re-exported at the root. The build functions
-sit under file-namespaces (`rc.rasterization`, `rc.filter`, `rc.region`, …) that
-mirror the upstream C++ source files. Sketch of the flow (declarations elided —
-see the example below for the complete, compiling code):
-
-```zig
-const nav = @import("recast-nav");
-const rc = nav.recast; // Recast: build the mesh
-const dt = nav.detour; // Detour: query it
-
-var ctx = nav.Context.init(allocator);
-
-// 1. Bake: triangles -> heightfield -> compact -> regions -> contours -> mesh.
-//    `verts` is flat []f32 xyz, `indices` is []i32. Filters return void; the
-//    build steps fill structs you init'd (Heightfield/CompactHeightfield/...).
-try rc.rasterization.rasterizeTriangles(&ctx, verts, indices, areas, &hf, cfg.walkable_climb);
-rc.filter.filterLedgeSpans(&ctx, cfg.walkable_height, cfg.walkable_climb, &hf);
-try rc.compact.buildCompactHeightfield(&ctx, cfg.walkable_height, cfg.walkable_climb, &hf, &chf);
-try rc.region.buildRegions(&ctx, &chf, cfg.border_size, cfg.min_region_area, cfg.merge_region_area, allocator);
-try rc.contour.buildContours(&ctx, &chf, cfg.max_simplification_error, cfg.max_edge_len, &cset, 0, allocator);
-try rc.mesh.buildPolyMesh(&ctx, &cset, @intCast(cfg.max_verts_per_poly), &pmesh, allocator);
-
-// 2. Hand the mesh to Detour, then query it.
-const data = try dt.createNavMeshData(&create_params, allocator);
-var navmesh = try dt.NavMesh.init(allocator, nav_params);
-_ = try navmesh.addTile(data, .{ .free_data = false }, 0);
-
-const query = try dt.NavMeshQuery.init(allocator);
-try query.initQuery(&navmesh, 2048);
-_ = try query.findPath(start_ref, end_ref, &start_pos, &end_pos, &filter, &path, &path_count);
-```
-
-The full version of the above — every step, allocation, and error path — is
-`examples/03_full_pathfinding.zig`. Run it with `zig build run-example`.
-
 ## Examples
 
-Every example builds **and runs** in CI (`zig build examples` builds all,
-`zig build run-<name>` runs one). They are the living, executable reference for
-the API:
+Add the dependency to your `build.zig.zon` and import the module
+(`@import("recast-nav")`): the `recast` half (alias `rc`) bakes a mesh, the
+`detour` half (alias `dt`) queries it, and the common types (`Vec3`, `Context`,
+`RecastConfig`, `Heightfield`, …) are re-exported at the root; the build functions
+sit under file-namespaces (`rc.rasterization`, `rc.filter`, …) mirroring the
+upstream C++ source files. The examples are the living, executable reference for
+the API — each builds **and runs** in CI (`zig build examples` builds all,
+`zig build run-<name>` runs one). Start with
+[`03_full_pathfinding`](examples/03_full_pathfinding.zig) (complete bake → query):
 
 | Example | Demonstrates |
 |---|---|
-| `03_full_pathfinding` | complete bake → navmesh → `findPath`/`findStraightPath` |
-| `simple_navmesh` | the minimal bake (triangles → navmesh data) |
-| `pathfinding_demo` | query suite: nearest poly, path, raycast, area & wall queries |
-| `02_tiled_navmesh` | two stitched tiles, a path crossing the tile border |
-| `06_offmesh_connections` | an off-mesh link (jump/teleport) bridging disconnected areas |
-| `crowd_simulation` | DetourCrowd steering several agents to a shared goal |
-| `dynamic_obstacles` | DetourTileCache run-time obstacles re-routing a path |
-| `advanced/custom_areas` | custom area types + per-area query cost |
-| `advanced/hierarchical_pathfinding` | sliced/incremental pathfinding across frames |
-| `advanced/streaming_world` | tiles streamed in/out as an agent moves |
+| [`03_full_pathfinding`](examples/03_full_pathfinding.zig) | complete bake → navmesh → `findPath`/`findStraightPath` |
+| [`simple_navmesh`](examples/simple_navmesh.zig) | the minimal bake (triangles → navmesh data) |
+| [`pathfinding_demo`](examples/pathfinding_demo.zig) | query suite: nearest poly, path, raycast, area & wall queries |
+| [`02_tiled_navmesh`](examples/02_tiled_navmesh.zig) | two stitched tiles, a path crossing the tile border |
+| [`06_offmesh_connections`](examples/06_offmesh_connections.zig) | an off-mesh link (jump/teleport) bridging disconnected areas |
+| [`crowd_simulation`](examples/crowd_simulation.zig) | DetourCrowd steering several agents to a shared goal |
+| [`dynamic_obstacles`](examples/dynamic_obstacles.zig) | DetourTileCache run-time obstacles re-routing a path |
+| [`advanced/custom_areas`](examples/advanced/custom_areas.zig) | custom area types + per-area query cost |
+| [`advanced/hierarchical_pathfinding`](examples/advanced/hierarchical_pathfinding.zig) | sliced/incremental pathfinding across frames |
+| [`advanced/streaming_world`](examples/advanced/streaming_world.zig) | tiles streamed in/out as an agent moves |
 
 ## Differences from the C++ version
 
@@ -127,41 +95,45 @@ the API:
   (many are signed sentinels); `usize` getters are layered on top for clean Zig
   call sites.
 
-## Status
+## Benchmarks
 
-The Recast bake, Detour queries, crowd, and tile cache pipelines are
-implemented and exercised by the unit and integration suites (`zig build test`,
-currently green). Known, deliberate deviations from upstream are tracked in
-`.agent/core-changes-justification.md` — for example the ledge-span comparison
-follows current upstream `main` (disputed by an open upstream PR), and a few
-serialization/endian helpers exist mainly for completeness.
+Zig core vs the upstream **C++ recastnavigation** reference, measured fairly:
+identical dense game maps, one shared deterministic input contract, C++ built
+`/arch:AVX2` + strict IEEE float. Each function is timed **K=15 runs/side,
+interleaved**, reported as the **median Zig÷C++ time with a 95 % bootstrap CI**;
+sub-~200 ns zones (below the timer floor) are excluded as quantization noise.
+`ratio < 1.00 = Zig faster`.
+
+| Layer | Zig÷C++ | Speed | Measurable zones (faster / slower / tie) |
+|---|:--:|---|---|
+| **BUILD** · navmesh bake | **0.82** | `▓▓▓▓▓▓░░░░` 1.22× faster | 157 faster · 14 slower · 18 tie |
+| **CROWD** · agent steering | **0.83** | `▓▓▓▓▓▓░░░░` 1.20× faster | 68 faster · 10 slower · 3 tie |
+| **QUERY** · pathfinding / queries | **0.93** | `▓▓░░░░░░░░` 1.07× faster | 7 faster · 1 slower · 4 tie |
+| **TILECACHE** · dynamic obstacles | **0.98** | `▓░░░░░░░░░` 1.02× faster | 27 faster · 9 slower · 4 tie |
+
+**Overall ≈ 0.85** (geometric mean over 322 trusted zones) — every layer at or
+above C++ speed. The wins come from data-layout and `comptime` at the
+pipeline-stage level; leaf math is already optimal (every analog proved
+bit-identical or was rejected by the identity gate). **No SIMD** (`@Vector` is
+intentionally out of scope).
+
+Full per-zone tables, confidence intervals, and methodology are in
+[`docs/perf-audit/`](docs/perf-audit/). Numbers are measured on the benchmark
+branch (Tracy instrumentation + optimization experiments live there; the shipping
+`master` core carries only the proven, output-identical wins).
 
 ## Roadmap
 
-Correctness and fidelity come first; performance work is next, and it is
-**measurement-driven** rather than guesswork:
+Correctness and fidelity came first and are done. Performance is **characterized,
+not guessed** — see [Benchmarks](#benchmarks) above. One optional module is on the
+horizon beyond the 1:1 port:
 
-- **Profile with Tracy** — instrument the Recast bake, Detour queries, and the
-  crowd update with Tracy zones and capture traces over representative scenes
-  (the `bench/` scenario harness is being built for exactly this).
-- **Then optimize the hot spots the traces actually show**, likely candidates:
-  - SIMD (`@Vector`) for the hot vector / geometry math.
-  - Fewer allocations on the pathfinding hot path (reuse node pools / scratch
-    buffers).
-  - `comptime` specialization where it removes branching.
-  - Cache-friendlier data layout for the rasterization / region passes if they
-    dominate a trace.
-
-Each item lands only if a Tracy trace shows it is worth it.
-
-Beyond the 1:1 port, one optional module is on the radar:
-
-- **Influence maps (`DetourInfluence`)** — a tactical layer over the navmesh
-  (threat / visibility / territory fields with temporal decay and
-  "find the safest spot" queries), in the spirit of the upstream proposal
-  ([discussion #794](https://github.com/recastnavigation/recastnavigation/discussions/794)).
-  An independent, opt-in module like DetourCrowd — only once the core port is
-  solid.
+**Influence maps (`DetourInfluence`) — in active development.** An optional,
+opt-in tactical layer over the navmesh (threat / visibility / territory fields
+with temporal decay and "find the safest spot" queries), in the spirit of the
+upstream proposal
+([discussion #794](https://github.com/recastnavigation/recastnavigation/discussions/794)).
+An independent module like DetourCrowd, layered on top of the solid core port.
 
 ## Layout
 
