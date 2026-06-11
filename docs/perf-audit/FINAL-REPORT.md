@@ -324,6 +324,17 @@ divergence and was judged not worth the parity risk.
 > vectorized rewrite would target. Enabling `@Vector` is the open lever; it is held
 > back only by the no-SIMD policy, not by any finding here.
 
+> **Update (follow-up audit — see [AUDIT-FINDINGS.md](AUDIT-FINDINGS.md)).** The
+> "scalar ceiling" claim for `rcBuildDistanceField` was *partly* premature: its final
+> max-reduction stored through the out-pointer every iteration, which blocked LLVM from
+> vectorizing it (MSVC `/arch:AVX2` already emitted `vpmaxuw`). Reducing into a local and
+> writing the pointer once is output-identical (identity gate green) and cut the zone by
+> **−13 % (min)**, halving the gap to C++ (1.29× → 1.12×). The *remaining* ~12 % is the
+> box-blur + sweeps, which genuinely do sit at the scalar ceiling without `@Vector`.
+> [AUDIT-FINDINGS.md](AUDIT-FINDINGS.md) also records the `dtIsValidPolyRef` fix and the
+> zones investigated and deliberately left alone (crowd micro-zones = Tracy-wrapper
+> overhead artifact, tilecache add/remove = tiny-absolute noise).
+
 ---
 
 ## 7. Fairness — the comparison is not rigged

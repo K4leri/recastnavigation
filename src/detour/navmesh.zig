@@ -689,9 +689,17 @@ pub const NavMesh = struct {
     }
 
     /// Check if a polygon reference is valid (tile exists, salt matches, poly index in range)
+    /// 1:1 with dtNavMesh::isValidPolyRef: a pure salt/header/polyCount validation. Does
+    /// NOT route through getTileAndPolyByRef — that builds a {tile,poly} result struct and
+    /// an error-union + catch landing pad (extra poly-pointer compute) the bool answer never
+    /// needs. Inlining the decode keeps it a flat branch chain. Output-identical.
     pub fn isValidPolyRef(self: *const Self, ref: PolyRef) bool {
         if (ref == 0) return false;
-        _ = self.getTileAndPolyByRef(ref) catch return false;
+        const decoded = self.decodePolyId(ref);
+        if (decoded.tile >= @as(u32, @intCast(self.max_tiles))) return false;
+        const tile = &self.tiles[decoded.tile];
+        if (tile.salt != decoded.salt or tile.header == null) return false;
+        if (decoded.poly >= @as(u32, @intCast(tile.header.?.poly_count))) return false;
         return true;
     }
 

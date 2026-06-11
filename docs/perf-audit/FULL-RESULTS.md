@@ -2,6 +2,11 @@
 
 Auto-generated from `STAT_SCOREBOARD.csv` by `tools/analysis/gen_stat_table.py`.
 
+> **Follow-up:** the slower-tail audit — what was fixed, what was investigated and
+> deliberately left alone (with rationale), and the honest residual — is in
+> [`AUDIT-FINDINGS.md`](./AUDIT-FINDINGS.md). It also explains what the benchmark is and
+> why we run it.
+
 ## Method
 
 Each (scenario, function) was measured **K times per side, interleaved** (zig, cpp, zig, cpp, …) so slow thermal/load drift hits both sides equally. Within one measurement the function runs many times and the runner emits one aggregate (solo-build = `min_ns`, everything else = `mean_ns`); the **K such aggregates per side** are the sample. We report:
