@@ -230,13 +230,15 @@ fn calculateDistanceField(
         }
     }
 
-    // Find max distance
-    max_dist.* = 0;
+    // Find max distance. Local accumulator (not the out-pointer): a store through
+    // `max_dist.*` every iteration prevents LLVM from proving no-alias vs `src`, so
+    // the max-reduction stays scalar. A local lets it vectorize to a vpmaxuw
+    // reduction (MSVC /arch:AVX2 already does this on the C++ side). Output-identical.
+    var md: u16 = 0;
     for (src) |d| {
-        if (d > max_dist.*) {
-            max_dist.* = d;
-        }
+        if (d > md) md = d;
     }
+    max_dist.* = md;
 }
 
 /// Applies a box blur filter to the distance field.
