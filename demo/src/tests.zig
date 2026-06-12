@@ -10,6 +10,7 @@ test {
     _ = @import("io_util.zig");
     _ = @import("navmesh_walk.zig");
     _ = @import("input_geom.zig");
+    _ = @import("partitioned_mesh.zig");
     _ = @import("convex_surface.zig");
     _ = @import("render/color_scheme.zig");
     _ = @import("render/poly_visit.zig");

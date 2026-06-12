@@ -1,11 +1,13 @@
 //! InputGeom — загрузка геометрии (.obj), bounds, нормали, raycast,
 //! выпуклые объёмы и off-mesh связи (аналог RecastDemo/InputGeom.cpp).
-//! ChunkyTriMesh/PartitionedMesh и .gset — добавляются в #17/полировке.
+//! PartitionedMesh (бывш. ChunkyTriMesh) строится при каждой загрузке меша;
+//! raycast и тайловые сэмплы ходят по чанкам, как в upstream.
 
 const std = @import("std");
 const recast = @import("recast-nav");
 const io_util = @import("io_util.zig");
 const convex_surface = @import("convex_surface.zig");
+const PartitionedMesh = @import("partitioned_mesh.zig").PartitionedMesh;
 const DebugDraw = recast.debug.DebugDraw;
 const Managed = std.array_list.Managed;
 
@@ -36,6 +38,10 @@ pub const InputGeom = struct {
     normals: Managed(f32), // нормаль на треугольник (3 на tri)
     bmin: [3]f32 = .{ 0, 0, 0 },
     bmax: [3]f32 = .{ 0, 0, 0 },
+
+    /// k/d-дерево чанков по XZ (256 tri/чанк, как upstream InputGeom).
+    /// Перестраивается в loadMesh/setMesh; пустое, пока меш не загружен.
+    pmesh: PartitionedMesh,
 
     volumes: Managed(ConvexVolume),
 
@@ -84,10 +90,12 @@ pub const InputGeom = struct {
             .off_area = Managed(u8).init(alloc),
             .off_flags = Managed(u16).init(alloc),
             .off_id = Managed(u32).init(alloc),
+            .pmesh = PartitionedMesh.init(alloc),
         };
     }
 
     pub fn deinit(self: *InputGeom) void {
+        self.pmesh.deinit();
         self.verts.deinit();
         self.tris.deinit();
         self.normals.deinit();
@@ -153,6 +161,8 @@ pub const InputGeom = struct {
 
         self.computeBounds();
         try self.computeNormals();
+        // 256 tri/чанк — константа upstream InputGeom::loadMesh.
+        try self.pmesh.partitionMesh(self.verts.items, self.tris.items, 256);
     }
 
     /// Replace geometry with the given verts (x,y,z triplets) and tris (3 vertex
@@ -177,6 +187,7 @@ pub const InputGeom = struct {
         try self.tris.appendSlice(tris);
         self.computeBounds();
         try self.computeNormals();
+        try self.pmesh.partitionMesh(self.verts.items, self.tris.items, 256);
     }
 
     fn computeBounds(self: *InputGeom) void {
@@ -220,22 +231,40 @@ pub const InputGeom = struct {
         }
     }
 
-    /// Пересечение отрезка src->dst с мешем (brute-force Möller–Trumbore).
+    /// Пересечение отрезка src->dst с мешем (1-в-1 InputGeom::raycastMesh):
+    /// pruning по AABB меша, затем PartitionedMesh-чанки вдоль XZ-проекции отрезка,
+    /// Möller–Trumbore только по треугольникам пересечённых чанков.
     /// Возвращает параметр t в (0,1] ближайшего пересечения.
     pub fn raycastMesh(self: *const InputGeom, src: [3]f32, dst: [3]f32) ?f32 {
+        // Prune hit ray.
+        var btmin: f32 = 0;
+        var btmax: f32 = 1;
+        if (!isectSegAABB(src, dst, self.bmin, self.bmax, &btmin, &btmax)) return null;
+
+        const p = [2]f32{ src[0] + (dst[0] - src[0]) * btmin, src[2] + (dst[2] - src[2]) * btmin };
+        const q = [2]f32{ src[0] + (dst[0] - src[0]) * btmax, src[2] + (dst[2] - src[2]) * btmax };
+
+        var node_ids = Managed(usize).init(self.alloc);
+        defer node_ids.deinit();
+        self.pmesh.nodesOverlappingSegment(p, q, &node_ids) catch return null;
+        if (node_ids.items.len == 0) return null;
+
         const dir = [3]f32{ dst[0] - src[0], dst[1] - src[1], dst[2] - src[2] };
         var tmin: f32 = 1.0;
         var hit = false;
         const v = self.verts.items;
-        var t: usize = 0;
-        while (t < self.tris.items.len) : (t += 3) {
-            const a: usize = @intCast(self.tris.items[t]);
-            const b: usize = @intCast(self.tris.items[t + 1]);
-            const c: usize = @intCast(self.tris.items[t + 2]);
-            if (rayTri(src, dir, v[a * 3 ..][0..3].*, v[b * 3 ..][0..3].*, v[c * 3 ..][0..3].*)) |tt| {
-                if (tt < tmin) {
-                    tmin = tt;
-                    hit = true;
+        for (node_ids.items) |ni| {
+            const nt = self.pmesh.nodeTris(ni);
+            var t: usize = 0;
+            while (t < nt.len) : (t += 3) {
+                const a: usize = @intCast(nt[t]);
+                const b: usize = @intCast(nt[t + 1]);
+                const c: usize = @intCast(nt[t + 2]);
+                if (rayTri(src, dir, v[a * 3 ..][0..3].*, v[b * 3 ..][0..3].*, v[c * 3 ..][0..3].*)) |tt| {
+                    if (tt < tmin) {
+                        tmin = tt;
+                        hit = true;
+                    }
                 }
             }
         }
@@ -447,6 +476,29 @@ pub const InputGeom = struct {
     }
 };
 
+/// Порт InputGeom.cpp isectSegAABB: slab-тест отрезка sp->sq против AABB,
+/// возвращает клиппированный диапазон параметра [tmin, tmax].
+fn isectSegAABB(sp: [3]f32, sq: [3]f32, amin: [3]f32, amax: [3]f32, tmin: *f32, tmax: *f32) bool {
+    const EPS = 1e-6;
+    const d = sub(sq, sp);
+    tmin.* = 0;
+    tmax.* = 1.0;
+    for (0..3) |i| {
+        if (@abs(d[i]) < EPS) {
+            if (sp[i] < amin[i] or sp[i] > amax[i]) return false;
+        } else {
+            const ood = 1.0 / d[i];
+            var t1 = (amin[i] - sp[i]) * ood;
+            var t2 = (amax[i] - sp[i]) * ood;
+            if (t1 > t2) std.mem.swap(f32, &t1, &t2);
+            if (t1 > tmin.*) tmin.* = t1;
+            if (t2 < tmax.*) tmax.* = t2;
+            if (tmin.* > tmax.*) return false;
+        }
+    }
+    return true;
+}
+
 fn rayTri(orig: [3]f32, dir: [3]f32, v0: [3]f32, v1: [3]f32, v2: [3]f32) ?f32 {
     const eps = 1e-6;
     const e1 = sub(v1, v0);
@@ -507,6 +559,11 @@ test "raycast hits a quad on the ground" {
     // плоский квад в y=0, намотка вверх (нормаль +y), иначе back-face cull отбросит
     try geom.verts.appendSlice(&.{ -1, 0, -1, 1, 0, -1, 1, 0, 1, -1, 0, 1 });
     try geom.tris.appendSlice(&.{ 0, 2, 1, 0, 3, 2 });
+    // verts/tris наполнены напрямую (мимо loadMesh) — bounds и pmesh строим явно,
+    // raycast теперь идёт через PartitionedMesh + AABB-pruning.
+    geom.bmin = .{ -1, 0, -1 };
+    geom.bmax = .{ 1, 0, 1 };
+    try geom.pmesh.partitionMesh(geom.verts.items, geom.tris.items, 256);
     const t = geom.raycastMesh(.{ 0, 1, 0 }, .{ 0, -1, 0 });
     try std.testing.expect(t != null);
     try std.testing.expectApproxEqAbs(@as(f32, 0.5), t.?, 1e-4);

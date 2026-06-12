@@ -1,6 +1,6 @@
 //! Sample_TileMesh — тайловая сборка navmesh.
 //! Порт RecastDemo/Sample_TileMesh (core: buildAllTiles + per-tile pipeline).
-//! Без ChunkyTriMesh: растеризуем все треугольники с клиппингом по границам тайла.
+//! Растеризация через PartitionedMesh: только чанки, пересекающие тайл (как upstream).
 
 const std = @import("std");
 const dvui = @import("dvui");
@@ -245,12 +245,24 @@ pub const SampleTile = struct {
         var hf = recast.Heightfield.init(a, width, width, hbmin, hbmax, cs, ch) catch return false;
         defer hf.deinit();
 
-        const ntris = geom.triCount();
-        const areas = a.alloc(u8, ntris) catch return false;
-        defer a.free(areas);
-        @memset(areas, 0); // NULL_AREA: не-walkable грани должны остаться 0 (как upstream memset)
-        rc.filter.markWalkableTriangles(ctx, s.agent_max_slope, geom.verts.items, geom.tris.items, areas);
-        rc.rasterization.rasterizeTriangles(ctx, geom.verts.items, geom.tris.items, areas, &hf, walkable_climb) catch return false;
+        // PartitionedMesh: растеризуем только чанки, пересекающие расширенный bbox
+        // тайла (1-в-1 Sample_TileMesh::buildTileMesh). Пустой тайл — early-out,
+        // как upstream `if (overlappingNodes.empty()) return 0;`.
+        var node_ids = std.array_list.Managed(usize).init(a);
+        defer node_ids.deinit();
+        geom.pmesh.nodesOverlappingRect(.{ hbmin.x, hbmin.z }, .{ hbmax.x, hbmax.z }, &node_ids) catch return false;
+        if (node_ids.items.len == 0) return false;
+
+        // Буфер на maxTrisPerChunk, переиспользуется на каждый чанк (upstream triareas).
+        const triareas = a.alloc(u8, @intCast(geom.pmesh.max_tris_per_chunk)) catch return false;
+        defer a.free(triareas);
+        for (node_ids.items) |ni| {
+            const node_tris = geom.pmesh.nodeTris(ni);
+            const areas = triareas[0 .. node_tris.len / 3];
+            @memset(areas, 0); // NULL_AREA: не-walkable грани должны остаться 0 (как upstream memset)
+            rc.filter.markWalkableTriangles(ctx, s.agent_max_slope, geom.verts.items, node_tris, areas);
+            rc.rasterization.rasterizeTriangles(ctx, geom.verts.items, node_tris, areas, &hf, walkable_climb) catch return false;
+        }
 
         // Фильтры условно по переключателям UI (1-в-1 Sample_TileMesh::buildTileMesh).
         if (s.filter_low_hanging_obstacles)

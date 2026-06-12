@@ -235,12 +235,22 @@ pub const SampleTempObstacles = struct {
         var hf = try recast.Heightfield.init(a, width, width, hbmin, hbmax, cs, ch);
         defer hf.deinit();
 
-        const ntris = geom.triCount();
-        const areas = try a.alloc(u8, ntris);
-        defer a.free(areas);
-        @memset(areas, 0); // NULL_AREA: не-walkable грани должны остаться 0 (как upstream memset)
-        rc.filter.markWalkableTriangles(ctx, s.agent_max_slope, geom.verts.items, geom.tris.items, areas);
-        try rc.rasterization.rasterizeTriangles(ctx, geom.verts.items, geom.tris.items, areas, &hf, walkable_climb);
+        // PartitionedMesh: только чанки, пересекающие расширенный bbox тайла
+        // (1-в-1 Sample_TempObstacles::rasterizeTileLayers). Пустой тайл — early-out.
+        var node_ids = std.array_list.Managed(usize).init(a);
+        defer node_ids.deinit();
+        try geom.pmesh.nodesOverlappingRect(.{ hbmin.x, hbmin.z }, .{ hbmax.x, hbmax.z }, &node_ids);
+        if (node_ids.items.len == 0) return;
+
+        const triareas = try a.alloc(u8, @intCast(geom.pmesh.max_tris_per_chunk));
+        defer a.free(triareas);
+        for (node_ids.items) |ni| {
+            const node_tris = geom.pmesh.nodeTris(ni);
+            const areas = triareas[0 .. node_tris.len / 3];
+            @memset(areas, 0); // NULL_AREA: не-walkable грани должны остаться 0 (как upstream memset)
+            rc.filter.markWalkableTriangles(ctx, s.agent_max_slope, geom.verts.items, node_tris, areas);
+            try rc.rasterization.rasterizeTriangles(ctx, geom.verts.items, node_tris, areas, &hf, walkable_climb);
+        }
 
         // Фильтры условно по переключателям UI (1-в-1 Sample_TempObstacles::rasterizeTileLayers).
         // Partitioning здесь не выбирается: TileCache всегда использует layer-партишн
