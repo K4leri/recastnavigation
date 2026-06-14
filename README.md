@@ -35,7 +35,7 @@ ported and covered by the unit + integration suites (`zig build test`).
 ## Requirements
 
 - **Zig 0.16.0** (the demo dependency `dvui` requires it; the library itself is
-  plain Zig). Earlier 0.15.x will not build.
+  plain Zig). Lib core 0.15.x will build.
 
 ## Build & test
 
