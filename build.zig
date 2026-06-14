@@ -4,14 +4,14 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Tracy-профилирование demo: zig build run-demo -Dtracy=true
+    // Tracy profiling for the demo: zig build run-demo -Dtracy=true
     const enable_tracy = b.option(bool, "tracy", "Enable Tracy profiling in demo") orelse false;
 
-    // Demo (и его dvui/zgl-зависимости) по умолчанию ReleaseSafe: оптимизировано
-    // (immediate-mode UI dvui в Debug в ~4× медленнее), но с safety-проверками и
-    // детерминированным заполнением undefined (0xAA) — иначе ReleaseFast вскрывает
-    // latent-UB в core-пайплайне (мусорная геометрия, фликер). Для отладки демо:
-    // -Ddemo-optimize=Debug; для максимума скорости (на свой риск) ReleaseFast.
+    // Demo (and its dvui/zgl deps) defaults to ReleaseSafe: optimized
+    // (dvui immediate-mode UI is ~4x slower in Debug) but with safety checks and
+    // deterministic undefined fill (0xAA) — ReleaseFast otherwise exposes latent UB
+    // in the core pipeline (garbage geometry, flicker). To debug the demo:
+    // -Ddemo-optimize=Debug; for max speed (at your own risk) use ReleaseFast.
     const demo_optimize = b.option(std.builtin.OptimizeMode, "demo-optimize", "Optimize mode for demo (default ReleaseSafe)") orelse .ReleaseSafe;
 
     // 64-bit poly/tile refs for very large worlds (1:1 with the C++ DT_POLYREF64
@@ -55,16 +55,23 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(lib);
 
     // ====================================================================
-    // RECAST DEMO - GUI приложение (порт RecastDemo на DVUI + GLFW/OpenGL)
+    // RECAST DEMO - GUI app (RecastDemo port on DVUI + GLFW/OpenGL)
     // ====================================================================
-    // Два варианта (см. addDemo ниже):
-    //   demo / run-demo           — demo_optimize (по умолчанию ReleaseSafe: безопасно для
-    //                                разработки, ловит latent-UB через safety + 0xAA-poison).
-    //   demo-fast / run-demo-fast — ReleaseFast (быстрее, для релизных бинарей). Используется CI.
-    addDemo(b, target, demo_optimize, enable_tracy, recast_nav, "demo", "Build RecastDemo GUI", "run-demo", "Run RecastDemo GUI");
-    addDemo(b, target, .ReleaseFast, enable_tracy, recast_nav, "demo-fast", "Build RecastDemo GUI (ReleaseFast)", "run-demo-fast", "Run RecastDemo GUI (ReleaseFast)");
+    // Two variants (see addDemo below):
+    //   demo / run-demo           — demo_optimize (default ReleaseSafe: safe for
+    //                                development; catches latent UB via safety + 0xAA poison).
+    //   demo-fast / run-demo-fast — ReleaseFast (faster, for release binaries). Used in CI.
+    // Demo is gated behind -Ddemo: dvui-0.5.0-dev in the cache requires zig 0.16-dev and breaks
+    // the build graph for downstream consumers (e.g. zigServer on 0.15.2).
+    // lazyDependency still runs a dependency's build.zig once the package is cached,
+    // so the only reliable gate is to skip addDemo entirely unless -Ddemo is set.
+    const build_demo = b.option(bool, "demo", "Configure RecastDemo GUI targets (needs dvui/zgl, zig 0.16-dev)") orelse false;
+    if (build_demo) {
+        addDemo(b, target, demo_optimize, enable_tracy, recast_nav, "demo", "Build RecastDemo GUI", "run-demo", "Run RecastDemo GUI");
+        addDemo(b, target, .ReleaseFast, enable_tracy, recast_nav, "demo-fast", "Build RecastDemo GUI (ReleaseFast)", "run-demo-fast", "Run RecastDemo GUI (ReleaseFast)");
+    }
 
-    // Тесты математики демо (не требуют dvui/glfw — только recast-nav).
+    // Demo math tests (no dvui/glfw required — recast-nav only).
     {
         const mat_test_mod = b.createModule(.{
             .root_source_file = b.path("demo/src/tests.zig"),
@@ -73,7 +80,7 @@ pub fn build(b: *std.Build) void {
         });
         mat_test_mod.addImport("recast-nav", recast_nav);
         const mat_test = b.addTest(.{ .root_module = mat_test_mod });
-        const demo_test_step = b.step("demo-test", "Тесты математики демо");
+        const demo_test_step = b.step("demo-test", "Demo math tests");
         demo_test_step.dependOn(&b.addRunArtifact(mat_test).step);
     }
 
@@ -286,9 +293,9 @@ pub fn build(b: *std.Build) void {
     run_all_bench_step.dependOn(&run_bench_findstraightpath.step);
 }
 
-/// Создаёт build- и run-таргеты demo для заданного optimize-режима.
-/// Вызывается дважды: demo (ReleaseSafe) и demo-fast (ReleaseFast).
-/// lazyDependency: dvui/zgl/ztracy тянутся только когда соответствующий шаг реально собирается.
+/// Creates demo build and run targets for the given optimize mode.
+/// Called twice: demo (ReleaseSafe) and demo-fast (ReleaseFast).
+/// lazyDependency: dvui/zgl/ztracy are fetched only when the corresponding step is built.
 fn addDemo(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
@@ -352,13 +359,13 @@ fn addDemo(
         const demo_exe = b.addExecutable(.{
             .name = "recast_demo",
             .root_module = demo_mod,
-            // self-hosted x86_64 backend не умеет tail calls из zgl — нужен LLVM.
+            // Self-hosted x86_64 backend cannot tail-call through zgl — LLVM required.
             .use_llvm = true,
         });
         if (ztracy_lib) |lib_t| demo_exe.root_module.linkLibrary(lib_t);
         const install_demo = b.addInstallArtifact(demo_exe, .{});
 
-        // Ассеты рядом с exe (zig-out/bin/test_data) — standalone-запуск.
+        // Install assets next to the exe (zig-out/bin/test_data) for standalone runs.
         const install_assets = b.addInstallDirectory(.{
             .source_dir = b.path("test_data"),
             .install_dir = .bin,
