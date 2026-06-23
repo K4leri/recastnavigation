@@ -6,7 +6,7 @@ tile cache for dynamic obstacles.
 
 English | [Русский](README.ru.md)
 <div align="center">
-  <img src="docs/zig-recast.png" alt="zig-recast mascot" width="500"/>
+  <img src="docs/zig-recast.png" alt="zig-recast mascot" width="350"/>
 </div>
 
 ![zig-recast demo](docs/recast_demo.png)
