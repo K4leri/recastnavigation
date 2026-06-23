@@ -5,9 +5,9 @@ navigation-mesh toolkit — navmesh baking, pathfinding, crowd simulation, and a
 tile cache for dynamic obstacles.
 
 English | [Русский](README.ru.md)
-<p align="center">
-  <img src="docs/zig-recast.png" alt="zig-recast mascot" width="600"/>
-</p>
+<div align="center">
+  <img src="docs/zig-recast.png" alt="zig-recast mascot" width="500"/>
+</div>
 
 ![zig-recast demo](docs/recast_demo.png)
 
